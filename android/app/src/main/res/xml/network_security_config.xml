@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext traffic for SMTP (Gmail on port 587 uses STARTTLS) -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- Specifically allow Gmail SMTP -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">smtp.gmail.com</domain>
+        <domain includeSubdomains="true">gmail.com</domain>
+    </domain-config>
+</network-security-config>

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "46379191447",
+    "project_id": "loringo-app",
+    "storage_bucket": "loringo-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:46379191447:android:628a1602ed331e6913edd2",
+        "android_client_info": {
+          "package_name": "com.example.loringo_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOQYLmRjJaGgbGFJP5ItB8MxyK7kkExYU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -36,23 +36,59 @@ class ScreenFour extends StatefulWidget {
   State<ScreenFour> createState() => _ScreenFourState();
 }
 
+// ── Data model for a single option loaded from Firestore ─────────────────────
+class _FillOption {
+  final String textEn;
+  final String textTranslated;
+  final bool isCorrect;
+
+  // null = distractor; 0,1,2... = index of the blank this answers
+  final int? blankIndex;
+
+  _FillOption({
+    required this.textEn,
+    required this.textTranslated,
+    required this.isCorrect,
+    this.blankIndex,
+  });
+}
+
 class _ScreenFourState extends State<ScreenFour> {
-  final AudioPlayer player = AudioPlayer();
-  final FlutterTts flutterTts = FlutterTts();
-  late OnDeviceTranslator translator;
+  final AudioPlayer _player = AudioPlayer();
+  final FlutterTts _tts = FlutterTts();
+  late OnDeviceTranslator _translator;
 
-  static const Color greenPrimary = Color(0xFF4CAF50);
+  static const Color _green = Color(0xFF4CAF50);
 
-  String _userLang = 'English';
-  String subtitle = '';
-  String questionEn = '';
-  String questionTranslated = '';
-  String correctAnswerEn = '';
-  String correctAnswerTranslated = '';
-  List<Map<String, String>> options = [];
+  String _userLang = 'Spanish';
+  String _subtitle = '';
 
-  String selectedOptionEn = '';
-  bool isCorrect = false;
+  // ── Parsed question segments ────────────────────────────────────────────────
+  // The question is stored as e.g. "Roses are ___ and violets are ___".
+  // We split it on "___" to get the text segments between/around the blanks.
+  // segments.length == blanks.length + 1  (always one more segment than blanks)
+  List<String> _segments = [];
+
+  // ── Options pool ────────────────────────────────────────────────────────────
+  List<_FillOption> _options = [];
+
+  // ── Drag & drop state (multi-blank) ─────────────────────────────────────────
+  // _droppedWords[i] = textEn of the word dropped into blank i, or null.
+  List<String?> _droppedWords = [];
+
+  // ── Tap state (single-blank legacy) ─────────────────────────────────────────
+  String _selectedOptionEn = '';
+
+  bool _isLoading = true;
+
+  // Convenience: how many blanks this task has
+  int get _blankCount => _segments.length - 1;
+
+  // True when every blank has been filled
+  bool get _allBlanksFilled =>
+      _blankCount == 1
+          ? _selectedOptionEn.isNotEmpty
+          : _droppedWords.every((w) => w != null);
 
   @override
   void initState() {
@@ -62,35 +98,29 @@ class _ScreenFourState extends State<ScreenFour> {
 
   Future<void> _setUp() async {
     await _initTranslator();
-    await _initializeTts();
+    await _initTts();
     await _fetchTask();
   }
 
+  // ── Translator ──────────────────────────────────────────────────────────────
   Future<void> _initTranslator() async {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
-    String userLang = 'Spanish'; // Default language
-    
-    // Only fetch user language if user is authenticated
-    if (userId != null) {
-      final userDoc = await FirebaseFirestore.instance
-          .collection("users")
-          .doc(userId)
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    String lang = 'Spanish';
+    if (uid != null) {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
           .get();
-      
-      if (userDoc.exists) {
-        userLang = userDoc['language'] ?? 'Spanish';
-      }
+      if (doc.exists) lang = doc['language'] ?? 'Spanish';
     }
-    _userLang = userLang;
-    final targetLang = _mapLanguageToEnum(userLang);
-
-    translator = OnDeviceTranslator(
+    _userLang = lang;
+    _translator = OnDeviceTranslator(
       sourceLanguage: TranslateLanguage.english,
-      targetLanguage: targetLang,
+      targetLanguage: _langEnum(lang),
     );
   }
 
-  TranslateLanguage _mapLanguageToEnum(String lang) {
+  TranslateLanguage _langEnum(String lang) {
     switch (lang.toLowerCase()) {
       case 'spanish':
         return TranslateLanguage.spanish;
@@ -105,43 +135,32 @@ class _ScreenFourState extends State<ScreenFour> {
     }
   }
 
-  Future<void> _initializeTts() async {
-    await flutterTts.setLanguage('en-GB');
-    await flutterTts.setSpeechRate(0.5);
-    await flutterTts.setPitch(1.0);
+  // ── TTS ─────────────────────────────────────────────────────────────────────
+  Future<void> _initTts() async {
+    await _tts.setLanguage('en-GB');
+    await _tts.setSpeechRate(0.5);
+    await _tts.setPitch(1.0);
   }
 
-  String _getTtsCode(TranslateLanguage lang) {
-    switch (lang) {
-      case TranslateLanguage.spanish:
-        return 'es-ES';
-      case TranslateLanguage.french:
-        return 'fr-FR';
-      case TranslateLanguage.german:
-        return 'de-DE';
-      case TranslateLanguage.italian:
-        return 'it-IT';
-      default:
-        return 'es-ES';
+  void _speak(String text) async {
+    if (text.isNotEmpty) await _tts.speak(text);
+  }
+
+  // Reconstruct the complete correct sentence for TTS.
+  String get _fullSentence {
+    final buf = StringBuffer();
+    for (int i = 0; i < _segments.length; i++) {
+      buf.write(_segments[i]);
+      if (i < _blankCount) {
+        buf.write('...');
+      }
     }
+    return buf.toString();
   }
 
-  @override
-  void dispose() {
-    super.dispose();
-    translator.close();
-    player.dispose();
-    flutterTts.stop();
-  }
-
+  // ── Firestore fetch ─────────────────────────────────────────────────────────
   Future<void> _fetchTask() async {
     try {
-      print('ScreenFour: Fetching task...');
-      print('contentId: ${widget.contentId}');
-      print('unitId: ${widget.unitId}');
-      print('activityId: ${widget.activityId}');
-      print('taskId: ${widget.taskId}');
-      
       final doc = await FirebaseFirestore.instance
           .collection(widget.collectionName)
           .doc(widget.contentId)
@@ -155,383 +174,628 @@ class _ScreenFourState extends State<ScreenFour> {
           .doc(widget.taskId)
           .get();
 
-      print('ScreenFour: Document exists: ${doc.exists}');
-      
-      if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
-        print('ScreenFour: Task data: $data');
-        
-        // Get the nested data object
-        final taskData = data['data'] as Map<String, dynamic>? ?? data;
-        
-        subtitle = taskData['subtitle'] ?? '';
-        questionEn = taskData['question'] ?? '';
+      if (!doc.exists) return;
 
-        // Get options and find the correct answer
-        final originalOptions = List<Map<String, dynamic>>.from(
-          taskData['options'] ?? [],
-        );
-        
-        // Find the correct answer from options
-        final correctOption = originalOptions.firstWhere(
-          (opt) => opt['isCorrect'] == true,
-          orElse: () => {'text': '', 'isCorrect': false},
-        );
-        correctAnswerEn = correctOption['text'] ?? '';
+      final raw = doc.data() as Map<String, dynamic>;
+      final taskData = raw['data'] as Map<String, dynamic>? ?? raw;
 
-        final translatedQ = await translator.translateText(
-          questionEn.replaceAll('___', correctAnswerEn),
-        );
+      _subtitle = taskData['subtitle'] ?? '';
+      final questionEn = taskData['question'] as String? ?? '';
 
-        questionTranslated = translatedQ.replaceAll(correctAnswerEn, '___');
-        correctAnswerTranslated = await translator.translateText(correctAnswerEn);
+      // Split the question on ___ to get text segments.
+      // "Roses are ___ and violets are ___"
+      //   → ["Roses are ", " and violets are ", ""]
+      _segments = questionEn.split('___');
 
-        print('ScreenFour: Original options count: ${originalOptions.length}');
-        print('ScreenFour: Original options: $originalOptions');
-        
-        options = [];
-        for (var opt in originalOptions) {
-          final translated = await translator.translateText(opt['text']);
-          options.add({'textEn': opt['text'], 'textTranslated': translated});
-          print('ScreenFour: Added option: ${opt['text']} -> $translated');
+      // ── Build options ──
+      final rawOptions =
+          List<Map<String, dynamic>>.from(taskData['options'] ?? []);
+
+      final built = <_FillOption>[];
+      for (final o in rawOptions) {
+        final translated = await _translator.translateText(o['text'] ?? '');
+
+        // Support both old schema (no blankIndex) and new multi-blank schema.
+        // Old schema: isCorrect: true → automatically assign to blank 0.
+        int? blankIdx = o['blankIndex'] as int?;
+        final isCorrect = o['isCorrect'] as bool? ?? false;
+        if (isCorrect && blankIdx == null) {
+          blankIdx = 0;
         }
-        print('ScreenFour: Final options count: ${options.length}');
-        print('ScreenFour: Final options: $options');
-        print('ScreenFour: Task loaded successfully, calling setState...');
-        setState(() {
-          print('ScreenFour: setState callback executed');
-        });
-      } else {
-        print('ScreenFour ERROR: Document does not exist!');
+
+        built.add(_FillOption(
+          textEn: o['text'] ?? '',
+          textTranslated: translated,
+          isCorrect: isCorrect,
+          blankIndex: blankIdx,
+        ));
       }
+
+      // Shuffle so options don't always appear in creation order.
+      built.shuffle();
+      _options = built;
+
+      // Initialise drop slots — one per blank, all empty.
+      _droppedWords = List<String?>.filled(_blankCount, null);
+
+      setState(() => _isLoading = false);
     } catch (e) {
-      print('ScreenFour ERROR: $e');
-      throw ('Error fetching or translating task data: $e');
+      debugPrint('ScreenFour ERROR: $e');
+      setState(() => _isLoading = false);
     }
   }
 
-  void _speak(String text) async {
-    if (text.isNotEmpty) {
-      await flutterTts.speak(text);
-    }
-  }
-
-  void _handleSelection(String textEn) {
-    setState(() {
-      selectedOptionEn = textEn;
-    });
-  }
-
+  // ── Answer checking ─────────────────────────────────────────────────────────
   void _checkAnswer() {
-    final selectedOption = options.firstWhere(
-      (opt) => opt['textEn'] == selectedOptionEn,
-      orElse: () => {},
-    );
+    bool correct;
 
-    final selectedEn = selectedOption['textEn'] ?? '';
+    if (_blankCount == 1) {
+      final correctOpt = _options.firstWhere(
+        (o) => o.isCorrect && o.blankIndex == 0,
+        orElse: () =>
+            _FillOption(textEn: '', textTranslated: '', isCorrect: false),
+      );
+      correct = _selectedOptionEn == correctOpt.textEn;
+    } else {
+      correct = true;
+      for (int i = 0; i < _blankCount; i++) {
+        final correctOpt = _options.firstWhere(
+          (o) => o.isCorrect && o.blankIndex == i,
+          orElse: () =>
+              _FillOption(textEn: '', textTranslated: '', isCorrect: false),
+        );
+        if (_droppedWords[i] != correctOpt.textEn) {
+          correct = false;
+          break;
+        }
+      }
+    }
 
-    isCorrect = selectedEn == correctAnswerEn;
-    _playFeedback(isCorrect);
+    _playFeedback(correct);
   }
 
-  void _playFeedback(bool isCorrect) async {
-    if (isCorrect) {
+  void _playFeedback(bool correct) {
+    if (correct) {
       HapticFeedback.mediumImpact();
     } else {
       HapticFeedback.heavyImpact();
     }
-    final soundAsset = isCorrect
-        ? 'assets/sound/success-2.mp3'
-        : 'assets/sound/fail-2.mp3';
-
-    player.setAsset(soundAsset).then((_) => player.play());
-
-    final animation = isCorrect ? 'success' : 'fail';
-    _showResultBottomSheet(animation, isCorrect);
+    _player
+        .setAsset(correct
+            ? 'assets/sound/success-2.mp3'
+            : 'assets/sound/fail-2.mp3')
+        .then((_) => _player.play());
+    _showResultSheet(correct);
   }
 
-  void _showResultBottomSheet(String animationType, bool isCorrect) {
+  void _showResultSheet(bool correct) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.4,
-          maxChildSize: 0.6,
-          builder: (_, controller) {
-            return Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 20,
-                    offset: Offset(0, -5),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.4,
+        maxChildSize: 0.6,
+        builder: (_, __) => Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 20,
+                  offset: Offset(0, -5))
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Lottie.asset(
+                correct
+                    ? 'assets/animation/correct.json'
+                    : 'assets/animation/fail.json',
+                height: 150,
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    widget.onTaskComplete!(correct);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: correct ? _green : Colors.orange,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 5,
                   ),
+                  child: Text(
+                    TeacherUITranslations.get('continueBtnText', _userLang),
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _translator.close();
+    _player.dispose();
+    _tts.stop();
+    super.dispose();
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  SHARED UI HELPERS
+  // ────────────────────────────────────────────────────────────────────────────
+
+  Widget _buildProgressBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.black87, size: 28),
+            onPressed: () => Navigator.pop(context),
+          ),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: const BorderRadius.all(Radius.circular(30)),
+              child: LinearProgressIndicator(
+                value: (widget.currentTaskNumber + 1) / widget.totalTasks,
+                backgroundColor: Colors.blueGrey,
+                valueColor: const AlwaysStoppedAnimation<Color>(_green),
+                minHeight: 8,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubtitle() {
+    if (_subtitle.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Text(
+        _subtitle,
+        style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87),
+      ),
+    );
+  }
+
+  Widget _buildCheckButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: _allBlanksFilled ? _checkAnswer : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _green,
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
+          ),
+          child: Text(
+            TeacherUITranslations.get('check', _userLang),
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  SINGLE-BLANK UI  (tap — legacy behaviour, unchanged feel)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  Widget _buildSingleBlankQuestion() {
+    final before = _segments.isNotEmpty ? _segments[0] : '';
+    final after = _segments.length > 1 ? _segments[1] : '';
+    final correctOpt = _options.firstWhere(
+      (o) => o.isCorrect && o.blankIndex == 0,
+      orElse: () =>
+          _FillOption(textEn: '___', textTranslated: '', isCorrect: false),
+    );
+    final blankWidth =
+        (correctOpt.textEn.length * 12.0).clamp(48.0, 200.0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          IconButton(
+            onPressed: () => _speak(_fullSentence),
+            icon: const Icon(Icons.volume_up, color: _green, size: 28),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border:
+                    Border.all(color: Colors.grey.shade300, width: 1.5),
+              ),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: 4,
+                children: [
+                  if (before.isNotEmpty)
+                    Text(before,
+                        style: const TextStyle(
+                            fontSize: 18, color: Colors.black87)),
+                  Container(
+                    width: blankWidth,
+                    height: 28,
+                    margin:
+                        const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  if (after.isNotEmpty)
+                    Text(after,
+                        style: const TextStyle(
+                            fontSize: 18, color: Colors.black87)),
                 ],
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Lottie.asset(
-                    animationType == 'success'
-                        ? 'assets/animation/correct.json'
-                        : 'assets/animation/fail.json',
-                    height: 150,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSingleBlankOptions() {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: ListView.builder(
+          itemCount: _options.length,
+          itemBuilder: (context, index) {
+            final opt = _options[index];
+            final isSelected = _selectedOptionEn == opt.textEn;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: GestureDetector(
+                onTap: () =>
+                    setState(() => _selectedOptionEn = opt.textEn),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _green : Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color:
+                          isSelected ? _green : Colors.grey.shade300,
+                      width: 2,
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  if (isCorrect)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          widget.onTaskComplete!(isCorrect);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: greenPrimary,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 5,
-                        ),
-                        child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ),
+                  child: Text(
+                    opt.textEn,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
                     ),
-                  if (!isCorrect)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          widget.onTaskComplete!(isCorrect);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 5,
-                        ),
-                        child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+                  ),
+                ),
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  MULTI-BLANK UI  (drag & drop)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  Widget _buildMultiBlankQuestion() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => _speak(_fullSentence),
+                  icon: const Icon(Icons.volume_up,
+                      color: _green, size: 24),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  // TeacherUITranslations.get(
+                  //     'dragWordsInstruction', _userLang),
+                  'Drag the correct words into the blanks',
+                  style: TextStyle(
+                      fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 2,
+              runSpacing: 8,
+              children: _buildSentenceChunks(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildSentenceChunks() {
+    final chunks = <Widget>[];
+    for (int i = 0; i < _segments.length; i++) {
+      if (_segments[i].isNotEmpty) {
+        chunks.add(Text(
+          _segments[i],
+          style:
+              const TextStyle(fontSize: 18, color: Colors.black87),
+        ));
+      }
+      if (i < _blankCount) {
+        chunks.add(_buildDropTarget(i));
+      }
+    }
+    return chunks;
+  }
+
+  Widget _buildDropTarget(int blankIdx) {
+    final dropped = _droppedWords[blankIdx];
+    final correctOpt = _options.firstWhere(
+      (o) => o.isCorrect && o.blankIndex == blankIdx,
+      orElse: () =>
+          _FillOption(textEn: '______', textTranslated: '', isCorrect: false),
+    );
+    final minWidth =
+        (correctOpt.textEn.length * 11.0).clamp(56.0, 180.0);
+
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => true,
+      onAcceptWithDetails: (details) {
+        setState(() {
+          // If the incoming word was already in another blank, clear it first.
+          for (int i = 0; i < _blankCount; i++) {
+            if (_droppedWords[i] == details.data) {
+              _droppedWords[i] = null;
+            }
+          }
+          _droppedWords[blankIdx] = details.data;
+        });
+      },
+      builder: (context, candidates, rejected) {
+        final isHovering = candidates.isNotEmpty;
+        return GestureDetector(
+          // Tap a filled blank to return the word to the pool
+          onTap: dropped != null
+              ? () => setState(() => _droppedWords[blankIdx] = null)
+              : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            constraints: BoxConstraints(minWidth: minWidth),
+            height: 36,
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: dropped != null
+                  ? _green.withOpacity(0.15)
+                  : isHovering
+                      ? _green.withOpacity(0.08)
+                      : Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: dropped != null
+                    ? _green
+                    : isHovering
+                        ? _green.withOpacity(0.6)
+                        : Colors.grey.shade400,
+                width: dropped != null ? 2 : 1.5,
+              ),
+            ),
+            child: dropped != null
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        dropped,
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF2E7D32)),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.close,
+                          size: 14, color: Color(0xFF2E7D32)),
+                    ],
+                  )
+                : Text(
+                    'Blank ${blankIdx + 1}',
+                    style: TextStyle(
+                        fontSize: 13, color: Colors.grey.shade500),
+                  ),
+          ),
         );
       },
     );
   }
 
+  Widget _buildWordPool() {
+    // Only show words not already dropped into a blank.
+    final available = _options
+        .where((o) => !_droppedWords.contains(o.textEn))
+        .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          // TeacherUITranslations.get('wordPool', _userLang),
+          'Word Pool',
+          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children:
+              available.map((opt) => _buildDraggableChip(opt)).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDraggableChip(_FillOption opt) {
+    return Draggable<String>(
+      data: opt.textEn,
+      feedback: Material(
+        color: Colors.transparent,
+        child: _wordChip(opt.textEn, dragging: true),
+      ),
+      childWhenDragging: _wordChip(opt.textEn, ghost: true),
+      child: _wordChip(opt.textEn),
+    );
+  }
+
+  Widget _wordChip(String text,
+      {bool dragging = false, bool ghost = false}) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: ghost
+            ? Colors.grey.shade100
+            : dragging
+                ? _green
+                : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: ghost
+              ? Colors.grey.shade300
+              : dragging
+                  ? _green
+                  : Colors.grey.shade400,
+          width: 2,
+        ),
+        boxShadow: dragging
+            ? [
+                BoxShadow(
+                    color: _green.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4))
+              ]
+            : null,
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: ghost
+              ? Colors.grey.shade400
+              : dragging
+                  ? Colors.white
+                  : Colors.black87,
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  build()
+  // ────────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    print('ScreenFour: build() called, options.isEmpty = ${options.isEmpty}, options.length = ${options.length}');
-    const backgroundGradient = LinearGradient(
-      colors: [Color(0xFFE8F5E9), Colors.white],
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
+    const grad = BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Color(0xFFE8F5E9), Colors.white],
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+      ),
     );
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(gradient: backgroundGradient),
+        decoration: grad,
         child: SafeArea(
-          child: options.isEmpty
+          child: _isLoading
               ? const Center(child: CircularProgressIndicator())
-              : Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.black87,
-                              size: 28,
-                            ),
-                            onPressed: () {
-                              Navigator.pop(context);
-                            },
+              : _options.isEmpty
+                  ? const Center(child: Text('No options available'))
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildProgressBar(),
+                        _buildSubtitle(),
+                        const SizedBox(height: 16),
+
+                        // Adaptive: grey-box question (1 blank) or
+                        // inline DragTargets (2+ blanks)
+                        if (_blankCount == 1)
+                          _buildSingleBlankQuestion()
+                        else
+                          _buildMultiBlankQuestion(),
+
+                        const SizedBox(height: 24),
+
+                        // Adaptive: tap list (1 blank) or word pool (2+ blanks)
+                        if (_blankCount == 1)
+                          _buildSingleBlankOptions()
+                        else ...[
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20),
+                            child: _buildWordPool(),
                           ),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: const BorderRadius.all(
-                                Radius.circular(30),
-                              ),
-                              child: LinearProgressIndicator(
-                                value:
-                                    (widget.currentTaskNumber + 1) /
-                                    widget.totalTasks,
-                                backgroundColor: Colors.blueGrey,
-                                valueColor: const AlwaysStoppedAnimation<Color>(
-                                  greenPrimary,
-                                ),
-                                minHeight: 8,
-                              ),
-                            ),
-                          ),
+                          const Spacer(),
                         ],
-                      ),
+
+                        _buildCheckButton(),
+                      ],
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Text(
-                        subtitle,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            onPressed: () => _speak(questionEn),
-                            icon: const Icon(
-                              Icons.volume_up,
-                              color: greenPrimary,
-                              size: 28,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.grey.shade300,
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Text(
-                                questionEn,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: ListView.builder(
-                          itemCount: options.length,
-                          itemBuilder: (context, index) {
-                            final option = options[index];
-                            final isSelected =
-                                selectedOptionEn == option['textEn'];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: GestureDetector(
-                                onTap: () =>
-                                    _handleSelection(option['textEn']!),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 300),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                    vertical: 16,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? greenPrimary
-                                        : Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? greenPrimary
-                                          : Colors.grey.shade300,
-                                      width: 2,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    option['textEn']!,
-                                    style: TextStyle(
-                                      color: isSelected
-                                          ? Colors.white
-                                          : Colors.black87,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 20,
-                      ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: selectedOptionEn.isEmpty
-                              ? null
-                              : _checkAnswer,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: greenPrimary,
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                          ),
-                          child: Text(
-                            TeacherUITranslations.get('check', _userLang),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
         ),
       ),
     );

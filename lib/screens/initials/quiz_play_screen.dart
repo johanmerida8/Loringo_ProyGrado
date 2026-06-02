@@ -5,8 +5,10 @@ import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
 import 'package:loringo_app/screens/initials/screen_one.dart';
 import 'package:loringo_app/screens/initials/screen_five.dart';
 import 'package:loringo_app/screens/initials/screen_four.dart';
+import 'package:loringo_app/screens/initials/screen_six.dart';
 import 'package:loringo_app/screens/initials/screen_three.dart';
 import 'package:loringo_app/screens/initials/screen_two.dart';
+import 'package:loringo_app/screens/initials/screen_seven.dart';
 import 'package:loringo_app/services/database/database.dart';
 
 class QuizPlayScreen extends StatefulWidget {
@@ -17,7 +19,7 @@ class QuizPlayScreen extends StatefulWidget {
   final String quizTitle;
   final String collectionName;
   final String? studentId;
-  final bool isPreview; // When true, no progress or XP is saved
+  final bool isPreview;
 
   const QuizPlayScreen({
     super.key,
@@ -43,7 +45,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
   bool isLoading = true;
   String loadingMessage = 'Loading quiz...';
   int _xpReward = 0;
-  String _quizType = 'lesson_quiz';
+  String _quizType = 'lesson';
   String _unitTitle = '';
 
   @override
@@ -54,28 +56,10 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
 
   Future<void> _loadQuizTasks() async {
     try {
-      // Load quiz document — path differs for unit vs lesson quizzes
-      final bool isUnitQuiz = widget.lessonId.isEmpty;
-
-      final quizDoc = isUnitQuiz
-          ? await FirebaseFirestore.instance
-              .collection(widget.collectionName)
-              .doc(widget.contentId)
-              .collection('units')
-              .doc(widget.unitId)
-              .collection('quizzes')
-              .doc(widget.quizId)
-              .get()
-          : await FirebaseFirestore.instance
-              .collection(widget.collectionName)
-              .doc(widget.contentId)
-              .collection('units')
-              .doc(widget.unitId)
-              .collection('lessons')
-              .doc(widget.lessonId)
-              .collection('quizzes')
-              .doc(widget.quizId)
-              .get();
+      final quizDoc = await FirebaseFirestore.instance
+          .collection('quizzes')
+          .doc(widget.quizId)
+          .get();
 
       if (!quizDoc.exists) {
         _showErrorDialog('Quiz not found');
@@ -83,131 +67,161 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
       }
 
       final quizData = quizDoc.data() as Map<String, dynamic>;
-      _xpReward = (quizData['xpReward'] as num? ?? 0).toInt();
-      _quizType = quizData['type'] as String? ?? 'lesson_quiz';
 
-      // Load unit title for the report (used when it's a unit test)
+      print('=== QUIZ DATA ===');
+      print('Quiz ID: ${widget.quizId}');
+      print('Type: ${quizData['type']}');
+      print('Question IDs: ${quizData['questionIds']}');
+      print('Content ID: ${widget.contentId}');
+      print('Unit ID: ${widget.unitId}');
+      print('================');
+
+      _xpReward = (quizData['xpReward'] as num? ?? 0).toInt();
+      _quizType = quizData['type'] as String? ?? 'lesson';
+      
+      final bool isUnitQuiz = _quizType == 'unit';
+
       if (isUnitQuiz) {
         final unitDoc = await FirebaseFirestore.instance
-            .collection(widget.collectionName)
+            .collection('content')
             .doc(widget.contentId)
             .collection('units')
             .doc(widget.unitId)
             .get();
-        _unitTitle =
-            (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
-                widget.quizTitle;
+        _unitTitle = (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? widget.quizTitle;
       }
 
-      final List<String> questionIds = List<String>.from(
-        quizData['questionIds'] ?? [],
-      );
-
-      if (questionIds.isEmpty) {
-        _showErrorDialog('This quiz has no questions');
-        return;
-      }
-
-      // Load each task referenced in questionIds
       List<Map<String, dynamic>> loadedTasks = [];
-      for (int i = 0; i < questionIds.length; i++) {
-        final questionId = questionIds[i];
-        
-        // Update loading message with progress
-        setState(() {
-          loadingMessage = 'Loading question ${i + 1} of ${questionIds.length}...';
-        });
 
-        // Format: "activityId_taskId"
-        final parts = questionId.split('_task_');
-        if (parts.length != 2) {
-          print('Invalid question ID format: $questionId');
-          continue;
+      if (isUnitQuiz) {
+        // ✅ Unit quiz: Load from questions subcollection
+        final questionsSnapshot = await FirebaseFirestore.instance
+            .collection('quizzes')
+            .doc(widget.quizId)
+            .collection('questions')
+            .orderBy('order')
+            .get();
+
+        for (final qDoc in questionsSnapshot.docs) {
+          final qData = qDoc.data() as Map<String, dynamic>;
+          loadedTasks.add({
+            'isUnitQuiz': true,
+            'questionData': qData,
+          });
+        }
+        
+        setState(() {
+          quizTasks = loadedTasks;
+          totalTasks = loadedTasks.length;
+          isLoading = false;
+        });
+      } else {
+        // ✅ Lesson quiz: Load from questionIds array (reuses activity tasks)
+        final List<String> questionIds = List<String>.from(
+          quizData['questionIds'] ?? [],
+        );
+
+        if (questionIds.isEmpty) {
+          _showErrorDialog('This quiz has no questions');
+          return;
         }
 
-        final activityId = parts[0];
-        final taskId = parts[1];
+        // First, get all lessons once
+        final lessonsSnapshot = await FirebaseFirestore.instance
+            .collection('content')
+            .doc(widget.contentId)
+            .collection('units')
+            .doc(widget.unitId)
+            .collection('lessons')
+            .get();
 
-        try {
-          DocumentSnapshot? taskDoc;
-          String? foundLessonId;
+        // Create a map to cache activity -> lesson relationships
+        final Map<String, String> activityToLessonMap = {};
 
-          // For unit quizzes lessonId is empty — search all lessons directly.
-          // For lesson quizzes, try the current lesson first (fast path).
-          if (widget.lessonId.isNotEmpty) {
-            taskDoc = await FirebaseFirestore.instance
-                .collection(widget.collectionName)
+        // Build a map of all activities across all lessons
+        for (final lessonDoc in lessonsSnapshot.docs) {
+          final lessonId = lessonDoc.id;
+          final activitiesSnapshot = await FirebaseFirestore.instance
+              .collection('content')
+              .doc(widget.contentId)
+              .collection('units')
+              .doc(widget.unitId)
+              .collection('lessons')
+              .doc(lessonId)
+              .collection('activities')
+              .get();
+          
+          for (final activityDoc in activitiesSnapshot.docs) {
+            activityToLessonMap[activityDoc.id] = lessonId;
+          }
+        }
+
+        // Now load each task
+        for (int i = 0; i < questionIds.length; i++) {
+          final questionId = questionIds[i];
+          
+          setState(() {
+            loadingMessage = 'Loading question ${i + 1} of ${questionIds.length}...';
+          });
+
+          // Format: "activityId_taskId"
+          final parts = questionId.split('_task_');
+          if (parts.length != 2) {
+            print('Invalid question ID format: $questionId');
+            continue;
+          }
+
+          final activityId = parts[0];
+          final taskId = parts[1];
+
+          try {
+            // Find which lesson contains this activity
+            final foundLessonId = activityToLessonMap[activityId];
+            
+            if (foundLessonId == null) {
+              print('Activity $activityId not found in any lesson');
+              continue;
+            }
+
+            final taskDoc = await FirebaseFirestore.instance
+                .collection('content')
                 .doc(widget.contentId)
                 .collection('units')
                 .doc(widget.unitId)
                 .collection('lessons')
-                .doc(widget.lessonId)
+                .doc(foundLessonId)
                 .collection('activities')
                 .doc(activityId)
                 .collection('tasks')
                 .doc(taskId)
                 .get();
 
-            if (taskDoc.exists) foundLessonId = widget.lessonId;
-          }
-
-          // If not found yet, search all lessons (fallback for lesson quizzes
-          // and primary path for unit quizzes)
-          if (foundLessonId == null) {
-            final lessonsSnapshot = await FirebaseFirestore.instance
-                .collection(widget.collectionName)
-                .doc(widget.contentId)
-                .collection('units')
-                .doc(widget.unitId)
-                .collection('lessons')
-                .get();
-
-            for (var lessonDoc in lessonsSnapshot.docs) {
-              final lessonId = lessonDoc.id;
-              if (lessonId == widget.lessonId) continue; // already checked
-
-              taskDoc = await FirebaseFirestore.instance
-                  .collection(widget.collectionName)
-                  .doc(widget.contentId)
-                  .collection('units')
-                  .doc(widget.unitId)
-                  .collection('lessons')
-                  .doc(lessonId)
-                  .collection('activities')
-                  .doc(activityId)
-                  .collection('tasks')
-                  .doc(taskId)
-                  .get();
-
-              if (taskDoc.exists) {
-                foundLessonId = lessonId;
-                break;
-              }
+            if (taskDoc.exists) {
+              final taskData = taskDoc.data() as Map<String, dynamic>;
+              loadedTasks.add({
+                'isUnitQuiz': false,
+                'activityId': activityId,
+                'lessonId': foundLessonId,
+                'taskId': taskId,
+                'taskData': taskData,
+              });
+            } else {
+              print('Task $taskId not found in activity $activityId');
             }
+          } catch (e) {
+            print('Error loading task $questionId: $e');
           }
-
-          if (taskDoc != null && taskDoc.exists && foundLessonId != null) {
-            final taskData = taskDoc.data() as Map<String, dynamic>;
-            loadedTasks.add({
-              'activityId': activityId,
-              'lessonId': foundLessonId,
-              'taskId': taskId,
-              'taskData': taskData,
-            });
-          }
-        } catch (e) {
-          print('Error loading task $questionId: $e');
         }
-      }
 
-      setState(() {
-        quizTasks = loadedTasks;
-        totalTasks = loadedTasks.length;
-        isLoading = false;
-      });
+        setState(() {
+          quizTasks = loadedTasks;
+          totalTasks = loadedTasks.length;
+          isLoading = false;
+        });
 
-      if (quizTasks.isEmpty) {
-        _showErrorDialog('No valid quiz questions found');
+        if (quizTasks.isEmpty) {
+          _showErrorDialog('No valid quiz questions found');
+        }
       }
     } catch (e) {
       print('Error loading quiz: $e');
@@ -245,13 +259,23 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
         currentTaskIndex++;
       });
     } else {
-      // Quiz completed - calculate score and show results
+      _showQuizResults();
+    }
+  }
+
+  void _nextReadingTask(bool pass, int subCorrect, int subWrong) {
+    correctAnswers += subCorrect;
+    
+    if (currentTaskIndex < quizTasks.length - 1) {
+      setState(() {
+        currentTaskIndex++;
+      });
+    } else {
       _showQuizResults();
     }
   }
 
   void _showQuizResults() async {
-    // Calculate percentage and stars
     final percentage = totalTasks > 0
         ? (correctAnswers / totalTasks * 100).round()
         : 0;
@@ -270,7 +294,6 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
       // Teacher preview — never save progress or award XP
     } else if (widget.studentId != null) {
       try {
-        // Check if this quiz was completed before
         final prevDoc = await FirebaseFirestore.instance
             .collection('students')
             .doc(widget.studentId!)
@@ -283,17 +306,14 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
         final int prevScore =
             wasCompleted ? (prevDoc.data()?['score'] as num? ?? 0).toInt() : -1;
 
-        if (_quizType == 'unit_test') {
+        // ✅ Fixed: Use 'unit' instead of 'unit_test'
+        if (_quizType == 'unit') {
           if (!wasCompleted) {
-            // First completion: full xpReward (flat 20)
             xpEarned = _xpReward;
           } else if (correctAnswers > prevScore) {
-            // Improved best score: 5 XP bonus
             xpEarned = 5;
           }
-          // No improvement = 0 XP
         } else {
-          // lesson_quiz: proportional XP only on first completion
           if (!wasCompleted) {
             xpEarned = (_xpReward * (percentage / 100)).round();
           }
@@ -310,16 +330,15 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
           xpEarned: xpEarned,
           updateBestOnly: wasCompleted,
           unitTitle: _unitTitle,
-          generateReport: _quizType == 'unit_test' || _quizType == 'content_test',
-          reportType: _quizType == 'content_test' ? 'content' : 'unit',
+          generateReport: _quizType == 'unit',
+          reportType: _quizType == 'unit' ? 'unit' : 'lesson',
         );
       } catch (e) {
         print('Error saving quiz progress: $e');
       }
     } else if (userId != null) {
-        // Regular user: save to users/{id}/progress/quizzes
-        xpEarned = (_xpReward * (percentage / 100)).round();
-        try {
+      xpEarned = (_xpReward * (percentage / 100)).round();
+      try {
         final progressRef = FirebaseFirestore.instance
             .collection('users')
             .doc(userId)
@@ -359,31 +378,8 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     );
   }
 
-  String _getStarDisplay(int stars) {
-    switch (stars) {
-      case 3:
-        return '⭐⭐⭐';
-      case 2:
-        return '⭐⭐';
-      default:
-        return '⭐';
-    }
-  }
-
-  String _getEncouragementMessage(int stars) {
-    switch (stars) {
-      case 3:
-        return 'Outstanding! You\'re a superstar! 🌟';
-      case 2:
-        return 'Great job! Keep up the good work! 👏';
-      default:
-        return 'Good effort! Practice makes perfect! 💪';
-    }
-  }
-
   Future<void> _unlockNextUnit() async {
     try {
-      // Get all units to find the next one
       final unitsSnapshot = await FirebaseFirestore.instance
           .collection(widget.collectionName)
           .doc(widget.contentId)
@@ -391,7 +387,6 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
           .orderBy('order')
           .get();
 
-      // Find current unit index
       int currentUnitIndex = -1;
       for (int i = 0; i < unitsSnapshot.docs.length; i++) {
         if (unitsSnapshot.docs[i].id == widget.unitId) {
@@ -400,7 +395,6 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
         }
       }
 
-      // Unlock next unit if it exists
       if (currentUnitIndex >= 0 &&
           currentUnitIndex < unitsSnapshot.docs.length - 1) {
         final nextUnitDoc = unitsSnapshot.docs[currentUnitIndex + 1];
@@ -413,117 +407,157 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
   }
 
   Widget _buildTaskScreen(Map<String, dynamic> quizTask) {
-    final activityId = quizTask['activityId'];
-    final lessonId = quizTask['lessonId'];
-    final taskId = quizTask['taskId'];
-    final taskData = quizTask['taskData'] as Map<String, dynamic>;
-    final taskType = taskData['type'] ?? '';
+    final isUnitQuiz = quizTask['isUnitQuiz'] == true;
+    
+    if (isUnitQuiz) {
+      // Unit quiz: Multiple choice question
+      final questionData = quizTask['questionData'] as Map<String, dynamic>;
+      final question = questionData['question'] as String? ?? '';
+      final options = List<String>.from(questionData['options'] ?? []);
+      final correctIndex = questionData['correctIndex'] as int? ?? 0;
+      
+      return _UnitQuizQuestionCard(
+        key: ValueKey('unit_$currentTaskIndex'),
+        question: question,
+        options: options,
+        correctIndex: correctIndex,
+        onAnswer: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+        currentTaskNumber: currentTaskIndex,
+        totalTasks: quizTasks.length,
+        quizTitle: widget.quizTitle,
+      );
+    } else {
+      // Lesson quiz: Use existing task screens
+      final activityId = quizTask['activityId'];
+      final lessonId = quizTask['lessonId'];
+      final taskId = quizTask['taskId'];
+      final taskData = quizTask['taskData'] as Map<String, dynamic>;
+      final taskType = taskData['type'] ?? '';
 
-    print(
-      'Quiz: Displaying task ${currentTaskIndex + 1} of ${quizTasks.length}, type: $taskType',
-    );
-
-    // Note: We need to modify the task screens to accept a callback for correctness
-    // For now, we'll use the existing screens and count completion as correct
-    // In a full implementation, each screen would report if the answer was correct
-
-    switch (taskType) {
-      case 'image_select':
-        return ScreenOne(
-          key: ValueKey(taskId),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: lessonId,
-          activityId: activityId,
-          taskId: taskId,
-          onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: quizTasks.length,
-          collectionName: widget.collectionName,
-        );
-      case 'image_select_reverse':
-        return ScreenFive(
-          key: ValueKey(taskId),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: lessonId,
-          activityId: activityId,
-          taskId: taskId,
-          onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: quizTasks.length,
-          collectionName: widget.collectionName,
-        );
-      case 'fill_blank':
-        return ScreenFour(
-          key: ValueKey(taskId),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: lessonId,
-          activityId: activityId,
-          taskId: taskId,
-          onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: quizTasks.length,
-          collectionName: widget.collectionName,
-        );
-      case 'arrange':
-        return ScreenThree(
-          key: ValueKey(taskId),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: lessonId,
-          activityId: activityId,
-          taskId: taskId,
-          onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: quizTasks.length,
-          collectionName: widget.collectionName,
-        );
-      case 'complete_the_chat':
-        return ScreenTwo(
-          key: ValueKey(taskId),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: lessonId,
-          activityId: activityId,
-          taskId: taskId,
-          onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: quizTasks.length,
-          collectionName: widget.collectionName,
-        );
-      default:
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(widget.quizTitle),
-            backgroundColor: const Color(0xFF4CAF50),
-          ),
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 100, color: Colors.grey),
-                const SizedBox(height: 24),
-                Text(
-                  'Task type "$taskType" not supported',
-                  style: const TextStyle(fontSize: 18, color: Colors.grey),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: () => _nextTask(wasCorrect: false),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                  ),
-                  child: const Text(
-                    'Skip',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
+      switch (taskType) {
+        case 'image_select':
+          return ScreenOne(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED: always 'content'
+          );
+        case 'complete_the_chat':
+          return ScreenTwo(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED
+          );
+        case 'arrange':
+          return ScreenThree(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED
+          );
+        case 'fill_blank':
+          return ScreenFour(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED
+          );
+        case 'image_select_reverse':
+          return ScreenFive(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED
+          );
+        case 'match':
+          return ScreenSix(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: (isCorrect) => _nextTask(wasCorrect: isCorrect),
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED
+          );
+        case 'reading':
+          return ScreenSeven(
+            key: ValueKey(taskId),
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: lessonId,
+            activityId: activityId,
+            taskId: taskId,
+            onTaskComplete: _nextReadingTask,
+            currentTaskNumber: currentTaskIndex,
+            totalTasks: quizTasks.length,
+            collectionName: 'content', // ✅ FIXED
+          );
+        default:
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(widget.quizTitle),
+              backgroundColor: const Color(0xFF4CAF50),
             ),
-          ),
-        );
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 100, color: Colors.grey),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Task type "$taskType" not supported',
+                    style: const TextStyle(fontSize: 18, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () => _nextTask(wasCorrect: false),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4CAF50),
+                    ),
+                    child: const Text(
+                      'Skip',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+      }
     }
   }
 
@@ -565,5 +599,191 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     }
 
     return _buildTaskScreen(quizTasks[currentTaskIndex]);
+  }
+}
+
+// Unit Quiz Question Card Widget
+class _UnitQuizQuestionCard extends StatefulWidget {
+  final String question;
+  final List<String> options;
+  final int correctIndex;
+  final Function(bool) onAnswer;
+  final int currentTaskNumber;
+  final int totalTasks;
+  final String quizTitle;
+
+  const _UnitQuizQuestionCard({
+    super.key,
+    required this.question,
+    required this.options,
+    required this.correctIndex,
+    required this.onAnswer,
+    required this.currentTaskNumber,
+    required this.totalTasks,
+    required this.quizTitle,
+  });
+
+  @override
+  State<_UnitQuizQuestionCard> createState() => _UnitQuizQuestionCardState();
+}
+
+class _UnitQuizQuestionCardState extends State<_UnitQuizQuestionCard> {
+  int? selectedOption;
+  bool isAnswered = false;
+
+  void _submitAnswer() {
+    if (selectedOption == null) return;
+    
+    final isCorrect = selectedOption == widget.correctIndex;
+    setState(() => isAnswered = true);
+    
+    Future.delayed(const Duration(milliseconds: 500), () {
+      widget.onAnswer(isCorrect);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.quizTitle),
+        backgroundColor: const Color(0xFF7C3AED),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Question ${widget.currentTaskNumber + 1} of ${widget.totalTasks}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: (widget.currentTaskNumber + 1) / widget.totalTasks,
+              backgroundColor: Colors.grey.shade200,
+              color: const Color(0xFF7C3AED),
+            ),
+            const SizedBox(height: 32),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF7C3AED).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                widget.question,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.options.length,
+                itemBuilder: (context, index) {
+                  final letter = String.fromCharCode(65 + index);
+                  final isSelected = selectedOption == index;
+                  final isCorrect = index == widget.correctIndex;
+                  
+                  Color? backgroundColor;
+                  if (isAnswered) {
+                    if (isCorrect) {
+                      backgroundColor = Colors.green.shade50;
+                    } else if (isSelected && !isCorrect) {
+                      backgroundColor = Colors.red.shade50;
+                    }
+                  }
+                  
+                  return GestureDetector(
+                    onTap: isAnswered ? null : () => setState(() => selectedOption = index),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: backgroundColor ?? (isSelected ? const Color(0xFF7C3AED).withOpacity(0.08) : Colors.grey.shade50),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected ? const Color(0xFF7C3AED) : Colors.grey.shade300,
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isSelected ? const Color(0xFF7C3AED) : Colors.white,
+                              border: Border.all(color: isSelected ? const Color(0xFF7C3AED) : Colors.grey.shade400),
+                            ),
+                            child: Center(
+                              child: isSelected
+                                  ? const Icon(Icons.check, size: 18, color: Colors.white)
+                                  : Text(letter, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              widget.options[index],
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: isSelected ? const Color(0xFF7C3AED) : Colors.black87,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                          if (isAnswered && isCorrect)
+                            const Icon(Icons.check_circle, color: Colors.green, size: 24),
+                          if (isAnswered && isSelected && !isCorrect)
+                            const Icon(Icons.cancel, color: Colors.red, size: 24),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: ElevatedButton(
+                onPressed: isAnswered ? null : (selectedOption == null ? null : _submitAnswer),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7C3AED),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  isAnswered ? 'Next Question...' : 'Submit Answer',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
   }
 }

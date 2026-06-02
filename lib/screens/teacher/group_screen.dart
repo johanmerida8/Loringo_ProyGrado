@@ -53,6 +53,8 @@ class _TeacherGroupDetailsScreenState
   // Cached activity map data — loaded once, reused for full screen
   List<Map<String, dynamic>>? _contentItems;
 
+  bool _mapFullscreen = false;
+
   static const List<Color> _availableColors = [
     AppColors.primary,
     Color(0xFF2196F3),
@@ -81,6 +83,7 @@ class _TeacherGroupDetailsScreenState
   @override
   void dispose() {
     _settingsNameController.dispose();
+    cachedProgressDashboard = null;
     super.dispose();
   }
 
@@ -603,50 +606,33 @@ class _TeacherGroupDetailsScreenState
   // -- Tab builders ----------------------------------------------------------
 
   Widget _buildContentTab() {
-    return Column(
+    return Stack(
       children: [
-        Container(
-          color: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          child: Row(
-            children: [
-              Text(
-                'Content Map',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[800],
-                ),
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    fullscreenDialog: true,
-                    builder: (_) => GroupActivitiesScreen(
-                      groupId: widget.groupId,
-                      groupName: widget.groupName,
-                      groupColor: widget.groupColor,
-                      preloadedItems: _contentItems,
-                    ),
-                  ),
-                ),
-                icon: const Icon(Icons.fullscreen_rounded, size: 20),
-                label: const Text('Full Screen'),
-                style: TextButton.styleFrom(
-                    foregroundColor: AppColors.primary),
-              ),
-            ],
-          ),
+        TeacherLevelScreen(
+          groupId: widget.groupId,
+          groupName: widget.groupName,
+          embedded: true,  // ← de vuelta a true para el tab normal
+          onLoaded: (items) => _contentItems = items,
+          preloadedItems: _contentItems,
         ),
-        Expanded(
-          child: SingleChildScrollView(
-            child: TeacherLevelScreen(
-              groupId: widget.groupId,
-              groupName: widget.groupName,
-              embedded: true,
-              onLoaded: (items) => _contentItems = items,
+        Positioned(
+          top: 8,
+          right: 8,
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            elevation: 3,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => setState(() => _mapFullscreen = true),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.fullscreen_rounded, color: Color(0xFF4CAF50), size: 20),
+                  SizedBox(width: 4),
+                  Text('Full Screen', style: TextStyle(color: Color(0xFF4CAF50), fontWeight: FontWeight.w600, fontSize: 13)),
+                ]),
+              ),
             ),
           ),
         ),
@@ -814,16 +800,20 @@ class _TeacherGroupDetailsScreenState
     );
   }
 
+  StudentProgressDashboard? cachedProgressDashboard;
+
   Widget _buildStatisticsTab() {
     if (isLoadingMembers) {
       return const Center(child: CircularProgressIndicator());
     }
-    return StudentProgressDashboard(
+
+    cachedProgressDashboard ??= StudentProgressDashboard(
       groupId: widget.groupId,
       groupName: widget.groupName,
       students: _students,
       showAppBar: false,
     );
+    return cachedProgressDashboard!;
   }
 
   Widget _buildSettingsTab() {
@@ -1089,6 +1079,50 @@ class _TeacherGroupDetailsScreenState
 
   @override
   Widget build(BuildContext context) {
+
+    // si el mapa esta en full screen, oculta drawer y bottom nav
+    if (_mapFullscreen) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFE8F5E9),
+        // Sin appBar
+        body: Stack(
+          children: [
+            TeacherLevelScreen(
+              groupId: widget.groupId,
+              groupName: widget.groupName,
+              embedded: false,
+              preloadedItems: _contentItems,
+              onLoaded: (items) => _contentItems = items,
+            ),
+            // Botón flotante para salir del fullscreen
+            Positioned(
+              top: 20, // debajo del status bar
+              right: 12,
+              child: SafeArea(
+                child: Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  elevation: 4,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () => setState(() => _mapFullscreen = false),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.fullscreen_exit_rounded, color: Color(0xFF4CAF50), size: 20),
+                        SizedBox(width: 4),
+                        Text('Exit', style: TextStyle(color: Color(0xFF4CAF50), fontWeight: FontWeight.w600, fontSize: 13)),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final screens = [
       _buildContentTab(),
       _buildMembersTab(),

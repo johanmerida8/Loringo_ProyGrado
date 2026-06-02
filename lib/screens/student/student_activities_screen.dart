@@ -45,7 +45,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
 
       // Get approved content assigned to this group
       final contentSnap = await FirebaseFirestore.instance
-          .collection('personalizedContent')
+          .collection('content')
           .where('assignedTo', arrayContains: groupId)
           .where('status', isEqualTo: 'approved')
           .get();
@@ -62,7 +62,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
         final contentId = contentDoc.id;
 
         final unitsSnap = await FirebaseFirestore.instance
-            .collection('personalizedContent')
+            .collection('content')
             .doc(contentId)
             .collection('units')
             .orderBy('order')
@@ -72,7 +72,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
           final unitId = unitDoc.id;
 
           final lessonsSnap = await FirebaseFirestore.instance
-              .collection('personalizedContent')
+              .collection('content')
               .doc(contentId)
               .collection('units')
               .doc(unitId)
@@ -84,7 +84,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
             final lessonId = lessonDoc.id;
 
             final activitiesSnap = await FirebaseFirestore.instance
-                .collection('personalizedContent')
+                .collection('content')
                 .doc(contentId)
                 .collection('units')
                 .doc(unitId)
@@ -113,7 +113,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
             }
 
             final quizzesSnap = await FirebaseFirestore.instance
-                .collection('personalizedContent')
+                .collection('content')
                 .doc(contentId)
                 .collection('units')
                 .doc(unitId)
@@ -342,7 +342,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
                                                     lessonId: item['lessonId'],
                                                     quizId: item['quizId'],
                                                     quizTitle: item['title'],
-                                                    collectionName: 'personalizedContent',
+                                                    collectionName: 'content',
                                                   ),
                                                 ),
                                               );
@@ -360,7 +360,7 @@ class _StudentActivitiesScreenState extends State<StudentActivitiesScreen> {
                                                         item['activityId'],
                                                     activityTitle:
                                                         item['title'],
-                                                    collectionName: 'personalizedContent',
+                                                    collectionName: 'content',
                                                   ),
                                                 ),
                                               );

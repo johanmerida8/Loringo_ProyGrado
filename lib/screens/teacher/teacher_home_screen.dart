@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/components/app_drawer.dart';
 import 'package:loringo_app/screens/teacher/group_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_content_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_league_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_quizzes_screen.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
@@ -173,7 +175,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           const Divider(),
           ListTile(
             leading: const Icon(Icons.folder_rounded, color: AppColors.primary),
-            title: const Text('My Content'),
+            title: const Text('Content'),
             onTap: () {
               Navigator.pop(context);
               Navigator.push(
@@ -183,6 +185,17 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
             },
           ),
           ListTile(
+            leading: const Icon(Icons.photo_library_rounded, color: AppColors.primary),
+            title: const Text('Media Library'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (_) => const TeacherImageScreen()),
+              );
+            }
+          ),
+          ListTile(
             leading: const Icon(Icons.quiz_rounded, color: AppColors.primary),
             title: const Text('Quizzes'),
             onTap: () {
@@ -190,6 +203,17 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const TeacherQuizzesScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.emoji_events_rounded, color: AppColors.primary),
+            title: const Text('League & Ranking'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TeacherLeagueScreen()),
               );
             },
           ),
@@ -455,7 +479,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
   Future<int> _getAssignedUnitsCount(String groupId) async {
     try {
       final snapshot = await FirebaseFirestore.instance
-          .collection('personalizedContent')
+          .collection('content')
           .where('assignedTo', arrayContains: groupId)
           .where('status', isEqualTo: 'approved')
           .get();

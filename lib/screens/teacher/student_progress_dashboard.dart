@@ -26,7 +26,6 @@ class _UnitRawData {
 class _RawProgress {
   final int xp;
   final Map<String, _UnitRawData> byUnit;
-
   _RawProgress({required this.xp, required this.byUnit});
 }
 
@@ -60,7 +59,7 @@ class _StudentStats {
 class StudentProgressDashboard extends StatefulWidget {
   final String groupId;
   final String groupName;
-  final List<Map<String, dynamic>> students; // {id, name, avatar}
+  final List<Map<String, dynamic>> students;
   final bool showAppBar;
 
   const StudentProgressDashboard({
@@ -85,7 +84,7 @@ class _StudentProgressDashboardState
   String? _error;
 
   List<_UnitInfo> _units = [];
-  _UnitInfo? _selectedUnit; // null = All Units
+  _UnitInfo? _selectedUnit;
   Map<String, _RawProgress> _rawProgress = {};
   List<_StudentStats> _stats = [];
 
@@ -95,7 +94,9 @@ class _StudentProgressDashboardState
     _loadData();
   }
 
-  // ── Data loading ──────────────────────────────────────────────────────
+  // ── Data loading — fully parallelised ────────────────────────────────
+  // All Firestore calls at the same level are fired simultaneously with
+  // Future.wait, reducing wall-clock time from O(N*M) to O(depth).
 
   Future<void> _loadData() async {
     setState(() {
@@ -106,87 +107,98 @@ class _StudentProgressDashboardState
     try {
       final db = FirebaseFirestore.instance;
 
-      // 1. Collect all units + their activity IDs from assigned content
+      // ── Step 1: content docs ──────────────────────────────────────────
       final contentSnap = await db
-          .collection('personalizedContent')
+          .collection('content')
           .where('assignedTo', arrayContains: widget.groupId)
           .where('status', isEqualTo: 'approved')
           .get();
 
-      final units = <_UnitInfo>[];
+      // ── Step 2: all units for every content doc — parallel ────────────
+      final allUnitResults = await Future.wait(
+        contentSnap.docs.map((contentDoc) async {
+          final contentId = contentDoc.id;
 
-      for (final contentDoc in contentSnap.docs) {
-        final contentId = contentDoc.id;
-
-        final unitsSnap = await db
-            .collection('personalizedContent')
-            .doc(contentId)
-            .collection('units')
-            .orderBy('order')
-            .get();
-
-        for (final unitDoc in unitsSnap.docs) {
-          final unitId = unitDoc.id;
-          final unitTitle =
-              (unitDoc.data()['title'] as String?) ?? 'Unit';
-          final activityIds = <String>[];
-
-          final lessonsSnap = await db
-              .collection('personalizedContent')
+          final unitsSnap = await db
+              .collection('content')
               .doc(contentId)
               .collection('units')
-              .doc(unitId)
-              .collection('lessons')
+              .orderBy('order')
               .get();
 
-          for (final lessonDoc in lessonsSnap.docs) {
-            final activitiesSnap = await db
-                .collection('personalizedContent')
-                .doc(contentId)
-                .collection('units')
-                .doc(unitId)
-                .collection('lessons')
-                .doc(lessonDoc.id)
-                .collection('activities')
-                .get();
+          // ── Step 3: lessons for every unit — parallel ─────────────────
+          final unitInfoList = await Future.wait(
+            unitsSnap.docs.map((unitDoc) async {
+              final unitId = unitDoc.id;
+              final unitTitle =
+                  (unitDoc.data()['title'] as String?) ?? 'Unit';
 
-            for (final a in activitiesSnap.docs) {
-              activityIds.add(a.id);
-            }
-          }
+              final lessonsSnap = await db
+                  .collection('content')
+                  .doc(contentId)
+                  .collection('units')
+                  .doc(unitId)
+                  .collection('lessons')
+                  .get();
 
-          units.add(_UnitInfo(
-            contentId: contentId,
-            unitId: unitId,
-            unitTitle: unitTitle,
-            activityIds: activityIds,
-          ));
-        }
-      }
+              // ── Step 4: activities for every lesson — parallel ─────────
+              final activitySnaps = await Future.wait(
+                lessonsSnap.docs.map((lessonDoc) => db
+                    .collection('content')
+                    .doc(contentId)
+                    .collection('units')
+                    .doc(unitId)
+                    .collection('lessons')
+                    .doc(lessonDoc.id)
+                    .collection('activities')
+                    .get()),
+              );
 
-      // 2. Load progress + XP for each student
+              final activityIds = activitySnaps
+                  .expand((snap) => snap.docs.map((d) => d.id))
+                  .toList();
+
+              return _UnitInfo(
+                contentId: contentId,
+                unitId: unitId,
+                unitTitle: unitTitle,
+                activityIds: activityIds,
+              );
+            }),
+          );
+
+          return unitInfoList;
+        }),
+      );
+
+      final units = allUnitResults.expand((list) => list).toList();
+
+      // ── Step 5: XP + progress for every student — parallel ────────────
       final rawProgress = <String, _RawProgress>{};
 
-      for (final student in widget.students) {
+      await Future.wait(widget.students.map((student) async {
         final studentId = student['id'] as String;
 
-        int xp = 0;
-        final studentDoc =
-            await db.collection('students').doc(studentId).get();
-        if (studentDoc.exists) {
-          xp = (studentDoc.data()?['xp'] as int?) ?? 0;
-        }
+        // Fetch student doc and progress subcollection simultaneously
+        final results = await Future.wait([
+          db.collection('students').doc(studentId).get(),
+          db
+              .collection('students')
+              .doc(studentId)
+              .collection('progress')
+              .get(),
+        ]);
 
-        final progressSnap = await db
-            .collection('students')
-            .doc(studentId)
-            .collection('progress')
-            .get();
+        final studentDoc = results[0] as DocumentSnapshot;
+        final progressSnap = results[1] as QuerySnapshot;
+
+        final xp =
+            (studentDoc.data() as Map<String, dynamic>?)?['xp'] as int? ?? 0;
 
         final byUnit = <String, _UnitRawData>{};
 
         for (final doc in progressSnap.docs) {
-          final data = doc.data();
+          final data = doc.data() as Map<String, dynamic>;
           final unitId = (data['unitId'] as String?) ?? '';
           if (unitId.isEmpty) continue;
 
@@ -205,9 +217,9 @@ class _StudentProgressDashboardState
         }
 
         rawProgress[studentId] = _RawProgress(xp: xp, byUnit: byUnit);
-      }
+      }));
 
-      // Reset selected unit if it no longer exists
+      // Reset selected unit if it no longer exists in the new data
       if (_selectedUnit != null &&
           !units.any((u) => u.unitId == _selectedUnit!.unitId)) {
         _selectedUnit = null;
@@ -226,6 +238,7 @@ class _StudentProgressDashboardState
     }
   }
 
+  // ── Stats computation (pure, no async) ───────────────────────────────
   void _buildStats() {
     final targetUnits =
         _selectedUnit != null ? [_selectedUnit!] : _units;
@@ -356,8 +369,7 @@ class _StudentProgressDashboardState
             const SizedBox(height: 16),
             const Text(
               'Could not load progress data',
-              style:
-                  TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -455,8 +467,7 @@ class _StudentProgressDashboardState
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
             color: isSelected ? _green : Colors.grey[100],
             borderRadius: BorderRadius.circular(20),
@@ -468,9 +479,8 @@ class _StudentProgressDashboardState
             label,
             style: TextStyle(
               color: isSelected ? Colors.white : Colors.grey[700],
-              fontWeight: isSelected
-                  ? FontWeight.bold
-                  : FontWeight.w500,
+              fontWeight:
+                  isSelected ? FontWeight.bold : FontWeight.w500,
               fontSize: 13,
             ),
           ),
@@ -484,10 +494,9 @@ class _StudentProgressDashboardState
   Widget _buildSummaryCard() {
     if (_stats.isEmpty) return const SizedBox.shrink();
 
-    final avgPercent = _stats
-            .map((s) => s.percent)
-            .reduce((a, b) => a + b) /
-        _stats.length;
+    final avgPercent =
+        _stats.map((s) => s.percent).reduce((a, b) => a + b) /
+            _stats.length;
 
     final totalActivities = _selectedUnit != null
         ? _selectedUnit!.activityIds.length
@@ -527,6 +536,32 @@ class _StudentProgressDashboardState
                     color: Colors.white70,
                     fontSize: 13,
                     fontWeight: FontWeight.w500),
+              ),
+              const Spacer(),
+              // Manual refresh button — useful since data is cached
+              GestureDetector(
+                onTap: _loadData,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.refresh_rounded,
+                          color: Colors.white, size: 14),
+                      SizedBox(width: 4),
+                      Text('Refresh',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
@@ -685,8 +720,8 @@ class _StudentProgressCard extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16)),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -702,9 +737,8 @@ class _StudentProgressCard extends StatelessWidget {
                   radius: 22,
                   backgroundColor:
                       const Color(0xFF4CAF50).withOpacity(0.15),
-                  backgroundImage: avatar.isNotEmpty
-                      ? AssetImage(avatar)
-                      : null,
+                  backgroundImage:
+                      avatar.isNotEmpty ? AssetImage(avatar) : null,
                   child: avatar.isEmpty
                       ? Text(
                           stats.name.isNotEmpty
@@ -791,7 +825,7 @@ class _StudentProgressCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            // Stats row: activities · stars · avg score
+            // Stats chips
             Wrap(
               spacing: 12,
               runSpacing: 4,

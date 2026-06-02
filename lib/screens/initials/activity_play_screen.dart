@@ -5,8 +5,10 @@ import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
 import 'package:loringo_app/screens/initials/screen_one.dart';
 import 'package:loringo_app/screens/initials/screen_five.dart';
 import 'package:loringo_app/screens/initials/screen_four.dart';
+import 'package:loringo_app/screens/initials/screen_six.dart';
 import 'package:loringo_app/screens/initials/screen_three.dart';
 import 'package:loringo_app/screens/initials/screen_two.dart';
+import 'package:loringo_app/screens/initials/screen_seven.dart';
 import 'package:loringo_app/services/database/database.dart';
 
 class ActivityPlayScreen extends StatefulWidget {
@@ -15,11 +17,11 @@ class ActivityPlayScreen extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String activityTitle;
-  final String? studentId; // For student progress tracking
-  final int? xpBase; // Base XP for completion
-  final int? bonusXP; // Bonus XP from teacher config
+  final String? studentId;
+  final int? xpBase;
+  final int? bonusXP;
   final String collectionName;
-  final bool isPreview; // When true, no progress or XP is saved
+  final bool isPreview;
 
   const ActivityPlayScreen({
     super.key,
@@ -67,24 +69,13 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           .orderBy('order')
           .get();
 
-      print('DEBUG: Loaded ${snapshot.docs.length} tasks from Firestore');
-      for (var doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        print(
-          'DEBUG: Task ${doc.id} - order: ${data['order']}, type: ${data['type']}',
-        );
-      }
-
       setState(() {
         tasks = snapshot.docs;
         isLoading = false;
       });
 
-      if (tasks.isEmpty) {
-        _showNoTasksDialog();
-      }
+      if (tasks.isEmpty) _showNoTasksDialog();
     } catch (e) {
-      print('DEBUG ERROR: $e');
       setState(() => isLoading = false);
       _showErrorDialog('Error loading tasks: $e');
     }
@@ -98,12 +89,11 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
         content: const Text('This activity has no tasks yet.'),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
-            },
-            child: const Text('OK'),
-          ),
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pop(context);
+              },
+              child: const Text('OK')),
         ],
       ),
     );
@@ -117,53 +107,50 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
         content: Text(message),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
-            },
-            child: const Text('OK'),
-          ),
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pop(context);
+              },
+              child: const Text('OK')),
         ],
       ),
     );
   }
 
   void nextTask(bool isCorrect) {
-    // Track correct/wrong answers
     setState(() {
-      if (isCorrect) {
-        correctAnswers++;
-      } else {
-        wrongAnswers++;
-      }
+      if (isCorrect) correctAnswers++;
+      else wrongAnswers++;
     });
+    _advance();
+  }
 
-    print('DEBUG: Task completed - Correct: $isCorrect, Total Correct: $correctAnswers, Total Wrong: $wrongAnswers');
+  void _nextReadingTask(bool pass, int subCorrect, int subWrong) {
+    setState(() {
+      correctAnswers += subCorrect;
+      wrongAnswers   += subWrong;
+    });
+    _advance();
+  }
 
+  void _advance() {
     if (currentTaskIndex < tasks.length - 1) {
-      setState(() {
-        currentTaskIndex++;
-      });
+      setState(() => currentTaskIndex++);
     } else {
-      // Activity completed
       _showCompletionDialog();
     }
   }
 
   void _showCompletionDialog() async {
-    // Save activity completion to progress
     final db = Database();
-
-    // Calculate score as percentage
     final totalQuestions = correctAnswers + wrongAnswers;
-    final score = totalQuestions > 0 ? ((correctAnswers / totalQuestions) * 100).round() : 0;
+    final score = totalQuestions > 0
+        ? ((correctAnswers / totalQuestions) * 100).round()
+        : 0;
 
     int xpEarned = 0;
     try {
-      if (widget.isPreview) {
-        // Teacher preview — never save progress or award XP
-      } else if (widget.studentId != null) {
-        // Student progress tracking (no Firebase Auth)
+      if (!widget.isPreview && widget.studentId != null) {
         xpEarned = await db.saveActivityCompletion(
           studentId: widget.studentId!,
           activityId: widget.activityId,
@@ -177,21 +164,18 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
         );
       }
     } catch (e) {
-      print('Error saving activity progress: $e');
+      debugPrint('Error saving activity progress: $e');
     }
 
     if (!mounted) return;
-
-    final scorePercent = totalQuestions > 0
-        ? ((correctAnswers / totalQuestions) * 100).round()
-        : 0;
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => ActivityCompleteScreen(
+          screenTitle: 'Activity Complete!', // ✅ Added missing parameter
           activityTitle: widget.activityTitle,
-          scorePercent: scorePercent,
+          scorePercent: score,
           correctAnswers: correctAnswers,
           wrongAnswers: wrongAnswers,
           xpEarned: xpEarned,
@@ -204,105 +188,100 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
     final taskData = taskDoc.data() as Map<String, dynamic>;
     final taskType = taskData['type'] ?? '';
 
-    print(
-      'DEBUG: Building task ${currentTaskIndex + 1} of ${tasks.length}, type: $taskType',
-    );
-
     switch (taskType) {
       case 'image_select':
         return ScreenOne(
           key: ValueKey(taskDoc.id),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: widget.activityId,
-          taskId: taskDoc.id,
-          onTaskComplete: nextTask,
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: tasks.length,
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id, onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
           collectionName: widget.collectionName,
         );
-      case 'image_select_reverse':
-        return ScreenFive(
-          key: ValueKey(taskDoc.id),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: widget.activityId,
-          taskId: taskDoc.id,
-          onTaskComplete: nextTask,
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: tasks.length,
-          collectionName: widget.collectionName,
-        );
-      case 'fill_blank':
-        return ScreenFour(
-          key: ValueKey(taskDoc.id),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: widget.activityId,
-          taskId: taskDoc.id,
-          onTaskComplete: nextTask,
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: tasks.length,
-          collectionName: widget.collectionName,
-        );
-      case 'arrange':
-        return ScreenThree(
-          key: ValueKey(taskDoc.id),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: widget.activityId,
-          taskId: taskDoc.id,
-          onTaskComplete: nextTask,
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: tasks.length,
-          collectionName: widget.collectionName,
-        );
+
       case 'complete_the_chat':
         return ScreenTwo(
           key: ValueKey(taskDoc.id),
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: widget.activityId,
-          taskId: taskDoc.id,
-          onTaskComplete: nextTask,
-          currentTaskNumber: currentTaskIndex,
-          totalTasks: tasks.length,
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id, onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
           collectionName: widget.collectionName,
         );
+
+      case 'arrange':
+        return ScreenThree(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id, onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+
+      case 'fill_blank':
+        return ScreenFour(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id, onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+
+      case 'image_select_reverse':
+        return ScreenFive(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id, onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+
+      case 'match':
+        return ScreenSix(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id, onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+
+      case 'reading':
+        return ScreenSeven(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId, unitId: widget.unitId,
+          lessonId: widget.lessonId, activityId: widget.activityId,
+          taskId: taskDoc.id,
+          onTaskComplete: _nextReadingTask,
+          currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+
       default:
         return Scaffold(
           appBar: AppBar(
-            title: Text(widget.activityTitle),
-            backgroundColor: const Color(0xFF4CAF50),
-          ),
+              title: Text(widget.activityTitle),
+              backgroundColor: const Color(0xFF4CAF50)),
           body: Center(
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 100, color: Colors.grey),
-                const SizedBox(height: 24),
-                Text(
-                  'Task type "$taskType" not yet implemented',
-                  style: const TextStyle(fontSize: 18, color: Colors.grey),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: () => nextTask(false),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                  ),
-                  child: const Text(
-                    'Skip Task',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+              const Icon(Icons.error_outline, size: 100, color: Colors.grey),
+              const SizedBox(height: 24),
+              Text('Task type "$taskType" not yet implemented',
+                  style: const TextStyle(fontSize: 18, color: Colors.grey)),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => nextTask(false),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50)),
+                child: const Text('Skip Task',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ]),
           ),
         );
     }
@@ -313,11 +292,9 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
     if (isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
     if (tasks.isEmpty) {
       return const Scaffold(body: Center(child: Text('No tasks available')));
     }
-
     return _buildTaskScreen(tasks[currentTaskIndex]);
   }
 }

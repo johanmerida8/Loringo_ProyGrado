@@ -75,7 +75,7 @@ class _CreatePersonalizedActivityScreenState
   Future<void> _loadExistingActivities() async {
     try {
       final snapshot = await FirebaseFirestore.instance
-          .collection('personalizedContent')
+          .collection('content')
           .doc(widget.contentId)
           .collection('units')
           .doc(widget.unitId)
@@ -232,6 +232,12 @@ class _CreatePersonalizedActivityScreenState
 
   @override
   Widget build(BuildContext context) {
+
+    final safeValue = requiredActivityId != null &&
+            existingActivities.any((a) => a['id'] == requiredActivityId) 
+        ? requiredActivityId
+        : null;
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -475,9 +481,10 @@ class _CreatePersonalizedActivityScreenState
               const SizedBox(height: 20),
               // Required activity dropdown
               DropdownButtonFormField<String>(
-                value: requiredActivityId,
+                value: safeValue,
+                isExpanded: true,          // ← prevents the internal Row from overflowing
                 decoration: InputDecoration(
-                  labelText: 'Prerequisites (Optional)',
+                  labelText: 'Prerequisites',
                   hintText: 'Select activity to unlock this one',
                   prefixIcon: Icon(Icons.lock, color: widget.groupColor),
                   border: OutlineInputBorder(
@@ -499,6 +506,13 @@ class _CreatePersonalizedActivityScreenState
                   filled: true,
                   fillColor: Colors.white,
                   helperText: 'Leave empty if this is the first activity',
+                  // Add right content padding to give the dropdown arrow room
+                  contentPadding: const EdgeInsets.only(
+                    left: 0,      // prefixIcon handles left spacing
+                    right: 12,    // explicit right padding so the arrow doesn't clip
+                    top: 16,
+                    bottom: 16,
+                  ),
                 ),
                 items: [
                   const DropdownMenuItem<String>(
@@ -508,7 +522,10 @@ class _CreatePersonalizedActivityScreenState
                   ...existingActivities.map((activity) {
                     return DropdownMenuItem<String>(
                       value: activity['id'],
-                      child: Text('${activity['order']}. ${activity['title']}'),
+                      child: Text(
+                        '${activity['order']}. ${activity['title']}',
+                        overflow: TextOverflow.ellipsis,  // ← long titles won't overflow
+                      ),
                     );
                   }).toList(),
                 ],

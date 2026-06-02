@@ -4,10 +4,7 @@ import 'package:loringo_app/screens/initials/profile_screen.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-/// Reusable navigation drawer / sidebar shell.
-///
-/// Pass [navItems] to define all navigation options (ListTiles, Dividers, etc.).
-/// Set [wrapInDrawer] to `false` for a plain Column used as a sidebar (admin).
+
 class AppDrawer extends StatelessWidget {
   const AppDrawer({
     super.key,
@@ -18,19 +15,14 @@ class AppDrawer extends StatelessWidget {
     this.wrapInDrawer = true,
   });
 
-  /// Icon inside the avatar circle.
   final IconData headerIcon;
 
-  /// Bold title in the header (e.g. 'Teacher Panel').
   final String title;
 
-  /// Optional subtitle shown below [title] (e.g. teacher name).
   final String? subtitle;
 
-  /// Navigation content � any widgets: ListTiles, Dividers, section headers...
   final List<Widget> navItems;
 
-  /// `true` ? Drawer wrapper (teacher); `false` ? raw Column (admin sidebar).
   final bool wrapInDrawer;
 
   // -- Header ----------------------------------------------------------------

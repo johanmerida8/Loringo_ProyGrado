@@ -57,6 +57,7 @@ dependencies:
   cloudinary_url_gen: ^1.8.0
   crypto: ^3.0.7
   webview_flutter_plus: ^0.4.20
+  permission_handler: ^12.0.1
 
 dev_dependencies:
   flutter_test:

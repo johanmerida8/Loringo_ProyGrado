@@ -7,26 +7,44 @@ import 'package:loringo_app/screens/parent/parent_home_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  final _auth = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
+
+  Future<DocumentSnapshot> _fetchUserDocumentWithRetry(String uid,
+      {int maxRetries = 5, Duration delay = const Duration(milliseconds: 800)}) async {
+    for (int i = 0; i < maxRetries; i++) {
+      try {
+        final doc = await _firestore.collection('users').doc(uid).get();
+        if (doc.exists) return doc;
+        await Future.delayed(delay);
+      } catch (_) {
+        await Future.delayed(delay);
+      }
+    }
+    // After all retries, still not found – return an empty snapshot
+    return _firestore.collection('users').doc(uid).get();
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        // User not logged in
-        if (!snapshot.hasData) {
+      stream: _auth.authStateChanges(),
+      builder: (context, authSnapshot) {
+        if (!authSnapshot.hasData) {
           return const LoginOrRegister();
         }
 
-        // User logged in - check role
-        final uid = snapshot.data!.uid;
-        return StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('users')
-              .doc(uid)
-              .snapshots(),
+        final uid = authSnapshot.data!.uid;
+        return FutureBuilder<DocumentSnapshot>(
+          future: _fetchUserDocumentWithRetry(uid),
           builder: (context, userSnapshot) {
             if (userSnapshot.connectionState == ConnectionState.waiting) {
               return const Scaffold(
@@ -34,89 +52,79 @@ class AuthGate extends StatelessWidget {
               );
             }
 
+            // If still missing after retries – show a helpful error screen
             if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
-              // User document doesn't exist
-              return const LoginOrRegister();
+              return Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 64, color: Colors.orange),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Unable to load your account',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Your user profile could not be found.\nPlease try again or contact support.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () {
+                          // Force refresh: sign out and back to login
+                          _auth.signOut();
+                        },
+                        child: const Text('Sign Out'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
             }
 
             final userData = userSnapshot.data!.data() as Map<String, dynamic>;
             final role = userData['role'];
 
-            // Route based on role (admin, teacher, parent only)
-            // Students use access codes and don't authenticate through Firebase
             switch (role) {
               case 'admin':
                 return const AdminNavigationScreen();
               case 'teacher':
                 return const TeacherHomeScreen();
               case 'parent':
-                // Check if parent has children registered
                 return FutureBuilder<QuerySnapshot>(
-                  future: FirebaseFirestore.instance
+                  future: _firestore
                       .collection('students')
                       .where('parentId', isEqualTo: uid)
                       .limit(1)
                       .get(),
                   builder: (context, childSnapshot) {
-                    if (childSnapshot.connectionState ==
-                        ConnectionState.waiting) {
+                    if (childSnapshot.connectionState == ConnectionState.waiting) {
                       return const Scaffold(
                         body: Center(child: CircularProgressIndicator()),
                       );
                     }
-
-                    // If no children registered, go to register child screen
-                    if (!childSnapshot.hasData ||
-                        childSnapshot.data!.docs.isEmpty) {
+                    if (!childSnapshot.hasData || childSnapshot.data!.docs.isEmpty) {
                       return const ParentRegisterChildScreen();
                     }
-
-                    // If children registered, go to parent home
                     return const ParentHomeScreen();
                   },
                 );
               default:
-                // Missing or invalid role - sign out and redirect to login
-                // This prevents auto-logout loops
-                FirebaseAuth.instance.signOut();
+                // Invalid role – show error instead of auto sign out
                 return Scaffold(
                   body: Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(
-                          Icons.error_outline,
-                          size: 64,
-                          color: Colors.red,
-                        ),
+                        const Icon(Icons.error_outline, size: 64, color: Colors.red),
                         const SizedBox(height: 16),
-                        const Text(
-                          'Account Error',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: Text(
-                            'Your account doesn\'t have a valid role.\nPlease contact support.',
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
+                        const Text('Invalid user role', style: TextStyle(fontSize: 20)),
                         const SizedBox(height: 24),
                         ElevatedButton(
-                          onPressed: () {
-                            // Force navigation to login
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const LoginOrRegister(),
-                              ),
-                            );
-                          },
-                          child: const Text('Back to Login'),
+                          onPressed: () => _auth.signOut(),
+                          child: const Text('Sign Out'),
                         ),
                       ],
                     ),

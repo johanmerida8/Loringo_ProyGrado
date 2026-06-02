@@ -11,14 +11,14 @@ class ContentApprovalScreen extends StatefulWidget {
 }
 
 class _ContentApprovalScreenState extends State<ContentApprovalScreen> {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final Database _database = Database();
+  final Database _db = Database();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: StreamBuilder<List<PendingContent>>(
-        stream: _getPendingContent(),
+        // All Firestore logic lives in Database.getPendingContentStream()
+        stream: _db.getPendingContentStream(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -29,153 +29,84 @@ class _ContentApprovalScreenState extends State<ContentApprovalScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.check_circle_outline,
-                    size: 100,
-                    color: Colors.grey[300],
-                  ),
+                  Icon(Icons.check_circle_outline, size: 100, color: Colors.grey[300]),
                   const SizedBox(height: 24),
-                  Text(
-                    'All Caught Up!',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[800],
-                    ),
-                  ),
+                  Text('All Caught Up!',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.grey[800])),
                   const SizedBox(height: 12),
-                  Text(
-                    'No pending content to review',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[600],
-                    ),
-                  ),
+                  Text('No pending content to review',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16, color: Colors.grey[600])),
                 ],
               ),
             );
           }
 
-          final pendingContents = snapshot.data!;
           return ListView.builder(
             padding: const EdgeInsets.all(16),
-            itemCount: pendingContents.length,
+            itemCount: snapshot.data!.length,
             itemBuilder: (context, index) {
-              final content = pendingContents[index];
+              final content = snapshot.data![index];
               return Card(
                 margin: const EdgeInsets.only(bottom: 16),
                 elevation: 2,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Header with teacher name
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  content.title,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'by ${content.teacherName}',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          ContentStatusBadge(
-                            status: content.status,
-                            showIcon: true,
-                          ),
-                        ],
-                      ),
+                      // Title + status badge
+                      Row(children: [
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(content.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 4),
+                            Text('by ${content.teacherName}', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                          ]),
+                        ),
+                        ContentStatusBadge(status: content.status, showIcon: true),
+                      ]),
                       const SizedBox(height: 12),
                       // Description
-                      Text(
-                        content.description,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(content.description,
+                          style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                          maxLines: 2, overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 12),
-                      // Details
-                      Row(
-                        children: [
-                          Icon(Icons.cake, size: 16, color: Colors.grey[600]),
-                          const SizedBox(width: 6),
-                          Text(
-                            content.ageGroup,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
-                          const SizedBox(width: 6),
-                          Text(
-                            content.createdAt,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
+                      // Age group + date
+                      Row(children: [
+                        Icon(Icons.cake, size: 16, color: Colors.grey[600]),
+                        const SizedBox(width: 6),
+                        Text(content.ageGroup, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                        const SizedBox(width: 16),
+                        Icon(Icons.calendar_today, size: 16, color: Colors.grey[600]),
+                        const SizedBox(width: 6),
+                        Text(content.createdAt, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      ]),
                       const SizedBox(height: 16),
-                      // Action buttons
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () => _rejectContent(
-                                content.contentId,
-                                content.title,
-                              ),
-                              icon: const Icon(Icons.close),
-                              label: const Text('Reject'),
-                              style: OutlinedButton.styleFrom(
+                      // Reject / Approve buttons
+                      Row(children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _rejectContent(content.contentId, content.title),
+                            icon: const Icon(Icons.close),
+                            label: const Text('Reject'),
+                            style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.red,
-                                side: const BorderSide(color: Colors.red),
-                              ),
-                            ),
+                                side: const BorderSide(color: Colors.red)),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => _approveContent(
-                                content.contentId,
-                                content.title,
-                              ),
-                              icon: const Icon(Icons.check),
-                              label: const Text('Approve'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () => _approveContent(content.contentId, content.title),
+                            icon: const Icon(Icons.check),
+                            label: const Text('Approve'),
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green, foregroundColor: Colors.white),
                           ),
-                        ],
-                      ),
+                        ),
+                      ]),
                     ],
                   ),
                 ),
@@ -187,144 +118,54 @@ class _ContentApprovalScreenState extends State<ContentApprovalScreen> {
     );
   }
 
-  /// Get pending content from all teacher groups
-  Stream<List<PendingContent>> _getPendingContent() async* {
+  Future<void> _approveContent(String contentId, String title) async {
     try {
-      final contentSnapshot = await _db
-          .collection('personalizedContent')
-          .where('status', isEqualTo: 'pending')
-          .get();
-
-      final allPendingContent = <PendingContent>[];
-
-      for (final contentDoc in contentSnapshot.docs) {
-        final contentData = contentDoc.data();
-        final teacherId = contentData['teacherId'] as String?;
-
-        // Get teacher name
-        String teacherName = 'Unknown';
-        if (teacherId != null) {
-          final teacherDoc = await _db.collection('users').doc(teacherId).get();
-          if (teacherDoc.exists) {
-            teacherName = teacherDoc.data()?['name'] ?? 'Unknown';
-          }
-        }
-
-        final createdAt = contentData['createdAt'] as Timestamp?;
-        final formattedDate = createdAt != null
-            ? _formatDate(createdAt.toDate())
-            : 'Unknown';
-
-        allPendingContent.add(
-          PendingContent(
-            contentId: contentDoc.id,
-            title: contentData['title'] ?? 'Untitled',
-            description: contentData['description'] ?? 'No description',
-            ageGroup: contentData['ageGroup'] ?? '5-6 years',
-            teacherName: teacherName,
-            status: contentData['status'] ?? 'pending',
-            createdAt: formattedDate,
-          ),
-        );
-      }
-
-      yield allPendingContent;
-    } catch (e) {
-      print('Error fetching pending content: $e');
-      yield [];
-    }
-  }
-
-  /// Approve content
-  Future<void> _approveContent(
-    String contentId,
-    String title,
-  ) async {
-    try {
-      print('[Approval] Approving content | id: $contentId | title: "$title"');
-
-      await _database.writeContentApproved(contentId);
-
-      print('[Approval] ✅ Content approved | id: $contentId | teacher must now assign to groups');
-
+      await _db.writeContentApproved(contentId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ "$title" has been approved'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✅ "$title" has been approved'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ));
       }
     } catch (e) {
-      print('[Approval] ❌ Error approving content | id: $contentId | error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error approving content: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error approving content: $e'),
+          backgroundColor: Colors.red,
+        ));
       }
     }
   }
 
-  /// Reject content with optional reason
-  Future<void> _rejectContent(
-    String contentId,
-    String title,
-  ) async {
+  Future<void> _rejectContent(String contentId, String title) async {
     final reason = await showDialog<String?>(
       context: context,
       builder: (context) => RejectionReasonDialog(title: title),
     );
-
-    if (reason != null) {
-      try {
-        await _database.writeContentRejected(contentId, reason);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('❌ "$title" has been rejected'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error rejecting content: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+    if (reason == null) return;
+    try {
+      await _db.writeContentRejected(contentId, reason);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('❌ "$title" has been rejected'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ));
       }
-    }
-  }
-
-  /// Format date
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
-
-    if (difference.inMinutes < 1) {
-      return 'just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays}d ago';
-    } else {
-      return '${date.day}/${date.month}/${date.year}';
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error rejecting content: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
     }
   }
 }
 
-/// Model class for pending content
+// ── Model ─────────────────────────────────────────────────────────────────────
+
 class PendingContent {
   final String contentId;
   final String title;
@@ -334,7 +175,7 @@ class PendingContent {
   final String status;
   final String createdAt;
 
-  PendingContent({
+  const PendingContent({
     required this.contentId,
     required this.title,
     required this.description,
@@ -345,70 +186,43 @@ class PendingContent {
   });
 }
 
-/// Dialog for rejection reason
+// ── Rejection dialog ──────────────────────────────────────────────────────────
+
 class RejectionReasonDialog extends StatefulWidget {
   final String title;
-
-  const RejectionReasonDialog({
-    super.key,
-    required this.title,
-  });
+  const RejectionReasonDialog({super.key, required this.title});
 
   @override
   State<RejectionReasonDialog> createState() => _RejectionReasonDialogState();
 }
 
 class _RejectionReasonDialogState extends State<RejectionReasonDialog> {
-  late TextEditingController _reasonController;
+  final _ctrl = TextEditingController();
 
   @override
-  void initState() {
-    super.initState();
-    _reasonController = TextEditingController();
-  }
-
-  @override
-  void dispose() {
-    _reasonController.dispose();
-    super.dispose();
-  }
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Reject Content'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Why are you rejecting "${widget.title}"?',
-            style: const TextStyle(fontSize: 14),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Why are you rejecting "${widget.title}"?', style: const TextStyle(fontSize: 14)),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _ctrl,
+          maxLines: 3,
+          decoration: InputDecoration(
+            hintText: 'Provide a reason for rejection (optional)',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _reasonController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: 'Provide a reason for rejection (optional)',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
         ),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         ElevatedButton(
-          onPressed: () => Navigator.pop(context, _reasonController.text),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-          ),
+          onPressed: () => Navigator.pop(context, _ctrl.text),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
           child: const Text('Reject'),
         ),
       ],

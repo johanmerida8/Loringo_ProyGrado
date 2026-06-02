@@ -45,7 +45,7 @@ class _ScreenFiveState extends State<ScreenFive> {
 
   String _userLang = 'English';
   String imageUrl = '';
-  String question = 'What action is shown?';
+  String question = '';
   List<Map<String, dynamic>> textOptions = [];
   String selectedOption = '';
 
@@ -130,7 +130,9 @@ class _ScreenFiveState extends State<ScreenFive> {
           final data = taskData['data'] as Map<String, dynamic>? ?? {};
           String fetchedImage = data['image'] ?? '';
           String fetchedQuestion =
-              taskData['question'] ?? 'What action is shown?';
+              taskData['question']?.isNotEmpty == true
+                  ? taskData['question']
+                  : 'Select the correct phrase';
           List<dynamic> fetchedOptions = data['options'] ?? [];
 
           // Translate question

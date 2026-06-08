@@ -1,3 +1,4 @@
+// teacher_quizzes_screen.dart
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/group_details/quizzes_tab.dart';
@@ -18,23 +19,16 @@ class TeacherQuizzesScreen extends StatelessWidget {
     final db = Database();
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
         backgroundColor: AppColors.primary,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
-          'Quizzes',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 20,
-          ),
-        ),
+        iconTheme: const IconThemeData(color: AppColors.onPrimary),
+        title: const Text('Quizzes', style: AppText.appBarTitle),
       ),
       body: QuizzesTab(
-        groupId: '', // not group-bound; groupId unused in Firestore CRUD
-        groupColor: AppColors.primary,
+        groupId:       '',
+        groupColor:    AppColors.primary,
         contentStream: db.getTeacherApprovedContentStream(teacherId),
       ),
     );

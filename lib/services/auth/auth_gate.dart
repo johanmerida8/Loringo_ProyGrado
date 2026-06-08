@@ -1,139 +1,218 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/admin/admin_navigation_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_home_screen.dart';
 import 'package:loringo_app/screens/parent/parent_home_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
+// import 'package:loringo_app/services/notification/onesignal_service.dart';
+import 'package:loringo_app/services/notifications/one_signal_service.dart'; // Add this import
 
-class AuthGate extends StatefulWidget {
+class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
-
-  @override
-  State<AuthGate> createState() => _AuthGateState();
-}
-
-class _AuthGateState extends State<AuthGate> {
-  final _auth = FirebaseAuth.instance;
-  final _firestore = FirebaseFirestore.instance;
-
-  Future<DocumentSnapshot> _fetchUserDocumentWithRetry(String uid,
-      {int maxRetries = 5, Duration delay = const Duration(milliseconds: 800)}) async {
-    for (int i = 0; i < maxRetries; i++) {
-      try {
-        final doc = await _firestore.collection('users').doc(uid).get();
-        if (doc.exists) return doc;
-        await Future.delayed(delay);
-      } catch (_) {
-        await Future.delayed(delay);
-      }
-    }
-    // After all retries, still not found – return an empty snapshot
-    return _firestore.collection('users').doc(uid).get();
-  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: _auth.authStateChanges(),
+      stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, authSnapshot) {
+        // Loading state
+        if (authSnapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        
+        // Not logged in → show login screen
         if (!authSnapshot.hasData) {
           return const LoginOrRegister();
         }
 
         final uid = authSnapshot.data!.uid;
+        
+        // Logged in → fetch user role and route
         return FutureBuilder<DocumentSnapshot>(
-          future: _fetchUserDocumentWithRetry(uid),
+          future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+          key: ValueKey(uid),
           builder: (context, userSnapshot) {
+            // Still loading → show spinner
             if (userSnapshot.connectionState == ConnectionState.waiting) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
             }
 
-            // If still missing after retries – show a helpful error screen
+            // Check for error
+            if (userSnapshot.hasError) {
+              debugPrint('Error loading user document: ${userSnapshot.error}');
+              return _buildErrorScreen(
+                context,
+                'Error loading user data: ${userSnapshot.error}',
+              );
+            }
+
+            // Document doesn't exist
             if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
-              return Scaffold(
-                body: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error_outline, size: 64, color: Colors.orange),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Unable to load your account',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Your user profile could not be found.\nPlease try again or contact support.',
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: () {
-                          // Force refresh: sign out and back to login
-                          _auth.signOut();
-                        },
-                        child: const Text('Sign Out'),
-                      ),
-                    ],
-                  ),
-                ),
+              debugPrint('User document not found for UID: $uid');
+              return _buildErrorScreen(
+                context,
+                'User profile not found. Please contact support.',
               );
             }
 
             final userData = userSnapshot.data!.data() as Map<String, dynamic>;
-            final role = userData['role'];
+            final role = userData['role'] as String?;
+            
+            debugPrint('User role: $role for UID: $uid');
 
+            // ✅ Initialize OneSignal for mobile users (all roles)
+            if (!kIsWeb) {
+              // Call without waiting to not block navigation
+              OneSignalNotificationService.initializeUser(uid).catchError((e) {
+                debugPrint('OneSignal init error: $e');
+              });
+            }
+
+            // Route based on role
             switch (role) {
               case 'admin':
                 return const AdminNavigationScreen();
               case 'teacher':
                 return const TeacherHomeScreen();
               case 'parent':
-                return FutureBuilder<QuerySnapshot>(
-                  future: _firestore
-                      .collection('students')
-                      .where('parentId', isEqualTo: uid)
-                      .limit(1)
-                      .get(),
-                  builder: (context, childSnapshot) {
-                    if (childSnapshot.connectionState == ConnectionState.waiting) {
-                      return const Scaffold(
-                        body: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-                    if (!childSnapshot.hasData || childSnapshot.data!.docs.isEmpty) {
-                      return const ParentRegisterChildScreen();
-                    }
-                    return const ParentHomeScreen();
-                  },
-                );
+                return _ParentRouter(parentId: uid);
               default:
-                // Invalid role – show error instead of auto sign out
-                return Scaffold(
-                  body: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                        const SizedBox(height: 16),
-                        const Text('Invalid user role', style: TextStyle(fontSize: 20)),
-                        const SizedBox(height: 24),
-                        ElevatedButton(
-                          onPressed: () => _auth.signOut(),
-                          child: const Text('Sign Out'),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
+                return _buildErrorScreen(context, 'Invalid user role: $role');
             }
           },
         );
       },
     );
+  }
+
+  Widget _buildErrorScreen(BuildContext context, String message) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.orange),
+            const SizedBox(height: 16),
+            const Text(
+              'Unable to load your account',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () async {
+                await FirebaseAuth.instance.signOut();
+                if (context.mounted) {
+                  // Force rebuild
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(builder: (_) => const AuthGate()),
+                  );
+                }
+              },
+              child: const Text('Sign Out'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Parent router - checks if parent has children
+class _ParentRouter extends StatefulWidget {
+  final String parentId;
+
+  const _ParentRouter({required this.parentId});
+
+  @override
+  State<_ParentRouter> createState() => _ParentRouterState();
+}
+
+class _ParentRouterState extends State<_ParentRouter> {
+  bool? _hasChildren;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkChildren();
+  }
+
+  Future<void> _checkChildren() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('students')
+          .where('parentId', isEqualTo: widget.parentId)
+          .limit(1)
+          .get();
+      
+      if (mounted) {
+        setState(() {
+          _hasChildren = snapshot.docs.isNotEmpty;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking children: $e');
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+          _hasChildren = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_error != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              const Text('Error loading parent data'),
+              const SizedBox(height: 8),
+              Text(_error!),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _isLoading = true;
+                    _error = null;
+                    _checkChildren();
+                  });
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_hasChildren == false) {
+      return const ParentRegisterChildScreen();
+    }
+    
+    return const ParentHomeScreen();
   }
 }

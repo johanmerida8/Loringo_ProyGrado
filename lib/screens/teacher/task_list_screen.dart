@@ -1,6 +1,10 @@
+// task_list_screen.dart
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
+// import 'package:loringo_app/screens/teacher/hierarchy_widgets.dart';
+import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class PersonalizedTaskListScreen extends StatefulWidget {
   final String groupId;
@@ -9,7 +13,7 @@ class PersonalizedTaskListScreen extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String activityTitle;
-  final Color groupColor;
+  final Color  groupColor;
 
   const PersonalizedTaskListScreen({
     super.key,
@@ -33,41 +37,48 @@ class _PersonalizedTaskListScreenState
 
   Future<void> _deleteTask(String taskId, String question) async {
     final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete Task'),
-        content: Text('Delete this task?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text('Delete'),
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadii.md)),
+            title: const Text('Delete Task'),
+            content: const Text('Delete this task?'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.danger,
+                  foregroundColor: AppColors.onPrimary,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.sm)),
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
           ),
-        ],
-      ),
-    ) ?? false;
+        ) ??
+        false;
     if (!confirm) return;
     try {
       await db.deletePersonalizedTask(
-        widget.groupId,
-        widget.contentId,
-        widget.unitId,
-        widget.lessonId,
-        widget.activityId,
-        taskId,
+        widget.groupId, widget.contentId, widget.unitId,
+        widget.lessonId, widget.activityId, taskId,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Task deleted'), backgroundColor: Colors.green),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Task deleted'),
+          backgroundColor: AppColors.primary,
+        ));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: AppColors.danger,
+        ));
       }
     }
   }
@@ -77,171 +88,180 @@ class _PersonalizedTaskListScreenState
       context,
       MaterialPageRoute(
         builder: (_) => CreatePersonalizedTaskScreen(
-          groupId: widget.groupId,
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
+          groupId:    widget.groupId,
+          contentId:  widget.contentId,
+          unitId:     widget.unitId,
+          lessonId:   widget.lessonId,
           activityId: widget.activityId,
           groupColor: widget.groupColor,
-          taskId: taskId,
+          taskId:     taskId,
           existingData: {
             'question': data['question'],
-            'order': data['order'],
-            'type': data['type'],
-            'data': data['data'],
+            'order':    data['order'],
+            'type':     data['type'],
+            'data':     data['data'],
           },
         ),
       ),
     );
   }
 
-  String _getTaskTypeLabel(String type) {
-    switch (type) {
-      case 'image_select': return 'Image Selection';
-      case 'fill_blank': return 'Fill the Blank';
-      case 'arrange': return 'Arrange Words';
-      case 'complete_the_chat': return 'Complete Chat';
-      case 'word_match': return 'Word Match';
-      case 'reading': return 'Reading';
-      default: return type;
-    }
+  String _typeLabel(String type) {
+    const map = {
+      'image_select':         'Image Selection',
+      'image_select_reverse': 'Image Select Reverse',
+      'fill_blank':           'Fill the Blank',
+      'arrange':              'Arrange Words',
+      'complete_the_chat':    'Complete Chat',
+      'word_match':           'Word Match',
+      'match':                'Match',
+      'reading':              'Reading',
+    };
+    return map[type] ?? type;
   }
 
-  IconData _getTaskTypeIcon(String type) {
-    switch (type) {
-      case 'image_select': return Icons.image;
-      case 'fill_blank': return Icons.edit_note;
-      case 'arrange': return Icons.sort;
-      case 'complete_the_chat': return Icons.chat;
-      case 'word_match': return Icons.shuffle;
-      case 'reading': return Icons.menu_book;
-      default: return Icons.help;
-    }
+  IconData _typeIcon(String type) {
+    const map = {
+      'image_select':         Icons.image,
+      'image_select_reverse': Icons.image_search,
+      'fill_blank':           Icons.edit_note,
+      'arrange':              Icons.sort,
+      'complete_the_chat':    Icons.chat,
+      'word_match':           Icons.shuffle,
+      'match':                Icons.compare_arrows,
+      'reading':              Icons.menu_book,
+    };
+    return map[type] ?? Icons.help_outline;
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = widget.groupColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F7),
+      backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
-        backgroundColor: widget.groupColor,
+        backgroundColor: c,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: AppColors.onPrimary),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(widget.activityTitle,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
-            const Text('Tasks', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                style: const TextStyle(
+                    color: AppColors.onPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 17)),
+            const Text('Tasks',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
           ],
         ),
       ),
       body: StreamBuilder(
         stream: db.getPersonalizedTasksStream(
-          widget.groupId,
-          widget.contentId,
-          widget.unitId,
-          widget.lessonId,
-          widget.activityId,
+          widget.groupId, widget.contentId, widget.unitId,
+          widget.lessonId, widget.activityId,
         ),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator(color: widget.groupColor));
+            return Center(child: CircularProgressIndicator(color: c));
           }
           final tasks = snapshot.data?.docs ?? [];
 
           if (tasks.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.help_outline, size: 80, color: Colors.grey.shade300),
-                  const SizedBox(height: 16),
-                  Text('No Tasks Yet',
-                      style: TextStyle(fontSize: 18, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Text('Tap the + button to create your first task',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => CreatePersonalizedTaskScreen(
-                            groupId: widget.groupId,
-                            contentId: widget.contentId,
-                            unitId: widget.unitId,
-                            lessonId: widget.lessonId,
-                            activityId: widget.activityId,
-                            groupColor: widget.groupColor,
-                          ),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.add),
-                    label: const Text('Create First Task'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: widget.groupColor,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
+            return HierarchyEmptyState(
+              icon:        Icons.help_outline,
+              title:       'No Tasks Yet',
+              subtitle:    'Tap + to create your first task',
+              color:       c,
+              actionLabel: 'Create First Task',
+              onAction: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CreatePersonalizedTaskScreen(
+                    groupId:    widget.groupId,
+                    contentId:  widget.contentId,
+                    unitId:     widget.unitId,
+                    lessonId:   widget.lessonId,
+                    activityId: widget.activityId,
+                    groupColor: c,
                   ),
-                ],
+                ),
               ),
             );
           }
 
           return ListView.builder(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             itemCount: tasks.length,
             itemBuilder: (context, i) {
-              final doc = tasks[i];
-              final data = doc.data() as Map<String, dynamic>;
+              final doc      = tasks[i];
+              final data     = doc.data() as Map<String, dynamic>;
               final question = data['question'] ?? 'Untitled';
-              final type = data['type'] ?? 'unknown';
-              final order = data['order'] ?? 0;
+              final type     = data['type']     ?? 'unknown';
+              final order    = data['order']    ?? 0;
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              return Container(
+                margin: const EdgeInsets.only(bottom: AppSpacing.md - 2),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(AppRadii.md),
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3))
+                  ],
+                ),
                 child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.sm - 2),
                   leading: Container(
-                    width: 44,
-                    height: 44,
+                    width: 44, height: 44,
                     decoration: BoxDecoration(
-                      color: widget.groupColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
+                      color: c.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(AppRadii.md),
                     ),
                     child: Center(
-                      child: Icon(_getTaskTypeIcon(type),
-                          color: widget.groupColor, size: 24),
+                        child: Icon(_typeIcon(type), color: c, size: 22)),
+                  ),
+                  title: Text(
+                    '$order. $question',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: c.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(AppRadii.sm),
+                        ),
+                        child: Text(_typeLabel(type),
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: c)),
+                      ),
                     ),
                   ),
-                  title: Text('$order. $question',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(_getTaskTypeLabel(type),
-                      style: TextStyle(fontSize: 12, color: widget.groupColor, fontWeight: FontWeight.w600)),
-                  trailing: PopupMenuButton(
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        child: const Row(children: [Icon(Icons.edit, color: Colors.blue), SizedBox(width: 8), Text('Edit')]),
-                        onTap: () => _editTask(doc.id, {
-                          'question': question,
-                          'order': order,
-                          'type': type,
-                          'data': data['data'],
-                        }),
-                      ),
-                      PopupMenuItem(
-                        child: const Row(children: [Icon(Icons.delete, color: Colors.red), SizedBox(width: 8), Text('Delete')]),
-                        onTap: () => _deleteTask(doc.id, question),
-                      ),
-                    ],
+                  trailing: HierarchyPopupActions(
+                    onEdit: () => _editTask(doc.id, {
+                      'question': question,
+                      'order':    order,
+                      'type':     type,
+                      'data':     data['data'],
+                    }),
+                    onDelete: () => _deleteTask(doc.id, question),
                   ),
                 ),
               );
@@ -250,24 +270,25 @@ class _PersonalizedTaskListScreenState
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => CreatePersonalizedTaskScreen(
-                groupId: widget.groupId,
-                contentId: widget.contentId,
-                unitId: widget.unitId,
-                lessonId: widget.lessonId,
-                activityId: widget.activityId,
-                groupColor: widget.groupColor,
-              ),
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CreatePersonalizedTaskScreen(
+              groupId:    widget.groupId,
+              contentId:  widget.contentId,
+              unitId:     widget.unitId,
+              lessonId:   widget.lessonId,
+              activityId: widget.activityId,
+              groupColor: c,
             ),
-          );
-        },
-        backgroundColor: widget.groupColor,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text('Add Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ),
+        backgroundColor: c,
+        elevation: 3,
+        icon: const Icon(Icons.add, color: AppColors.onPrimary),
+        label: const Text('Add Task',
+            style: TextStyle(
+                color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
       ),
     );
   }

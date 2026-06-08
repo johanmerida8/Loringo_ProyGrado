@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 import 'package:lottie/lottie.dart';
 
 class ScreenFour extends StatefulWidget {
@@ -313,7 +313,8 @@ class _ScreenFourState extends State<ScreenFour> {
                     elevation: 5,
                   ),
                   child: Text(
-                    TeacherUITranslations.get('continueBtnText', _userLang),
+                    // TeacherUITranslations.get('continueBtnText', _userLang),
+                    'Continue',
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -394,7 +395,8 @@ class _ScreenFourState extends State<ScreenFour> {
                 borderRadius: BorderRadius.circular(16)),
           ),
           child: Text(
-            TeacherUITranslations.get('check', _userLang),
+            // TeacherUITranslations.get('check', _userLang),
+            'Check',
             style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,

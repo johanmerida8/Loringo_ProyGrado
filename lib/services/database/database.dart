@@ -1,6 +1,11 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:loringo_app/screens/admin/admin_approval_content_screen.dart';
+import 'package:loringo_app/services/notifications/notification_service.dart';
+// import 'package:loringo_app/services/notifications/notification_service.dart';
 // import 'package:loringo_app/screens/admin/content_approval_screen.dart';
 
 class Database {
@@ -71,6 +76,11 @@ class Database {
       firstCompletedAt = now;
     }
 
+    // Calculate stars based on the best score (percentage)
+    int stars = 1;
+    if (bestScore >= 90) stars = 3;
+    else if (bestScore >= 70) stars = 2;
+
     await studentAttempts(studentId, activityId).doc('attempt_$totalAttempts').set({
       'attemptNumber': totalAttempts, 'score': score,
       'correctAnswers': correctAnswers, 'wrongAnswers': wrongAnswers,
@@ -80,6 +90,7 @@ class Database {
       'activityId': activityId, 'contentId': contentId, 'unitId': unitId,
       'isCompleted': true, 'firstCompletedAt': firstCompletedAt,
       'lastCompletedAt': now, 'totalAttempts': totalAttempts, 'bestScore': bestScore,
+      'stars': stars,
     });
     await _db.collection('students').doc(studentId).update({'xp': FieldValue.increment(xpEarned)});
     return xpEarned;
@@ -94,67 +105,246 @@ class Database {
   }
 
   Future<void> saveQuizCompletion({
-    required String studentId, required String quizId,
-    required String contentId, required String unitId,
-    required int score, required int totalQuestions,
-    required int stars, required int xpEarned,
-    bool updateBestOnly = false, String unitTitle = '',
-    bool generateReport = false, String reportType = 'unit',
+    required String studentId,
+    required String quizId,
+    required String contentId,
+    required String unitId,
+    required int score,
+    required int totalQuestions,
+    required int stars,
+    required int xpEarned,
+    bool updateBestOnly = false,
+    String unitTitle = '',
+    bool generateReport = false,  // true ONLY for unit quizzes
+    String reportType = 'unit',
+    String studentName = '',      // forwarded to push notification body
+    String feedback = '',
+    bool passed = false,
   }) async {
     if (updateBestOnly) {
       await studentProgress(studentId).doc(quizId).update({
-        'score': score, 'stars': stars,
-        'lastAttemptAt': FieldValue.serverTimestamp(), 'attempts': FieldValue.increment(1),
+        'score': score,
+        'stars': stars,
+        'lastAttemptAt': FieldValue.serverTimestamp(),
+        'attempts': FieldValue.increment(1),
       });
     } else {
       await studentProgress(studentId).doc(quizId).set({
-        'quizId': quizId, 'contentId': contentId, 'unitId': unitId,
-        'score': score, 'totalQuestions': totalQuestions, 'stars': stars,
-        'xpEarned': xpEarned, 'completedAt': FieldValue.serverTimestamp(),
-        'lastAttemptAt': FieldValue.serverTimestamp(), 'attempts': 1, 'isCompleted': true,
+        'quizId': quizId,
+        'contentId': contentId,
+        'unitId': unitId,
+        'score': score,
+        'totalQuestions': totalQuestions,
+        'stars': stars,
+        'xpEarned': xpEarned,
+        'completedAt': FieldValue.serverTimestamp(),
+        'lastAttemptAt': FieldValue.serverTimestamp(),
+        'attempts': 1,
+        'isCompleted': passed,
       });
     }
-    if (xpEarned > 0) await _db.collection('students').doc(studentId).update({'xp': FieldValue.increment(xpEarned)});
+
+    if (xpEarned > 0) {
+      await _db.collection('students').doc(studentId).update({
+        'xp': FieldValue.increment(xpEarned),
+      });
+    }
+
+    // Only unit quizzes generate reports + send notifications.
+    // Lesson quizzes always call with generateReport: false.
     if (generateReport && !updateBestOnly) {
-      await _generateReport(studentId: studentId, contentId: contentId, unitId: unitId,
-        unitTitle: unitTitle.isNotEmpty ? unitTitle : 'Quiz', quizCorrectCount: score,
-        quizTotalQuestions: totalQuestions, quizStars: stars, reportType: reportType);
+      await _generateReport(
+        studentId: studentId,
+        contentId: contentId,
+        unitId: unitId,
+        unitTitle: unitTitle.isNotEmpty ? unitTitle : 'Quiz',
+        quizCorrectCount: score,
+        quizTotalQuestions: totalQuestions,
+        quizStars: stars,
+        reportType: reportType,
+        studentName: studentName,
+        feedback: feedback,
+      );
     }
   }
+
 
   CollectionReference reports(String studentId) => _db.collection('students').doc(studentId).collection('reports');
   Future<DocumentSnapshot> getReport(String studentId, String reportId) => reports(studentId).doc(reportId).get();
   Stream<QuerySnapshot> getReportsStream(String studentId) => reports(studentId).snapshots();
 
   Future<void> _generateReport({
-    required String studentId, required String contentId, required String unitId,
-    required String unitTitle, required int quizCorrectCount,
-    required int quizTotalQuestions, required int quizStars, String reportType = 'unit',
+    required String studentId,
+    required String contentId,
+    required String unitId,
+    required String unitTitle,
+    required int quizCorrectCount,
+    required int quizTotalQuestions,
+    required int quizStars,
+    String reportType = 'unit',
+    String studentName = '',
+    String feedback = '',
   }) async {
-    final quizPercent = quizTotalQuestions == 0 ? 0 : (quizCorrectCount / quizTotalQuestions * 100).round();
+    final quizPercent = quizTotalQuestions == 0
+        ? 0
+        : (quizCorrectCount / quizTotalQuestions * 100).round();
+
+    // Count activities in this unit
     int totalActivities = 0;
     final lessonsSnap = await personalizedLessons(contentId, unitId).get();
     for (final l in lessonsSnap.docs) {
-      totalActivities += (await personalizedActivities(contentId, unitId, l.id).get()).docs.length;
+      totalActivities +=
+          (await personalizedActivities(contentId, unitId, l.id).get())
+              .docs.length;
     }
+
+    // Count completed activities for this student in this unit
     final progressSnap = await studentProgress(studentId).get();
     int activitiesCompleted = 0;
     for (final doc in progressSnap.docs) {
       final data = doc.data() as Map<String, dynamic>;
-      if (data['unitId'] == unitId && data['isCompleted'] == true && data.containsKey('activityId')) activitiesCompleted++;
+      if (data['unitId'] == unitId &&
+          data['isCompleted'] == true &&
+          data.containsKey('activityId')) {
+        activitiesCompleted++;
+      }
     }
+
+    // Previous unit scores for trend display
     final prevSnap = await reports(studentId).get();
     final previousUnitScores = prevSnap.docs
-      .where((d) => (d.data() as Map<String, dynamic>)['unitId'] != unitId)
-      .map((d) => ((d.data() as Map<String, dynamic>)['quizPercent'] as int?) ?? 0).toList();
-    await reports(studentId).doc(reportType == 'content' ? contentId : unitId).set({
-      'reportType': reportType, 'contentId': contentId, 'unitId': unitId, 'unitTitle': unitTitle,
-      'quizCorrect': quizCorrectCount, 'quizIncorrect': quizTotalQuestions - quizCorrectCount,
-      'quizTotalQuestions': quizTotalQuestions, 'quizPercent': quizPercent,
-      'activitiesCompleted': activitiesCompleted, 'totalActivities': totalActivities,
-      'activitiesPercent': totalActivities == 0 ? 0 : (activitiesCompleted / totalActivities * 100).round(),
-      'previousUnitScores': previousUnitScores, 'generatedAt': FieldValue.serverTimestamp(),
+        .where((d) =>
+            (d.data() as Map<String, dynamic>)['unitId'] != unitId)
+        .map((d) =>
+            ((d.data() as Map<String, dynamic>)['quizPercent'] as int?) ?? 0)
+        .toList();
+
+    // Write report document
+    await reports(studentId)
+        .doc(reportType == 'content' ? contentId : unitId)
+        .set({
+      'reportType': reportType,
+      'contentId': contentId,
+      'unitId': unitId,
+      'unitTitle': unitTitle,
+      'quizCorrect': quizCorrectCount,
+      'quizIncorrect': quizTotalQuestions - quizCorrectCount,
+      'quizTotalQuestions': quizTotalQuestions,
+      'quizPercent': quizPercent,
+      'activitiesCompleted': activitiesCompleted,
+      'totalActivities': totalActivities,
+      'activitiesPercent': totalActivities == 0
+          ? 0
+          : (activitiesCompleted / totalActivities * 100).round(),
+      'previousUnitScores': previousUnitScores,
+      'feedback': feedback,
+      'generatedAt': FieldValue.serverTimestamp(),
     });
+
+    // ─────────────────────────────────────────────────────────────
+    // Send push notification to parent – runs after report is saved.
+    // A failure here never prevents the report from being written.
+    // ─────────────────────────────────────────────────────────────
+    await NotificationService.sendReportNotification(
+      studentId: studentId,
+      studentName: studentName.isNotEmpty ? studentName : 'Your child',
+      unitTitle: unitTitle,
+    );
+  }
+
+  Future<void> saveReportOnly({
+    required String studentId,
+    required String unitId,
+    required String unitTitle,
+    required int score,
+    required int totalQuestions,
+    required int stars,
+    required String feedback,
+  }) async {
+    final quizPercent = totalQuestions == 0 ? 0 : (score / totalQuestions * 100).round();
+    
+    // Get existing report data if any (to preserve previous unit scores)
+    final existingReport = await reports(studentId).doc(unitId).get();
+    final previousUnitScores = existingReport.exists
+        ? (existingReport.data() as Map<String, dynamic>)['previousUnitScores'] as List? ?? []
+        : [];
+    
+    // ============================================================
+    // Calculate activities completed in this unit
+    // ============================================================
+    int totalActivities = 0;
+    int activitiesCompleted = 0;
+    
+    try {
+      // First, find which content this unit belongs to
+      // We need to search through content to find which one contains this unit
+      final contentSnapshot = await _db.collection('content').get();
+      
+      String? contentId;
+      for (final doc in contentSnapshot.docs) {
+        final unitsSnapshot = await doc.reference.collection('units').get();
+        final hasUnit = unitsSnapshot.docs.any((u) => u.id == unitId);
+        if (hasUnit) {
+          contentId = doc.id;
+          break;
+        }
+      }
+      
+      if (contentId != null) {
+        // Get all lessons in this unit
+        final lessonsSnapshot = await personalizedLessons(contentId, unitId).get();
+        
+        for (final lesson in lessonsSnapshot.docs) {
+          // Get all activities in this lesson
+          final activitiesSnapshot = await personalizedActivities(contentId, unitId, lesson.id).get();
+          totalActivities += activitiesSnapshot.docs.length;
+        }
+        
+        // Count completed activities for this student
+        final studentProgressSnapshot = await studentProgress(studentId).get();
+        
+        for (final progressDoc in studentProgressSnapshot.docs) {
+          final data = progressDoc.data() as Map<String, dynamic>;
+          // Check if this progress belongs to this unit and is an activity (not a quiz)
+          if (data['unitId'] == unitId && 
+              data['isCompleted'] == true &&
+              data.containsKey('activityId') &&
+              data['activityId'] != null) {
+            activitiesCompleted++;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error calculating activities for report: $e');
+      // Continue with zeros if calculation fails
+    }
+    
+    // Calculate activities percentage
+    final activitiesPercent = totalActivities == 0 
+        ? 0 
+        : (activitiesCompleted / totalActivities * 100).round();
+    
+    // Save ONLY the report document
+    await reports(studentId).doc(unitId).set({
+      'reportType': 'unit',
+      'unitId': unitId,
+      'unitTitle': unitTitle,
+      'quizCorrect': score,
+      'quizIncorrect': totalQuestions - score,
+      'quizTotalQuestions': totalQuestions,
+      'quizPercent': quizPercent,
+      'activitiesCompleted': activitiesCompleted,
+      'totalActivities': totalActivities,
+      'activitiesPercent': activitiesPercent,
+      'previousUnitScores': previousUnitScores,
+      'stars': stars,
+      'feedback': feedback,
+      'generatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    
+    debugPrint('✅ Report saved for student: $studentId, unit: $unitId');
+    debugPrint('   Quiz: $score/$totalQuestions ($quizPercent%)');
+    debugPrint('   Activities: $activitiesCompleted/$totalActivities ($activitiesPercent%)');
   }
 
   // =========================
@@ -241,6 +431,33 @@ class Database {
       personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).update({'type': type, 'question': question, 'order': order, 'data': data});
   Future<void> deletePersonalizedTask(String groupId, String contentId, String unitId, String lessonId, String activityId, String taskId) =>
       personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).delete();
+
+  
+  // =========================
+  // ACTIVITY TASKS
+  // =========================
+
+  Future<List<QueryDocumentSnapshot>> getActivityTasks({
+    required String contentId,
+    required String unitId,
+    required String lessonId,
+    required String activityId,
+    String collectionName = 'content',
+  }) async {
+    final snapshot = await _db
+        .collection(collectionName)
+        .doc(contentId)
+        .collection('units')
+        .doc(unitId)
+        .collection('lessons')
+        .doc(lessonId)
+        .collection('activities')
+        .doc(activityId)
+        .collection('tasks')
+        .orderBy('order')
+        .get();
+    return snapshot.docs;
+  }
 
   // =========================
   // MEDIA LIBRARY — unified collection for admin + teachers
@@ -496,6 +713,7 @@ class Database {
     required List<Map<String, dynamic>> questions,
     required int passingScore,
     required int xpReward,
+    required int maxAttempts,
   }) async {
     final quizRef = allQuizzes.doc(quizId);
     final batch = _db.batch();
@@ -510,6 +728,7 @@ class Database {
       'passingScore':   passingScore,
       'xpReward':       xpReward.clamp(0, 100),
       'isGraded':       true,
+      'maxAttempts': maxAttempts,
       'createdAt':      FieldValue.serverTimestamp(),
     });
 
@@ -531,13 +750,39 @@ class Database {
     required String title,
     required int passingScore,
     required int xpReward,
+    required int maxAttempts,
+    required List<Map<String, dynamic>> questions,
   }) async {
-    await allQuizzes.doc(quizId).update({
+    final quizRef = allQuizzes.doc(quizId);
+
+    await quizRef.update({
       'title':        title,
       'passingScore': passingScore,
       'xpReward':     xpReward.clamp(0, 100),
+      'maxAttempts':  maxAttempts,
+      'totalQuestions': questions.length,
       'updatedAt':    FieldValue.serverTimestamp(),
     });
+
+    // delete all existing questions
+    final existingQuestions = await quizRef.collection('questions').get();
+    final batch = _db.batch();
+    for (final doc in existingQuestions.docs) {
+      batch.delete(doc.reference);
+    }
+
+    // add new questions
+    for (final q in questions) {
+      final qRef = quizRef.collection('questions').doc('q_${q['order']}');
+      batch.set(qRef, {
+        'question': q['question'],
+        'options': q['options'],
+        'correctIndex': q['correctIndex'],
+        'order': q['order'],
+      });
+    }
+
+    await batch.commit();
   }
 
   Future<void> deletePersonalizedUnitQuiz({required String quizId}) async {
@@ -624,5 +869,5 @@ class Database {
         .orderBy('createdAt', descending: true)
         .snapshots();
   }
- 
+  
 }

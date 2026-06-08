@@ -7,7 +7,7 @@ import 'package:flutter_svg/svg.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 import 'package:lottie/lottie.dart';
 
 class ScreenFive extends StatefulWidget {
@@ -157,7 +157,6 @@ class _ScreenFiveState extends State<ScreenFive> {
         }
       }
     } catch (e) {
-      print('Error fetching task: $e');
     }
   }
 
@@ -256,17 +255,10 @@ class _ScreenFiveState extends State<ScreenFive> {
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: () {
-                          print('DEBUG ScreenFive: CONTINUE button pressed');
                           Navigator.pop(context); // Close bottom sheet
                           if (widget.onTaskComplete != null) {
-                            print(
-                              'DEBUG ScreenFive: Calling onTaskComplete callback with isCorrect=$isCorrect',
-                            );
                             widget.onTaskComplete!(isCorrect);
                           } else {
-                            print(
-                              'DEBUG ScreenFive: No callback, popping back',
-                            );
                             Navigator.pop(context);
                           }
                         },
@@ -279,7 +271,8 @@ class _ScreenFiveState extends State<ScreenFive> {
                           elevation: 5,
                         ),
                         child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
+                          // TeacherUITranslations.get('continueBtnText', _userLang),
+                          'Continue',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
@@ -294,17 +287,10 @@ class _ScreenFiveState extends State<ScreenFive> {
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: () {
-                          print('DEBUG ScreenFive: CONTINUE button pressed (wrong answer)');
                           Navigator.pop(context); // Close bottom sheet
                           if (widget.onTaskComplete != null) {
-                            print(
-                              'DEBUG ScreenFive: Calling onTaskComplete callback with isCorrect=$isCorrect',
-                            );
                             widget.onTaskComplete!(isCorrect);
                           } else {
-                            print(
-                              'DEBUG ScreenFive: No callback, popping back',
-                            );
                             Navigator.pop(context);
                           }
                         },
@@ -317,7 +303,8 @@ class _ScreenFiveState extends State<ScreenFive> {
                           elevation: 5,
                         ),
                         child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
+                          // TeacherUITranslations.get('continueBtnText', _userLang),
+                          'Continue',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
@@ -470,7 +457,8 @@ class _ScreenFiveState extends State<ScreenFive> {
                             const SizedBox(height: 24),
 
                             Text(
-                              TeacherUITranslations.get('selectCorrectPhrase', _userLang),
+                              // TeacherUITranslations.get('selectCorrectPhrase', _userLang),
+                              'Select the correct phrase',
                               style: const TextStyle(
                                 fontSize: 18,
                                 color: Colors.black54,
@@ -599,7 +587,8 @@ class _ScreenFiveState extends State<ScreenFive> {
                             elevation: 5,
                           ),
                           child: Text(
-                            TeacherUITranslations.get('check', _userLang),
+                            // TeacherUITranslations.get('check', _userLang),
+                            'Check',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 18,

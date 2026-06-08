@@ -68,13 +68,17 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
         'accessCode': accessCode,
         'avatar': selectedAvatar ?? 'assets/avatars/panda.png',
         'state': 1,
+        'groupId': null,      // No group initially
+        'groupName': null,    // No group name initially
+        'xp': 0,
         'createdAt': FieldValue.serverTimestamp(),
       };
 
       // Insert to Firebase
       await FirebaseFirestore.instance
           .collection('students')
-          .add(newStudentData);
+          .doc(accessCode) // Use access code as document ID for easy lookup
+          .set(newStudentData);
 
       if (mounted) {
         setState(() {

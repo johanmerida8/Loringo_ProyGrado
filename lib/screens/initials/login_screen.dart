@@ -8,6 +8,8 @@ import 'package:loringo_app/components/my_textfield.dart';
 import 'package:loringo_app/components/responsive.dart';
 import 'package:loringo_app/screens/initials/reset_password_screen.dart';
 import 'package:loringo_app/screens/student/student_code_screen.dart';
+import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/services/auth/student_auth_service.dart';
 // import 'package:loringo_app/screens/register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -82,13 +84,21 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
+      await StudentAuthService.clearStudentLogin(); // Clear any existing student session
+
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
-      // AuthGate will handle routing based on role automatically
-      // No need to manually navigate - the StreamBuilder will detect auth state change
-    } on FirebaseAuthException catch (e) {
+      
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthGate()), 
+          (route) => false,
+        );
+      }
+
+    } on FirebaseAuthException {
       resetRecaptcha();
       setState(() {
         isLoading = false;

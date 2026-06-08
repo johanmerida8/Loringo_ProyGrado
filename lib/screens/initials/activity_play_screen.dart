@@ -1,5 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
 import 'package:loringo_app/screens/initials/screen_one.dart';
@@ -179,6 +179,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           correctAnswers: correctAnswers,
           wrongAnswers: wrongAnswers,
           xpEarned: xpEarned,
+          isGraded: false,
         ),
       ),
     );

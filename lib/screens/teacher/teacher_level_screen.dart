@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_play_screen.dart';
-import 'package:loringo_app/screens/initials/quiz_play_screen.dart';
+import 'package:loringo_app/screens/initials/quiz_lesson_play_screen.dart';
 import 'package:loringo_app/screens/initials/quiz_unit_play_screen.dart';
 import 'package:loringo_app/screens/teacher/task_list_screen.dart';
 import 'package:lottie/lottie.dart';
@@ -50,6 +50,34 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
         return items;
       });
     }
+  }
+
+  Future<T?> _pushWithTransition<T>(Widget page) {
+    return Navigator.push<T>(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => page,
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(0.0, 0.05); // slight slide up
+          const end = Offset.zero;
+          const curve = Curves.easeInOutCubic;
+
+          var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+          var offsetAnimation = animation.drive(tween);
+
+          var fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeIn),
+          );
+
+          return FadeTransition(
+            opacity: fadeAnimation,
+            child: SlideTransition(position: offsetAnimation, child: child),
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 400),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
   }
 
   Future<List<Map<String, dynamic>>> _loadGroupContent() async {
@@ -403,13 +431,13 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
               } else {
                 // Lesson quiz - use existing QuizPlayScreen
                 Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => QuizPlayScreen(
+                  builder: (_) => LessonQuizPlayScreen(
                     contentId: item['contentId'],
                     unitId: item['unitId'],
                     lessonId: item['lessonId'],
                     quizId: item['quizId'],
                     quizTitle: item['title'],
-                    collectionName: 'quizzes',
+                    // collectionName: 'quizzes',
                     isPreview: true,
                   ),
                 ));

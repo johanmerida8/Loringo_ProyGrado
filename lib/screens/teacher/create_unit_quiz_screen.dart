@@ -59,6 +59,8 @@ class _CreatePersonalizedUnitQuizScreenState
   bool _isLoadingQuestions = false;
   bool _isSaving = false;
 
+  int _maxAttempts = 0;
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +70,10 @@ class _CreatePersonalizedUnitQuizScreenState
       _titleCtrl.text  = widget.existingData!['title'] as String? ?? '';
       _passingScore    = (widget.existingData!['passingScore'] as num?)?.toInt() ?? 1;
       _xpReward        = (widget.existingData!['xpReward'] as num?)?.toInt() ?? 50;
+
+      // load attempts configuration
+      _maxAttempts = (widget.existingData!['maxAttempts'] as num?)?.toInt() ?? 0;
+
       // Load questions from the subcollection
       _isLoadingQuestions = true;
       _loadExistingQuestions();
@@ -173,6 +179,11 @@ class _CreatePersonalizedUnitQuizScreenState
     if (!_formKey.currentState!.validate()) return;
     if (!_validateQuestions()) return;
 
+    if (_maxAttempts < 1 || _maxAttempts > 5) {
+      _showSnack('Please set maximum attempts (1-5)', color: Colors.orange);
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
       final questionsList = _questions.asMap().entries.map((e) => {
@@ -184,17 +195,16 @@ class _CreatePersonalizedUnitQuizScreenState
 
       if (widget.isEditing) {
         // Update: rewrite the whole quiz (header + questions subcollection)
-        await _db.createPersonalizedUnitQuiz(
-          contentId:    widget.contentId,
-          unitId:       widget.unitId,
-          quizId:       widget.quizId!,   // same ID — overwrites header doc
-          title:        _titleCtrl.text.trim(),
-          questions:    questionsList,
-          passingScore: _passingScore,
-          xpReward:     _xpReward,
+        await _db.updatePersonalizedUnitQuiz(
+          quizId: widget.quizId!, 
+          title: _titleCtrl.text.trim(), 
+          questions: questionsList,
+          passingScore: _passingScore, 
+          xpReward: _xpReward, 
+          maxAttempts: _maxAttempts,
         );
         if (mounted) {
-          _showSnack('✅ Unit quiz updated successfully', color: Colors.green);
+          _showSnack('Unit quiz updated successfully', color: Colors.green);
           Navigator.pop(context);
         }
       } else {
@@ -207,9 +217,10 @@ class _CreatePersonalizedUnitQuizScreenState
           questions:    questionsList,
           passingScore: _passingScore,
           xpReward:     _xpReward,
+          maxAttempts: _maxAttempts,
         );
         if (mounted) {
-          _showSnack('✅ Unit quiz created successfully', color: Colors.green);
+          _showSnack('Unit quiz created successfully', color: Colors.green);
           Navigator.pop(context);
         }
       }
@@ -280,19 +291,121 @@ class _CreatePersonalizedUnitQuizScreenState
           const Text('Awarded on passing this graded test (max 100 XP)', style: TextStyle(fontSize: 11, color: Colors.grey)),
         ]),
       ),
-      const SizedBox(height: 12),
-
-      // Info banner
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(color: Colors.red.withOpacity(0.07), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.withOpacity(0.25))),
-        child: Row(children: [
-          Icon(Icons.info_outline, color: Colors.red.shade700, size: 20),
-          const SizedBox(width: 12),
-          const Expanded(child: Text('This is a graded exam. Scores will be reported to parents.', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
-        ]),
-      ),
     ]);
+  }
+
+  // Add this new method for attempts configuration
+  Widget _buildAttemptsCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.purple.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Maximum Attempts',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          
+          // Always show the slider, but highlight if not set
+          Column(
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () => setState(() {
+                      if (_maxAttempts > 1) _maxAttempts--;
+                    }),
+                    icon: const Icon(Icons.remove_circle_outline),
+                    color: Colors.purple,
+                  ),
+                  Container(
+                    width: 60,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      border: _maxAttempts == 0 
+                          ? Border.all(color: Colors.orange, width: 2)
+                          : null,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _maxAttempts == 0 ? '?' : '$_maxAttempts',
+                      style: TextStyle(
+                        fontSize: 24, 
+                        fontWeight: FontWeight.bold,
+                        color: _maxAttempts == 0 ? Colors.orange : Colors.black,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => setState(() {
+                      if (_maxAttempts < 5) _maxAttempts++;
+                    }),
+                    icon: const Icon(Icons.add_circle_outline),
+                    color: Colors.purple,
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // Warning if not set
+              if (_maxAttempts == 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.info_outline, size: 14, color: Colors.orange),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Select 1-5 attempts',
+                        style: TextStyle(fontSize: 12, color: Colors.orange),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Text(
+                  _maxAttempts == 1
+                      ? 'Students can take this quiz once (no retakes)'
+                      : 'Students can take this quiz up to $_maxAttempts times',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+            ],
+          ),
+          
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.psychology, size: 20, color: Colors.green.shade700),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Set attempts to 1 for no retakes, or 2-5 to allow retakes.',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildQuestionCard(int index) {
@@ -442,69 +555,111 @@ class _CreatePersonalizedUnitQuizScreenState
               key: _formKey,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  _buildSettingsCard(),
-                  const SizedBox(height: 28),
-
-                  // Questions header
-                  Row(children: [
-                    Text('Questions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
-                    const SizedBox(width: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildSettingsCard(),
+                    const SizedBox(height: 16),
+                    _buildAttemptsCard(),
+                    const SizedBox(height: 28),
+                    
+                    // ✅ RED INFO BANNER - BEFORE QUESTIONS SECTION
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                      child: Text('${_questions.length}/20', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: c)),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.07),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red.withOpacity(0.25)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.red.shade700, size: 20),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'This is a graded exam. Scores will be reported to parents.',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const Spacer(),
+                    const SizedBox(height: 16),
+                    
+                    // Questions header
+                    Row(children: [
+                      Text('Questions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+                        child: Text('${_questions.length}/20', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: c)),
+                      ),
+                      const Spacer(),
+                      if (_questions.length < 20)
+                        TextButton.icon(
+                          onPressed: _addQuestion,
+                          icon: Icon(Icons.add, size: 18, color: c),
+                          label: Text('Add', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 13)),
+                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+                        ),
+                    ]),
+                    const SizedBox(height: 4),
+                    Text('Each question has 4 options (A–D). Tap a letter to mark the correct answer.', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                    const SizedBox(height: 16),
+
+                    // Question cards
+                    ...List.generate(_questions.length, (i) => _buildQuestionCard(i)),
+
+                    // Add question button (bottom)
                     if (_questions.length < 20)
-                      TextButton.icon(
-                        onPressed: _addQuestion,
-                        icon: Icon(Icons.add, size: 18, color: c),
-                        label: Text('Add', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 13)),
-                        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+                      GestureDetector(
+                        onTap: _addQuestion,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          margin: const EdgeInsets.only(bottom: 24),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: c.withOpacity(0.3), width: 1.5),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add_circle_outline, color: c, size: 20),
+                              const SizedBox(width: 8),
+                              Text('Add Question (${_questions.length}/20)', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 14)),
+                            ],
+                          ),
+                        ),
                       ),
-                  ]),
-                  const SizedBox(height: 4),
-                  Text('Each question has 4 options (A–D). Tap a letter to mark the correct answer.', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                  const SizedBox(height: 16),
 
-                  // Question cards
-                  ...List.generate(_questions.length, (i) => _buildQuestionCard(i)),
-
-                  // Add question button (bottom)
-                  if (_questions.length < 20)
-                    GestureDetector(
-                      onTap: _addQuestion,
-                      child: Container(
-                        width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 16),
-                        margin: const EdgeInsets.only(bottom: 24),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: c.withOpacity(0.3), width: 1.5)),
-                        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                          Icon(Icons.add_circle_outline, color: c, size: 20),
-                          const SizedBox(width: 8),
-                          Text('Add Question (${_questions.length}/20)', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 14)),
-                        ]),
+                    // Save button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: _isSaving ? null : _save,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: c,
+                          disabledBackgroundColor: Colors.grey.shade400,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: 0,
+                        ),
+                        child: _isSaving
+                            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : Text(
+                                widget.isEditing ? 'Save Changes' : 'Create Quiz',
+                                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
                       ),
                     ),
-
-                  // Save button
-                  SizedBox(
-                    width: double.infinity, height: 56,
-                    child: ElevatedButton(
-                      onPressed: _isSaving ? null : _save,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: c, disabledBackgroundColor: Colors.grey.shade400,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)), elevation: 0,
-                      ),
-                      child: _isSaving
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : Text(widget.isEditing ? 'Save Changes' : 'Create Quiz', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                ]),
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             ),
-    );
+      );
+    }
   }
-}

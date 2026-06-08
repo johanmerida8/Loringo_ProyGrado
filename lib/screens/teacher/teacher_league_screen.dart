@@ -1,24 +1,10 @@
-// =============================================================================
 // teacher_league_screen.dart
-//
-// CAMBIOS EN ESTA VERSIÓN:
-//   - El #1 de cada liga recibe un badge dorado "🏆 Winner" visible en el
-//     ranking, indicando visualmente quién recibirá la recompensa.
-//   - La fila del #1 tiene un fondo dorado especial distinto al tinte de liga.
-//   - _RankingRow recibe el parámetro isWinner para activar este estilo.
-//   - _LeagueHeaderCard muestra la recompensa configurada si existe.
-//
-// DECISIÓN DE DISEÑO — solo el #1 recibe premio:
-//   El premio se asigna únicamente al estudiante con más XP dentro de su liga.
-//   Esto establece una competencia clara y motivante dentro de cada nivel,
-//   sin desmotivar a quienes aún no alcanzaron la liga superior.
-//   (Deterding, 2011; Skinner, 1938 — refuerzo positivo selectivo)
-// =============================================================================
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+
+// ── League tiers ─────────────────────────────────────────────────────────────
 
 const List<Map<String, dynamic>> kLeagueTiers = [
   {
@@ -90,9 +76,8 @@ Map<String, dynamic> tierForXp(int xp) {
   return kLeagueTiers.last;
 }
 
-// =============================================================================
-// Root widget
-// =============================================================================
+// ── Root ──────────────────────────────────────────────────────────────────────
+
 class TeacherLeagueScreen extends StatefulWidget {
   const TeacherLeagueScreen({super.key});
 
@@ -119,20 +104,17 @@ class _TeacherLeagueScreenState extends State<TeacherLeagueScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
         backgroundColor: AppColors.primary,
         elevation: 0,
-        title: const Text(
-          'League & Ranking',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: AppColors.onPrimary),
+        title: const Text('League & Ranking', style: AppText.appBarTitle),
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
+          indicatorColor: AppColors.onPrimary,
           indicatorWeight: 3,
-          labelColor: Colors.white,
+          labelColor: AppColors.onPrimary,
           unselectedLabelColor: Colors.white60,
           labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
           tabs: const [
@@ -149,9 +131,8 @@ class _TeacherLeagueScreenState extends State<TeacherLeagueScreen>
   }
 }
 
-// =============================================================================
-// _RankingTab
-// =============================================================================
+// ── Ranking Tab ───────────────────────────────────────────────────────────────
+
 class _RankingTab extends StatefulWidget {
   const _RankingTab();
 
@@ -164,7 +145,8 @@ class _RankingTabState extends State<_RankingTab> {
 
   static Color _parseHex(String hex) {
     try {
-      return Color(int.parse('FF${hex.replaceAll('#', '')}', radix: 16));
+      return Color(
+          int.parse('FF${hex.replaceAll('#', '')}', radix: 16));
     } catch (_) {
       return AppColors.primary;
     }
@@ -181,11 +163,11 @@ class _RankingTabState extends State<_RankingTab> {
           .snapshots(),
       builder: (context, groupSnap) {
         if (groupSnap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
         }
-
         if (!groupSnap.hasData || groupSnap.data!.docs.isEmpty) {
-          return const _EmptyState(
+          return const _LeagueEmptyState(
             icon: Icons.groups_rounded,
             message: 'No groups yet',
             hint: 'Create a group to see the ranking',
@@ -197,18 +179,16 @@ class _RankingTabState extends State<_RankingTab> {
             doc.id: {
               'name':  (doc.data() as Map<String, dynamic>)['name'] ?? '',
               'color': _parseHex(
-                (doc.data() as Map<String, dynamic>)['color'] ?? '#4CAF50',
-              ),
+                  (doc.data() as Map<String, dynamic>)['color'] ?? '#4CAF50'),
             }
         };
 
-        // También cargamos la recompensa de la liga activa para mostrarla
-        // en el header — el docente ve de un vistazo qué premio está en juego
         return FutureBuilder<List<_StudentEntry>>(
           future: _loadStudents(groups.keys.toList()),
           builder: (context, studentSnap) {
             if (studentSnap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+              return const Center(
+                  child: CircularProgressIndicator(color: AppColors.primary));
             }
 
             final allStudents = studentSnap.data ?? [];
@@ -216,7 +196,6 @@ class _RankingTabState extends State<_RankingTab> {
             final tierMin = tier['min'] as int;
             final tierMax = tier['max'] as int;
 
-            // Lista de estudiantes de esta liga, ordenados por XP desc
             final tierStudents = allStudents
                 .where((s) => s.xp >= tierMin && s.xp < tierMax)
                 .toList()
@@ -230,13 +209,12 @@ class _RankingTabState extends State<_RankingTab> {
                 ),
                 Expanded(
                   child: tierStudents.isEmpty
-                      ? _EmptyState(
+                      ? _LeagueEmptyState(
                           icon: Icons.emoji_events_rounded,
                           message: 'No students in ${tier['name']}',
                           hint: 'Students reach this league by earning XP',
                         )
                       : FutureBuilder<String>(
-                          // Carga la recompensa configurada para esta liga
                           future: _loadRewardForTier(
                             groupIds: groups.keys.toList(),
                             tierKey:  tier['key'] as String,
@@ -244,23 +222,21 @@ class _RankingTabState extends State<_RankingTab> {
                           builder: (context, rewardSnap) {
                             final reward = rewardSnap.data ?? '';
                             return ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                              padding: const EdgeInsets.fromLTRB(
+                                  AppSpacing.md, AppSpacing.sm,
+                                  AppSpacing.md, AppSpacing.xl),
                               itemCount: tierStudents.length + 1,
                               itemBuilder: (context, index) {
                                 if (index == 0) {
                                   return _LeagueHeaderCard(
-                                    tier:   tier,
-                                    reward: reward, // pasa la recompensa al header
-                                  );
+                                      tier: tier, reward: reward);
                                 }
                                 final pos      = index;
                                 final entry    = tierStudents[index - 1];
                                 final info     = groups[entry.groupId];
-                                // Solo el primero es ganador — recibe el badge dorado
                                 final isWinner = pos == 1 &&
                                     !(tier['rewardLocked'] as bool) &&
                                     reward.isNotEmpty;
-
                                 return _RankingRow(
                                   position:    pos,
                                   studentName: entry.name,
@@ -292,16 +268,10 @@ class _RankingTabState extends State<_RankingTab> {
           .get();
       return snap.docs.map((doc) {
         final d = doc.data();
-        // NOTA: el campo en Firestore es 'names' (no 'name') — ver schema
-        // de la colección students. Se intenta 'names' primero y 'name'
-        // como fallback para compatibilidad con documentos anteriores.
-        final studentName = (d['names'] as String?)
-            ?? (d['name'] as String?)
-            ?? 'Student';
         return _StudentEntry(
           id:      doc.id,
-          name:    studentName,
-          xp:      ((d['xp']    as num?)    ?? 0).toInt(),
+          name:    (d['names'] as String?) ?? (d['name'] as String?) ?? 'Student',
+          xp:      ((d['xp'] as num?) ?? 0).toInt(),
           groupId: (d['groupId'] as String?) ?? '',
         );
       }).toList();
@@ -310,9 +280,6 @@ class _RankingTabState extends State<_RankingTab> {
     }
   }
 
-  /// Carga la recompensa del primer grupo que tenga un config guardado.
-  /// Para un docente con un solo grupo (caso tesis), es directo.
-  /// Para múltiples grupos, toma el primero que tenga reward configurada.
   Future<String> _loadRewardForTier({
     required List<String> groupIds,
     required String tierKey,
@@ -335,45 +302,47 @@ class _RankingTabState extends State<_RankingTab> {
   }
 }
 
-// =============================================================================
-// _LeagueFilterBar
-// =============================================================================
+// ── League Filter Bar ─────────────────────────────────────────────────────────
+
 class _LeagueFilterBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
 
-  const _LeagueFilterBar({required this.selectedIndex, required this.onSelected});
+  const _LeagueFilterBar(
+      {required this.selectedIndex, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         child: Row(
           children: List.generate(kLeagueTiers.length, (i) {
-            final tier      = kLeagueTiers[i];
+            final tier       = kLeagueTiers[i];
             final isSelected = i == selectedIndex;
-            final color     = tier['color'] as Color;
-            final imagePath = tier['image']  as String?;
+            final color      = tier['color'] as Color;
+            final imagePath  = tier['image']  as String?;
 
             return GestureDetector(
               onTap: () => onSelected(i),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                margin: const EdgeInsets.only(right: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                margin: const EdgeInsets.only(right: AppSpacing.sm),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md - 2, vertical: AppSpacing.sm),
                 decoration: BoxDecoration(
                   color: isSelected ? color : color.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(AppRadii.pill),
                   border: Border.all(
                     color: isSelected ? color : color.withOpacity(0.3),
                     width: isSelected ? 2 : 1,
                   ),
                   boxShadow: isSelected
-                      ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 3))]
+                      ? [BoxShadow(color: color.withOpacity(0.3),
+                          blurRadius: 8, offset: const Offset(0, 3))]
                       : [],
                 ),
                 child: Row(
@@ -384,14 +353,15 @@ class _LeagueFilterBar extends StatelessWidget {
                       child: imagePath != null
                           ? Image.asset(imagePath, fit: BoxFit.contain)
                           : Icon(Icons.shield_outlined,
-                              color: isSelected ? Colors.white : color, size: 18),
+                              color: isSelected ? AppColors.onPrimary : color,
+                              size: 18),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: AppSpacing.xs),
                     Text(
                       tier['name'] as String,
                       style: TextStyle(
                         fontSize: 13, fontWeight: FontWeight.bold,
-                        color: isSelected ? Colors.white : color,
+                        color: isSelected ? AppColors.onPrimary : color,
                       ),
                     ),
                   ],
@@ -405,15 +375,11 @@ class _LeagueFilterBar extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// _LeagueHeaderCard
-//
-// Ahora muestra la recompensa configurada para esta liga si existe.
-// El docente ve de un vistazo: "Silver League — Premio: Un dulce 🍬"
-// =============================================================================
+// ── League Header Card ────────────────────────────────────────────────────────
+
 class _LeagueHeaderCard extends StatelessWidget {
   final Map<String, dynamic> tier;
-  final String reward; // recompensa configurada, puede estar vacía
+  final String reward;
 
   const _LeagueHeaderCard({required this.tier, required this.reward});
 
@@ -424,17 +390,20 @@ class _LeagueHeaderCard extends StatelessWidget {
     final hasReward = reward.isNotEmpty && !(tier['rewardLocked'] as bool);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12, top: 4),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: AppSpacing.md, top: AppSpacing.xs),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [color, color.withOpacity(0.65)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
         boxShadow: [
-          BoxShadow(color: color.withOpacity(0.35), blurRadius: 12, offset: const Offset(0, 4)),
+          BoxShadow(
+              color: color.withOpacity(0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
         ],
       ),
       child: Row(
@@ -447,35 +416,34 @@ class _LeagueHeaderCard extends StatelessWidget {
             ),
             child: imagePath != null
                 ? Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Image.asset(imagePath, fit: BoxFit.contain),
-                  )
-                : const Icon(Icons.shield_outlined, color: Colors.white, size: 30),
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    child: Image.asset(imagePath, fit: BoxFit.contain))
+                : const Icon(Icons.shield_outlined,
+                    color: AppColors.onPrimary, size: 30),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${tier['name']} League',
-                  style: const TextStyle(
-                    color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Text('${tier['name']} League',
+                    style: const TextStyle(
+                      color: AppColors.onPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    )),
                 const SizedBox(height: 4),
-                Text(
-                  tier['range'] as String,
-                  style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 13),
-                ),
-                // Muestra la recompensa si está configurada
+                Text(tier['range'] as String,
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(0.85), fontSize: 13)),
                 if (hasReward) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm + 2, vertical: AppSpacing.xs),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.25),
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(AppRadii.pill),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -486,7 +454,7 @@ class _LeagueHeaderCard extends StatelessWidget {
                           child: Text(
                             '1st place: $reward',
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: AppColors.onPrimary,
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                             ),
@@ -507,14 +475,8 @@ class _LeagueHeaderCard extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// _RankingRow
-//
-// NUEVO: parámetro isWinner — si true, la fila del #1 recibe:
-//   • Fondo dorado degradado especial (distinto al tinte de liga normal)
-//   • Badge "🏆 Winner" en color dorado
-//   • Borde dorado más prominente
-// =============================================================================
+// ── Ranking Row ───────────────────────────────────────────────────────────────
+
 class _RankingRow extends StatelessWidget {
   final int    position;
   final String studentName;
@@ -522,7 +484,9 @@ class _RankingRow extends StatelessWidget {
   final String groupName;
   final Color  groupColor;
   final Color  tierColor;
-  final bool   isWinner; // true solo para el #1 cuando hay recompensa configurada
+  final bool   isWinner;
+
+  static const Color _gold = Color(0xFFFFB300);
 
   const _RankingRow({
     required this.position,
@@ -534,140 +498,115 @@ class _RankingRow extends StatelessWidget {
     required this.isWinner,
   });
 
-  // Color dorado para el winner — consistente en toda la UI
-  static const Color _gold = Color(0xFFFFB300);
-
   @override
   Widget build(BuildContext context) {
     final String posLabel = switch (position) {
-      1 => '🥇',
-      2 => '🥈',
-      3 => '🥉',
-      _ => '#$position',
+      1 => '🥇', 2 => '🥈', 3 => '🥉', _ => '#$position',
     };
     final bool isTop = position <= 3;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm + 2),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.md - 4),
       decoration: BoxDecoration(
-        // Winner (#1 con recompensa): borde dorado grueso y prominente de 3px
-        // con fondo amarillo suave — identifiable de un vistazo.
-        // Top 2–3: tinte sutil del color de liga.
-        // Resto: blanco limpio.
         color: isWinner
             ? const Color(0xFFFFFDE7)
             : isTop
                 ? tierColor.withOpacity(0.07)
                 : Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppRadii.md + 4),
         border: isWinner
-            ? Border.all(color: _gold, width: 3)   // borde dorado prominente
+            ? Border.all(color: _gold, width: 3)
             : isTop
                 ? Border.all(color: tierColor.withOpacity(0.25), width: 1.5)
                 : null,
         boxShadow: isWinner
             ? [
                 BoxShadow(
-                  color: _gold.withOpacity(0.35),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
+                    color: _gold.withOpacity(0.35),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4)),
                 BoxShadow(
-                  color: _gold.withOpacity(0.12),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
+                    color: _gold.withOpacity(0.12),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1)),
               ]
             : [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                ),
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2)),
               ],
       ),
       child: Row(
         children: [
-          // Posición
           SizedBox(
             width: 40,
-            child: Text(
-              posLabel,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: isTop ? 24 : 14,
-                fontWeight: FontWeight.bold,
-                color: isTop ? null : Colors.grey[500],
-              ),
-            ),
+            child: Text(posLabel,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: isTop ? 24 : 14,
+                  fontWeight: FontWeight.bold,
+                  color: isTop ? null : Colors.grey[500],
+                )),
           ),
-          const SizedBox(width: 12),
-
-          // Nombre + badge de grupo + badge winner
+          const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        studentName,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          // Nombre dorado para el winner
-                          color: isWinner ? _gold : Colors.black87,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                Row(children: [
+                  Flexible(
+                    child: Text(
+                      studentName,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: isWinner ? _gold : Colors.black87,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    // Badge "🏆 Winner" solo para el #1 con recompensa
-                    if (isWinner) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
+                  ),
+                  if (isWinner) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm, vertical: 2),
+                      decoration: BoxDecoration(
                           color: _gold,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('🏆', style: TextStyle(fontSize: 10)),
-                            SizedBox(width: 3),
-                            Text(
-                              'Winner',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                          borderRadius:
+                              BorderRadius.circular(AppRadii.sm)),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('🏆', style: TextStyle(fontSize: 10)),
+                        SizedBox(width: 3),
+                        Text('Winner',
+                            style: TextStyle(
+                              color: AppColors.onPrimary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            )),
+                      ]),
+                    ),
                   ],
-                ),
+                ]),
                 const SizedBox(height: 4),
-                // Badge de grupo
                 IntrinsicWidth(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm, vertical: 2),
                     decoration: BoxDecoration(
                       color: groupColor.withOpacity(0.13),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
                       border: Border.all(color: groupColor.withOpacity(0.35)),
                     ),
-                    child: Text(
-                      groupName,
-                      style: TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w600, color: groupColor,
-                      ),
-                    ),
+                    child: Text(groupName,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: groupColor,
+                        )),
                   ),
                 ),
               ],
@@ -678,14 +617,13 @@ class _RankingRow extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                '$xp',
-                style: TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.bold,
-                  color: isWinner ? _gold : tierColor,
-                ),
-              ),
-              const Text('XP', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              Text('$xp',
+                  style: TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.bold,
+                    color: isWinner ? _gold : tierColor,
+                  )),
+              const Text('XP',
+                  style: TextStyle(fontSize: 11, color: AppColors.muted)),
             ],
           ),
         ],
@@ -694,9 +632,8 @@ class _RankingRow extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// _RewardsTab — sin cambios funcionales, mantiene campos bloqueados
-// =============================================================================
+// ── Rewards Tab ───────────────────────────────────────────────────────────────
+
 class _RewardsTab extends StatefulWidget {
   const _RewardsTab();
 
@@ -709,8 +646,7 @@ class _RewardsTabState extends State<_RewardsTab> {
   String  _selectedGroupName = '';
 
   final Map<String, TextEditingController> _controllers = {
-    for (final t in kLeagueTiers)
-      t['key'] as String: TextEditingController(),
+    for (final t in kLeagueTiers) t['key'] as String: TextEditingController(),
   };
 
   bool _isSaving         = false;
@@ -731,7 +667,6 @@ class _RewardsTabState extends State<_RewardsTab> {
           .collection('leagueRewards')
           .doc('config')
           .get();
-
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
         for (final key in _controllers.keys) {
@@ -751,7 +686,9 @@ class _RewardsTabState extends State<_RewardsTab> {
     if (_selectedGroupId == null) return;
     setState(() => _isSaving = true);
     try {
-      final data = <String, dynamic>{'updatedAt': FieldValue.serverTimestamp()};
+      final data = <String, dynamic>{
+        'updatedAt': FieldValue.serverTimestamp()
+      };
       for (final tier in kLeagueTiers) {
         final key    = tier['key']          as String;
         final locked = tier['rewardLocked'] as bool;
@@ -763,16 +700,14 @@ class _RewardsTabState extends State<_RewardsTab> {
           .collection('leagueRewards')
           .doc('config')
           .set(data);
-
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('✅ Rewards saved successfully'),
-            backgroundColor: AppColors.primary,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Rewards saved successfully'),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.md)),
+        ));
       }
     } catch (e) {
       _showError('Could not save rewards: $e');
@@ -783,9 +718,11 @@ class _RewardsTabState extends State<_RewardsTab> {
 
   void _showError(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red, behavior: SnackBarBehavior.floating),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: AppColors.danger,
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   @override
@@ -799,10 +736,11 @@ class _RewardsTabState extends State<_RewardsTab> {
           .snapshots(),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
         }
         if (!snap.hasData || snap.data!.docs.isEmpty) {
-          return const _EmptyState(
+          return const _LeagueEmptyState(
             icon: Icons.card_giftcard_rounded,
             message: 'No groups yet',
             hint: 'Create a group first to configure league rewards',
@@ -816,21 +754,25 @@ class _RewardsTabState extends State<_RewardsTab> {
             final first = groupDocs.first;
             setState(() {
               _selectedGroupId   = first.id;
-              _selectedGroupName = (first.data() as Map<String, dynamic>)['name'] ?? '';
+              _selectedGroupName =
+                  (first.data() as Map<String, dynamic>)['name'] ?? '';
             });
             _loadRewards(first.id);
           });
         }
 
         return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md, AppSpacing.md, AppSpacing.md, 40),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Multi-group selector
               if (groupDocs.length > 1) ...[
-                const Text('Select Group',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.grey)),
-                const SizedBox(height: 8),
+                Text('Select Group',
+                    style: AppText.caption.copyWith(
+                        fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: AppSpacing.sm),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -849,7 +791,8 @@ class _RewardsTabState extends State<_RewardsTab> {
                         chipColor = AppColors.primary;
                       }
                       return Padding(
-                        padding: const EdgeInsets.only(right: 8),
+                        padding:
+                            const EdgeInsets.only(right: AppSpacing.sm),
                         child: GestureDetector(
                           onTap: () {
                             if (_selectedGroupId == id) return;
@@ -861,18 +804,28 @@ class _RewardsTabState extends State<_RewardsTab> {
                           },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.md,
+                                vertical: AppSpacing.sm),
                             decoration: BoxDecoration(
-                              color: isSelected ? chipColor : chipColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(20),
+                              color: isSelected
+                                  ? chipColor
+                                  : chipColor.withOpacity(0.1),
+                              borderRadius:
+                                  BorderRadius.circular(AppRadii.pill),
                               border: Border.all(
-                                color: isSelected ? chipColor : chipColor.withOpacity(0.3),
+                                color: isSelected
+                                    ? chipColor
+                                    : chipColor.withOpacity(0.3),
                               ),
                             ),
                             child: Text(name,
                                 style: TextStyle(
-                                  color: isSelected ? Colors.white : chipColor,
-                                  fontWeight: FontWeight.bold, fontSize: 13,
+                                  color: isSelected
+                                      ? AppColors.onPrimary
+                                      : chipColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
                                 )),
                           ),
                         ),
@@ -880,41 +833,42 @@ class _RewardsTabState extends State<_RewardsTab> {
                     }).toList(),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: AppSpacing.lg),
               ],
 
               // Info banner
               Container(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(AppSpacing.md - 2),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                  color: AppColors.primarySoft(0.08),
+                  borderRadius: BorderRadius.circular(AppRadii.md),
+                  border: Border.all(color: AppColors.primarySoft(0.2)),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.info_outline_rounded, color: AppColors.primary, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _selectedGroupId == null
-                            ? 'Loading...'
-                            : 'Rewards for $_selectedGroupName — '
-                                '1st place of Silver and above wins the prize.',
-                        style: const TextStyle(
-                          fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w500,
-                        ),
+                child: Row(children: [
+                  const Icon(Icons.info_outline_rounded,
+                      color: AppColors.primary, size: 20),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      _selectedGroupId == null
+                          ? 'Loading...'
+                          : 'Rewards for $_selectedGroupName — '
+                              '1st place of Silver and above wins the prize.',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ]),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppSpacing.lg),
 
               if (_isLoadingRewards)
                 const Center(
                   child: Padding(
-                    padding: EdgeInsets.all(32),
+                    padding: EdgeInsets.all(AppSpacing.xl),
                     child: CircularProgressIndicator(color: AppColors.primary),
                   ),
                 )
@@ -924,28 +878,32 @@ class _RewardsTabState extends State<_RewardsTab> {
                       controller: _controllers[tier['key']]!,
                     )),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: AppSpacing.lg),
 
               SizedBox(
-                width: double.infinity,
-                height: 52,
+                width: double.infinity, height: 52,
                 child: ElevatedButton.icon(
-                  onPressed: (_isSaving || _selectedGroupId == null) ? null : _saveRewards,
+                  onPressed:
+                      (_isSaving || _selectedGroupId == null) ? null : _saveRewards,
                   icon: _isSaving
                       ? const SizedBox(
                           width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.save_rounded, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: AppColors.onPrimary))
+                      : const Icon(Icons.save_rounded, color: AppColors.onPrimary),
                   label: Text(
                     _isSaving ? 'Saving...' : 'Save Rewards',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.onPrimary),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
-                    disabledBackgroundColor: AppColors.primary.withOpacity(0.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 2,
+                    disabledBackgroundColor: AppColors.primarySoft(0.5),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.md)),
+                    elevation: 0,
                   ),
                 ),
               ),
@@ -957,28 +915,28 @@ class _RewardsTabState extends State<_RewardsTab> {
   }
 }
 
-// =============================================================================
-// _LeagueTierRewardField — Starter y Bronze bloqueados, Silver→Diamond editables
-// =============================================================================
+// ── League Tier Reward Field ──────────────────────────────────────────────────
+
 class _LeagueTierRewardField extends StatelessWidget {
   final Map<String, dynamic>  tier;
   final TextEditingController controller;
 
-  const _LeagueTierRewardField({required this.tier, required this.controller});
+  const _LeagueTierRewardField(
+      {required this.tier, required this.controller});
 
   @override
   Widget build(BuildContext context) {
-    final color     = tier['color']         as Color;
-    final imagePath = tier['image']         as String?;
-    final isLocked  = tier['rewardLocked']  as bool;
-    final displayColor = isLocked ? Colors.grey[400]! : color;
+    final color        = tier['color']        as Color;
+    final imagePath    = tier['image']        as String?;
+    final isLocked     = tier['rewardLocked'] as bool;
+    final displayColor = isLocked ? AppColors.muted : color;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.md - 2),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: isLocked ? Colors.grey[50] : Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppRadii.md),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(isLocked ? 0.03 : 0.05),
@@ -989,6 +947,7 @@ class _LeagueTierRewardField extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // League icon
           Container(
             width: 50, height: 50,
             decoration: BoxDecoration(
@@ -998,14 +957,14 @@ class _LeagueTierRewardField extends StatelessWidget {
             ),
             child: imagePath != null
                 ? Padding(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(AppSpacing.sm),
                     child: isLocked
                         ? ColorFiltered(
                             colorFilter: const ColorFilter.matrix(<double>[
                               0.2126, 0.7152, 0.0722, 0, 0,
                               0.2126, 0.7152, 0.0722, 0, 0,
                               0.2126, 0.7152, 0.0722, 0, 0,
-                              0,      0,      0,      1, 0,
+                              0, 0, 0, 1, 0,
                             ]),
                             child: Image.asset(imagePath, fit: BoxFit.contain),
                           )
@@ -1013,59 +972,63 @@ class _LeagueTierRewardField extends StatelessWidget {
                   )
                 : Icon(Icons.shield_outlined, color: displayColor, size: 24),
           ),
-          const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                tier['name'] as String,
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: displayColor),
-              ),
-              Text(tier['range'] as String,
-                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            ],
-          ),
-          const SizedBox(width: 12),
+          const SizedBox(width: AppSpacing.md),
+
+          // Label
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(tier['name'] as String,
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: displayColor)),
+            Text(tier['range'] as String, style: AppText.caption),
+          ]),
+          const SizedBox(width: AppSpacing.md),
+
+          // Input or locked
           Expanded(
             child: isLocked
                 ? Container(
                     height: 42,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md),
                     decoration: BoxDecoration(
                       color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.grey[200]!),
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                      border: Border.all(color: AppColors.divider),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.lock_outline_rounded, size: 15, color: Colors.grey[400]),
-                        const SizedBox(width: 6),
-                        Text('No reward',
-                            style: TextStyle(fontSize: 13, color: Colors.grey[400])),
-                      ],
-                    ),
+                    child: Row(children: [
+                      Icon(Icons.lock_outline_rounded,
+                          size: 14, color: Colors.grey[400]),
+                      const SizedBox(width: AppSpacing.xs),
+                      Text('No reward',
+                          style: TextStyle(
+                              fontSize: 13, color: Colors.grey[400])),
+                    ]),
                   )
                 : TextField(
                     controller: controller,
                     maxLength: 60,
                     decoration: InputDecoration(
                       hintText: 'e.g. A sticker 🌟',
-                      hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                      hintStyle:
+                          TextStyle(fontSize: 13, color: Colors.grey[400]),
                       counterText: '',
                       filled: true,
-                      fillColor: Colors.grey[50],
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      fillColor: AppColors.scaffoldBackground,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
+                        borderSide: BorderSide(color: AppColors.divider),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
                         borderSide: BorderSide(color: color, width: 1.5),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: Colors.grey[200]!),
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
+                        borderSide: BorderSide(color: AppColors.divider),
                       ),
                     ),
                     style: const TextStyle(fontSize: 13),
@@ -1077,45 +1040,53 @@ class _LeagueTierRewardField extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// _StudentEntry
-// =============================================================================
+// ── Data model ────────────────────────────────────────────────────────────────
+
 class _StudentEntry {
   final String id;
   final String name;
   final int    xp;
   final String groupId;
-  const _StudentEntry({required this.id, required this.name, required this.xp, required this.groupId});
+
+  const _StudentEntry({
+    required this.id,
+    required this.name,
+    required this.xp,
+    required this.groupId,
+  });
 }
 
-// =============================================================================
-// _EmptyState
-// =============================================================================
-class _EmptyState extends StatelessWidget {
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+class _LeagueEmptyState extends StatelessWidget {
   final IconData icon;
   final String   message;
   final String   hint;
 
-  const _EmptyState({required this.icon, required this.message, required this.hint});
+  const _LeagueEmptyState({
+    required this.icon,
+    required this.message,
+    required this.hint,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 80, color: Colors.grey[300]),
-            const SizedBox(height: 16),
-            Text(message,
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.grey[600])),
-            const SizedBox(height: 8),
-            Text(hint, textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey[400])),
-          ],
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 72, color: AppColors.divider),
+              const SizedBox(height: AppSpacing.md),
+              Text(message,
+                  style: AppText.subtitle.copyWith(
+                      fontWeight: FontWeight.w600, fontSize: 17)),
+              const SizedBox(height: AppSpacing.sm),
+              Text(hint,
+                  textAlign: TextAlign.center,
+                  style: AppText.caption.copyWith(fontSize: 13)),
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      );
 }

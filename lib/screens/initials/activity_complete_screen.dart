@@ -11,6 +11,12 @@ class ActivityCompleteScreen extends StatefulWidget {
   final int xpEarned;
   final bool isFirstCompletion;
   final String screenTitle;
+  
+  // Quiz-specific (only for graded quizzes)
+  final VoidCallback? onRetake;
+  final int attemptsRemaining;
+  final int maxAttempts;
+  final bool isGraded;
 
   const ActivityCompleteScreen({
     super.key,
@@ -20,7 +26,11 @@ class ActivityCompleteScreen extends StatefulWidget {
     required this.wrongAnswers,
     required this.xpEarned,
     this.isFirstCompletion = true,
-    this.screenTitle = 'Activity Complete!',
+    this.screenTitle = 'Activity Complete!', 
+    this.onRetake,
+    this.attemptsRemaining = 0,
+    this.maxAttempts = 3,
+    this.isGraded = true,
   });
 
   @override
@@ -37,6 +47,19 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
     if (widget.scorePercent >= 90) return 3;
     if (widget.scorePercent >= 60) return 2;
     return 1;
+  }
+
+  bool get _isPassed => widget.scorePercent >= 60;
+  
+  bool get _canRetake => widget.isGraded 
+      && widget.onRetake != null 
+      && widget.attemptsRemaining > 0 
+      && !_isPassed;
+
+  String get _buttonText {
+    if (!widget.isGraded) return 'Continue';
+    if (_isPassed) return 'Continue';
+    return widget.attemptsRemaining == 0 ? 'Back to Menu' : 'Continue';
   }
 
   @override
@@ -76,13 +99,35 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
     super.dispose();
   }
 
+  void _onRetake() {
+    Navigator.pop(context);
+    if (widget.onRetake != null) {
+      widget.onRetake!();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final showCelebration = !widget.isGraded || _isPassed;
+    final gradientColors = showCelebration
+        ? [const Color(0xFFF6E96B), const Color(0xFFBEDC74), const Color(0xFFA2CA71)]
+        : [const Color(0xFFFFE0B2), const Color(0xFFFFCC80), const Color(0xFFFFB74D)];
+    
+    final titleColor = showCelebration ? const Color(0xFF2D6A2F) : const Color(0xFFE65100);
+    final buttonColor = showCelebration ? const Color(0xFF2D6A2F) : const Color(0xFFE65100);
+    
+    String animationAsset;
+    if (!widget.isGraded || _isPassed) {
+      animationAsset = 'assets/animation/happy_star.json';
+    } else {
+      animationAsset = 'assets/animation/sad_star.json';
+    }
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFFF6E96B), Color(0xFFBEDC74), Color(0xFFA2CA71)],
+            colors: gradientColors,
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -90,23 +135,27 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
         child: SafeArea(
           child: Column(
             children: [
+              const SizedBox(height: 16),
+              
               // Lottie animation
               SizedBox(
                 height: 200,
                 child: Lottie.asset(
-                  'assets/animation/congratulations.json',
+                  animationAsset,
                   repeat: false,
                   fit: BoxFit.contain,
                 ),
               ),
 
-              // "Activity Complete!" title
+              const SizedBox(height: 12),
+
+              // Title
               Text(
                 widget.screenTitle,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2D6A2F),
+                  color: titleColor,
                   letterSpacing: 0.5,
                 ),
               ),
@@ -121,6 +170,30 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
               ),
 
               const SizedBox(height: 24),
+
+              // Message for failed graded quiz with attempts left
+              if (widget.isGraded && !_isPassed && widget.attemptsRemaining > 0)
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 32),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.info_outline, size: 16, color: Colors.orange),
+                      const SizedBox(width: 8),
+                      Text(
+                        'You have ${widget.attemptsRemaining} attempt${widget.attemptsRemaining != 1 ? 's' : ''} left',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: 16),
 
               // Stars row
               Row(
@@ -141,44 +214,41 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
               const SizedBox(height: 28),
 
               // XP earned badge
-              AnimatedBuilder(
-                animation: _xpAnimation,
-                builder: (_, __) => Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 36, vertical: 18),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.18),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        '+${_xpAnimation.value} XP',
-                        style: const TextStyle(
-                          fontSize: 40,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2D6A2F),
-                          letterSpacing: 1,
+              if (widget.xpEarned > 0)
+                AnimatedBuilder(
+                  animation: _xpAnimation,
+                  builder: (_, __) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.18),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
                         ),
-                      ),
-                      const Text(
-                        'Experience Earned',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey,
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          '+${_xpAnimation.value} XP',
+                          style: const TextStyle(
+                            fontSize: 40,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF2D6A2F),
+                            letterSpacing: 1,
+                          ),
                         ),
-                      ),
-                    ],
+                        const Text(
+                          'Experience Earned',
+                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
 
               const SizedBox(height: 28),
 
@@ -213,32 +283,59 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
 
               const Spacer(),
 
-              // Continue button
+              // Buttons
               Padding(
                 padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context); // back to StudentMainScreen
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2D6A2F),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                child: Column(
+                  children: [
+                    // Try Again button (failed + attempts left)
+                    if (_canRetake)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _onRetake,
+                          icon: const Icon(Icons.refresh_rounded, size: 20),
+                          label: Text(
+                            'Try Again (${widget.attemptsRemaining} attempt${widget.attemptsRemaining != 1 ? 's' : ''} left)',
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFE65100),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            elevation: 0,
+                          ),
+                        ),
                       ),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      'Continue',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
+                    
+                    // Continue/Back to Menu button
+                    if (!_canRetake)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: buttonColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            _buttonText,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                  ],
                 ),
               ),
             ],

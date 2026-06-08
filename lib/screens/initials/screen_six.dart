@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 import 'package:lottie/lottie.dart';
 
 // ── Data model for one match pair ─────────────────────────────────────────────
@@ -230,7 +230,8 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 child: Text(
-                  TeacherUITranslations.get('continueBtnText', _userLang),
+                  // TeacherUITranslations.get('continueBtnText', _userLang),
+                  'Continue',
                   style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
                 ),
               ),

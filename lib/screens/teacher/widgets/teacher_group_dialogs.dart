@@ -3,11 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/teacher_theme.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_confirm_dialog.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 
 void showCreateGroupDialog({
   required BuildContext context,
-  required String language,
   String? groupId,
   Map<String, dynamic>? existingData,
 }) {
@@ -24,9 +22,7 @@ void showCreateGroupDialog({
           const Icon(Icons.group, color: TeacherColors.primary),
           const SizedBox(width: TeacherSpacing.sm),
           Text(
-            groupId == null
-                ? TeacherUITranslations.get('createGroup', language)
-                : TeacherUITranslations.get('edit', language),
+            groupId == null ? 'Create Group' : 'Edit Group',
           ),
         ],
       ),
@@ -35,15 +31,13 @@ void showCreateGroupDialog({
         children: [
           _RoundedTextField(
             controller: nameController,
-            labelKey: 'groupName',
-            language: language,
+            labelText: 'Group Name',
             icon: Icons.group,
           ),
           const SizedBox(height: TeacherSpacing.md),
           _RoundedTextField(
             controller: descriptionController,
-            labelKey: 'description',
-            language: language,
+            labelText: 'Description',
             icon: Icons.description,
             maxLines: 3,
           ),
@@ -52,12 +46,11 @@ void showCreateGroupDialog({
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext),
-          child: Text(TeacherUITranslations.get('cancel', language)),
+          child: const Text('Cancel'),
         ),
         ElevatedButton(
           onPressed: () => _saveGroup(
             dialogContext: dialogContext,
-            language: language,
             groupId: groupId,
             name: nameController.text.trim(),
             description: descriptionController.text.trim(),
@@ -66,9 +59,7 @@ void showCreateGroupDialog({
             backgroundColor: TeacherColors.primary,
           ),
           child: Text(
-            groupId == null
-                ? TeacherUITranslations.get('createEdit', language)
-                : TeacherUITranslations.get('update', language),
+            groupId == null ? 'Create' : 'Save',
             style: const TextStyle(color: TeacherColors.onPrimary),
           ),
         ),
@@ -79,7 +70,6 @@ void showCreateGroupDialog({
 
 Future<void> _saveGroup({
   required BuildContext dialogContext,
-  required String language,
   required String? groupId,
   required String name,
   required String description,
@@ -87,9 +77,7 @@ Future<void> _saveGroup({
   if (name.isEmpty) {
     ScaffoldMessenger.of(dialogContext).showSnackBar(
       SnackBar(
-        content: Text(
-          TeacherUITranslations.get('groupNameRequired', language),
-        ),
+        content: const Text('Group name is required'),
         backgroundColor: TeacherColors.danger,
       ),
     );
@@ -118,9 +106,7 @@ Future<void> _saveGroup({
   ScaffoldMessenger.of(dialogContext).showSnackBar(
     SnackBar(
       content: Text(
-        groupId == null
-            ? 'Group created successfully'
-            : 'Group updated successfully',
+        groupId == null ? 'Group created successfully' : 'Group updated successfully',
       ),
       backgroundColor: TeacherColors.success,
     ),
@@ -131,7 +117,6 @@ void showManageStudentsDialog({
   required BuildContext context,
   required String groupId,
   required Map<String, dynamic> groupData,
-  required String language,
 }) {
   showDialog(
     context: context,
@@ -142,7 +127,7 @@ void showManageStudentsDialog({
           const SizedBox(width: TeacherSpacing.sm),
           Expanded(
             child: Text(
-              '${TeacherUITranslations.get('manageStudents', language)} - ${groupData['name']}',
+              'Manage Students - ${groupData['name']}',
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -153,19 +138,19 @@ void showManageStudentsDialog({
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              TeacherUITranslations.get('addStudentsHint', language),
-              style: const TextStyle(color: TeacherColors.muted),
+            const Text(
+              'Add students to this group with their parent email. They will receive a notification and can join the group from their app.',
+              style: TextStyle(color: TeacherColors.muted),
             ),
             const SizedBox(height: TeacherSpacing.md),
-            _StudentList(groupId: groupId, language: language),
+            _StudentList(groupId: groupId),
           ],
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext),
-          child: Text(TeacherUITranslations.get('close', language)),
+          child: const Text('Close'),
         ),
         ElevatedButton(
           onPressed: () {
@@ -173,15 +158,14 @@ void showManageStudentsDialog({
             showAddStudentDialog(
               context: context,
               groupId: groupId,
-              language: language,
             );
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: TeacherColors.primary,
           ),
-          child: Text(
-            TeacherUITranslations.get('addStudent', language),
-            style: const TextStyle(color: TeacherColors.onPrimary),
+          child: const Text(
+            'Add Student',
+            style: TextStyle(color: TeacherColors.onPrimary),
           ),
         ),
       ],
@@ -192,7 +176,6 @@ void showManageStudentsDialog({
 void showAddStudentDialog({
   required BuildContext context,
   required String groupId,
-  required String language,
 }) {
   final emailController = TextEditingController();
 
@@ -203,33 +186,31 @@ void showAddStudentDialog({
         children: [
           const Icon(Icons.person_add, color: TeacherColors.primary),
           const SizedBox(width: TeacherSpacing.sm),
-          Text(TeacherUITranslations.get('addStudent', language)),
+          const Text('Add Student'),
         ],
       ),
       content: _RoundedTextField(
         controller: emailController,
-        labelKey: 'studentEmail',
-        language: language,
+        labelText: 'Student Email',
         icon: Icons.email,
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext),
-          child: Text(TeacherUITranslations.get('cancel', language)),
+          child: const Text('Cancel'),
         ),
         ElevatedButton(
           onPressed: () => _addStudentByEmail(
             dialogContext: dialogContext,
             groupId: groupId,
-            language: language,
             email: emailController.text.trim(),
           ),
           style: ElevatedButton.styleFrom(
             backgroundColor: TeacherColors.primary,
           ),
-          child: Text(
-            TeacherUITranslations.get('add', language),
-            style: const TextStyle(color: TeacherColors.onPrimary),
+          child: const Text(
+            'Add',
+            style: TextStyle(color: TeacherColors.onPrimary),
           ),
         ),
       ],
@@ -240,13 +221,12 @@ void showAddStudentDialog({
 Future<void> _addStudentByEmail({
   required BuildContext dialogContext,
   required String groupId,
-  required String language,
   required String email,
 }) async {
   if (email.isEmpty) {
     ScaffoldMessenger.of(dialogContext).showSnackBar(
       SnackBar(
-        content: Text(TeacherUITranslations.get('emailRequired', language)),
+        content: const Text('Email is required'),
         backgroundColor: TeacherColors.danger,
       ),
     );
@@ -263,9 +243,7 @@ Future<void> _addStudentByEmail({
     if (!dialogContext.mounted) return;
     ScaffoldMessenger.of(dialogContext).showSnackBar(
       SnackBar(
-        content: Text(
-          TeacherUITranslations.get('studentNotFound', language),
-        ),
+        content: const Text('No student found'),
         backgroundColor: TeacherColors.danger,
       ),
     );
@@ -290,7 +268,7 @@ Future<void> _addStudentByEmail({
   Navigator.pop(dialogContext);
   ScaffoldMessenger.of(dialogContext).showSnackBar(
     SnackBar(
-      content: Text(TeacherUITranslations.get('studentAdded', language)),
+      content: const Text('Student added successfully'),
       backgroundColor: TeacherColors.success,
     ),
   );
@@ -299,14 +277,13 @@ Future<void> _addStudentByEmail({
 Future<void> confirmAndDeleteGroup({
   required BuildContext context,
   required String groupId,
-  required String language,
 }) async {
   final confirmed = await showTeacherConfirmDialog(
     context: context,
-    title: TeacherUITranslations.get('deleteGroup', language),
-    message: TeacherUITranslations.get('deleteGroupConfirm', language),
-    confirmLabel: TeacherUITranslations.get('delete', language),
-    cancelLabel: TeacherUITranslations.get('cancel', language),
+    title: 'Delete Group',
+    message: 'Are you sure you want to delete this group? This action cannot be undone.',
+    confirmLabel: 'Delete',
+    cancelLabel: 'Cancel',
   );
 
   if (!confirmed) return;
@@ -326,10 +303,9 @@ Future<void> confirmAndDeleteGroup({
 }
 
 class _StudentList extends StatelessWidget {
-  const _StudentList({required this.groupId, required this.language});
+  const _StudentList({required this.groupId});
 
   final String groupId;
-  final String language;
 
   @override
   Widget build(BuildContext context) {
@@ -342,9 +318,9 @@ class _StudentList extends StatelessWidget {
       builder: (context, snapshot) {
         final docs = snapshot.data?.docs ?? [];
         if (docs.isEmpty) {
-          return Text(
-            TeacherUITranslations.get('noStudentsYet', language),
-            style: const TextStyle(color: TeacherColors.muted),
+          return const Text(
+            'No students added yet',
+            style: TextStyle(color: TeacherColors.muted),
           );
         }
 
@@ -383,15 +359,13 @@ class _StudentList extends StatelessWidget {
 class _RoundedTextField extends StatelessWidget {
   const _RoundedTextField({
     required this.controller,
-    required this.labelKey,
-    required this.language,
+    required this.labelText,
     required this.icon,
     this.maxLines = 1,
   });
 
   final TextEditingController controller;
-  final String labelKey;
-  final String language;
+  final String labelText;
   final IconData icon;
   final int maxLines;
 
@@ -401,7 +375,7 @@ class _RoundedTextField extends StatelessWidget {
       controller: controller,
       maxLines: maxLines,
       decoration: InputDecoration(
-        labelText: TeacherUITranslations.get(labelKey, language),
+        labelText: labelText,
         prefixIcon: Icon(icon),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(TeacherRadii.md),

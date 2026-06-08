@@ -5,8 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:just_audio/just_audio.dart';
-// import 'package:loringo_app/screens/initials/screen_four.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 import 'package:lottie/lottie.dart';
 
 class ScreenThree extends StatefulWidget {
@@ -47,13 +46,9 @@ class _ScreenThreeState extends State<ScreenThree> {
   String _userLang = 'English';
   String subtitle = '';
   String questionEn = '';
-  String questionTranslated = '';
   List<String> answerEn = [];
-  List<String> answerTranslated = [];
   List<Map<String, String>> shuffledWords = [];
   List<Map<String, String>> selectedWords = [];
-  bool showQuestionInSpanish =
-      true; // Random mode: true = Q in Spanish, A in English
 
   @override
   void initState() {
@@ -69,70 +64,45 @@ class _ScreenThreeState extends State<ScreenThree> {
 
   Future<void> _initTranslator() async {
     final userId = FirebaseAuth.instance.currentUser?.uid;
-    String userLang = 'Spanish'; // Default language
-    
-    // Only fetch user language if user is authenticated
+    String userLang = 'Spanish';
     if (userId != null) {
       final userDoc = await FirebaseFirestore.instance
           .collection("users")
           .doc(userId)
           .get();
-      
       if (userDoc.exists) {
         userLang = userDoc['language'] ?? 'Spanish';
       }
     }
     _userLang = userLang;
-    final targetLang = _mapLanguageToEnum(userLang);
-
+    // Translator is still needed for the UI language (button labels etc.)
     translator = OnDeviceTranslator(
       sourceLanguage: TranslateLanguage.english,
-      targetLanguage: targetLang,
+      targetLanguage: _mapLanguageToEnum(userLang),
     );
   }
 
   TranslateLanguage _mapLanguageToEnum(String lang) {
     switch (lang.toLowerCase()) {
-      case 'spanish':
-        return TranslateLanguage.spanish;
-      case 'french':
-        return TranslateLanguage.french;
-      case 'german':
-        return TranslateLanguage.german;
-      case 'italian':
-        return TranslateLanguage.italian;
-      default:
-        return TranslateLanguage.spanish;
+      case 'spanish': return TranslateLanguage.spanish;
+      case 'french':  return TranslateLanguage.french;
+      case 'german':  return TranslateLanguage.german;
+      case 'italian': return TranslateLanguage.italian;
+      default:        return TranslateLanguage.spanish;
     }
   }
 
   Future<void> _initializeTts() async {
-    // TTS language will be set dynamically in _speak method based on mode
     await flutterTts.setSpeechRate(0.5);
     await flutterTts.setPitch(1.0);
   }
 
-  String _getTtsCode(TranslateLanguage lang) {
-    switch (lang) {
-      case TranslateLanguage.spanish:
-        return 'es-ES';
-      case TranslateLanguage.french:
-        return 'fr-FR';
-      case TranslateLanguage.german:
-        return 'de-DE';
-      case TranslateLanguage.italian:
-        return 'it-IT';
-      default:
-        return 'es-ES';
-    }
-  }
-
   @override
   void dispose() {
-    super.dispose();
     translator.close();
     player.dispose();
     flutterTts.stop();
+    super.dispose();
   }
 
   Future<void> _fetchTask() async {
@@ -140,59 +110,36 @@ class _ScreenThreeState extends State<ScreenThree> {
       final doc = await FirebaseFirestore.instance
           .collection(widget.collectionName)
           .doc(widget.contentId)
-          .collection('units')
-          .doc(widget.unitId)
-          .collection('lessons')
-          .doc(widget.lessonId)
-          .collection('activities')
-          .doc(widget.activityId)
-          .collection('tasks')
-          .doc(widget.taskId)
+          .collection('units').doc(widget.unitId)
+          .collection('lessons').doc(widget.lessonId)
+          .collection('activities').doc(widget.activityId)
+          .collection('tasks').doc(widget.taskId)
           .get();
 
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
         final taskData = data['data'] as Map<String, dynamic>? ?? data;
 
-        subtitle = taskData['subtitle'] ?? '';
+        subtitle   = taskData['subtitle'] ?? '';
         questionEn = taskData['question'] ?? '';
-        answerEn = List<String>.from(taskData['answer'] ?? []);
+        answerEn   = List<String>.from(taskData['answer'] ?? []);
 
-        // Randomly decide: true = Question in Spanish, Answer in English
-        //                  false = Question in English, Answer in Spanish
-        showQuestionInSpanish = DateTime.now().millisecondsSinceEpoch % 2 == 0;
-
-        // Translate the question to user's language
-        questionTranslated = await translator.translateText(questionEn);
-
-        answerTranslated = [];
-        for (final word in answerEn) {
-          final translated = await translator.translateText(word);
-          answerTranslated.add(translated);
-        }
-        shuffledWords = [];
-
-        for (var i = 0; i < answerEn.length; i++) {
-          shuffledWords.add({
-            'en': answerEn[i],
-            'translated': answerTranslated[i],
-          });
-        }
+        // Build shuffled word pool — English only, no translation needed
+        shuffledWords = answerEn
+            .map((word) => {'en': word})
+            .toList();
         shuffledWords.shuffle();
+
         setState(() {});
       }
     } catch (e) {
-      throw ("Error fetching or translating task data: $e");
+      throw ("Error fetching task data: $e");
     }
   }
 
   void _speak(String text) async {
     if (text.isNotEmpty) {
-      // Set TTS language based on the mode
-      final ttsLang = showQuestionInSpanish
-          ? _getTtsCode(translator.targetLanguage)
-          : 'en-GB';
-      await flutterTts.setLanguage(ttsLang);
+      await flutterTts.setLanguage('en-GB');
       await flutterTts.speak(text);
     }
   }
@@ -212,30 +159,17 @@ class _ScreenThreeState extends State<ScreenThree> {
   }
 
   void _checkAnswer() {
-    final selected = showQuestionInSpanish
-        ? selectedWords.map((w) => w['en']).toList()
-        : selectedWords.map((w) => w['translated']).toList();
-    final correct = showQuestionInSpanish ? answerEn : answerTranslated;
-
-    final isCorrect = selected.join(' ') == correct.join(' ');
-
+    final selected  = selectedWords.map((w) => w['en']).toList();
+    final isCorrect = selected.join(' ') == answerEn.join(' ');
     _playFeedback(isCorrect);
   }
 
   void _playFeedback(bool isCorrect) async {
-    if (isCorrect) {
-      HapticFeedback.mediumImpact();
-    } else {
-      HapticFeedback.heavyImpact();
-    }
-    final soundAsset = isCorrect
-        ? 'assets/sound/success-2.mp3'
-        : 'assets/sound/fail-2.mp3';
-
+    isCorrect ? HapticFeedback.mediumImpact() : HapticFeedback.heavyImpact();
+    final soundAsset =
+        isCorrect ? 'assets/sound/success-2.mp3' : 'assets/sound/fail-2.mp3';
     player.setAsset(soundAsset).then((_) => player.play());
-
-    final animation = isCorrect ? 'success' : 'fail';
-    _showResultBottomSheet(animation, isCorrect);
+    _showResultBottomSheet(isCorrect ? 'success' : 'fail', isCorrect);
   }
 
   void _showResultBottomSheet(String animationType, bool isCorrect) {
@@ -243,97 +177,151 @@ class _ScreenThreeState extends State<ScreenThree> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.4,
-          maxChildSize: 0.6,
-          builder: (_, controller) {
-            return Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 20,
-                    offset: Offset(0, -5),
-                  ),
-                ],
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.4,
+        maxChildSize: 0.6,
+        builder: (_, controller) => Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Lottie.asset(
+                animationType == 'success'
+                    ? 'assets/animation/correct.json'
+                    : 'assets/animation/fail.json',
+                height: 150,
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Lottie.asset(
-                    animationType == 'success'
-                        ? 'assets/animation/correct.json'
-                        : 'assets/animation/fail.json',
-                    height: 150,
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    widget.onTaskComplete!(isCorrect);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isCorrect ? greenPrimary : Colors.orange,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 5,
                   ),
-                  const SizedBox(height: 20),
-                  if (isCorrect)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          widget.onTaskComplete!(isCorrect);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: greenPrimary,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 5,
-                        ),
-                        child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ),
+                  child: Text(
+                    // TeacherUITranslations.get('continueBtnText', _userLang),
+                    'Continue',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
                     ),
-                  if (!isCorrect)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          widget.onTaskComplete!(isCorrect);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 5,
-                        ),
-                        child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+                  ),
+                ),
               ),
-            );
-          },
-        );
-      },
+            ],
+          ),
+        ),
+      ),
     );
   }
 
+  Widget _buildAnswerArea() {
+    // Calculate how many lines we need based on selected words
+    // Each line holds roughly 5-6 words, so we'll use a fixed number of lines (e.g., 3 lines)
+    const int maxLines = 4;
+    const double lineHeight = 56.0;
+    const double sheetHeight = maxLines * lineHeight;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      height: sheetHeight,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Stack(
+        children: [
+          // ── Background ruled lines (always visible) ─────────────────────────
+          Column(
+            children: List.generate(maxLines, (index) {
+              return Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.blueGrey.shade50,
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+
+          // ── Word chips floating on top of lines ─────────────────────────────
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.start,
+              children: selectedWords.isEmpty
+                  ? [
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            'Tap words below to build the sentence',
+                            style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                          ),
+                        ),
+                      ),
+                    ]
+                  : selectedWords.map((word) {
+                      return GestureDetector(
+                        onTap: () => _removeWord(word),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border.all(color: greenPrimary, width: 1.5),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: greenPrimary.withOpacity(0.12),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Text(
+                            word['en']!,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     const backgroundGradient = LinearGradient(
@@ -341,6 +329,7 @@ class _ScreenThreeState extends State<ScreenThree> {
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
     );
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(gradient: backgroundGradient),
@@ -350,35 +339,29 @@ class _ScreenThreeState extends State<ScreenThree> {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // header
+
+                    // ── Progress header ─────────────────────────────────────
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
+                          horizontal: 20, vertical: 16),
                       child: Row(
                         children: [
                           IconButton(
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.black87,
-                              size: 28,
-                            ),
+                            icon: const Icon(Icons.close,
+                                color: Colors.black87, size: 28),
                             onPressed: () => Navigator.pop(context),
                           ),
                           Expanded(
                             child: ClipRRect(
-                              borderRadius: const BorderRadius.all(
-                                Radius.circular(30),
-                              ),
+                              borderRadius:
+                                  const BorderRadius.all(Radius.circular(30)),
                               child: LinearProgressIndicator(
-                                value:
-                                    (widget.currentTaskNumber + 1) /
+                                value: (widget.currentTaskNumber + 1) /
                                     widget.totalTasks,
                                 backgroundColor: Colors.blueGrey,
-                                valueColor: const AlwaysStoppedAnimation<Color>(
-                                  greenPrimary,
-                                ),
+                                valueColor:
+                                    const AlwaysStoppedAnimation<Color>(
+                                        greenPrimary),
                                 minHeight: 8,
                               ),
                             ),
@@ -387,7 +370,7 @@ class _ScreenThreeState extends State<ScreenThree> {
                       ),
                     ),
 
-                    // subtitle and hint
+                    // ── Subtitle / instruction ──────────────────────────────
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Text(
@@ -399,18 +382,16 @@ class _ScreenThreeState extends State<ScreenThree> {
                         ),
                       ),
                     ),
+
+                    // ── Question with TTS button ────────────────────────────
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 10,
-                      ),
+                          horizontal: 20, vertical: 10),
                       child: Row(
                         children: [
                           Expanded(
                             child: Text(
-                              showQuestionInSpanish
-                                  ? questionTranslated
-                                  : questionEn,
+                              questionEn,
                               style: const TextStyle(
                                 fontSize: 18,
                                 color: Colors.black54,
@@ -419,139 +400,70 @@ class _ScreenThreeState extends State<ScreenThree> {
                             ),
                           ),
                           IconButton(
-                            icon: const Icon(
-                              Icons.volume_up,
-                              color: greenPrimary,
-                              size: 28,
-                            ),
-                            onPressed: () => _speak(
-                              showQuestionInSpanish
-                                  ? questionTranslated
-                                  : questionEn,
-                            ),
+                            icon: const Icon(Icons.volume_up,
+                                color: greenPrimary, size: 28),
+                            onPressed: () => _speak(questionEn),
                           ),
                         ],
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: greenPrimary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: selectedWords.map((word) {
-                            return GestureDetector(
-                              onTap: () => _removeWord(word),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 14,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: greenPrimary,
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      showQuestionInSpanish
-                                          ? word['en']!
-                                          : word['translated']!,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w600,
+
+                    const SizedBox(height: 12),
+
+                    // ── Answer sheet ────────────────────────────────────────
+                    _buildAnswerArea(),
+
+                    const SizedBox(height: 20),
+
+                    // ── Word pool ───────────────────────────────────────────
+                    Expanded(
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 20),
+                        child: SingleChildScrollView(
+                          child: Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: shuffledWords.map((word) {
+                              return GestureDetector(
+                                onTap: () => _selectWord(word),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    border: Border.all(
+                                        color: greenPrimary, width: 2),
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.grey
+                                            .withValues(alpha: 0.15),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
                                       ),
+                                    ],
+                                  ),
+                                  child: Text(
+                                    word['en']!,
+                                    style: const TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
                                     ),
-                                    const SizedBox(width: 8),
-                                    const Icon(
-                                      Icons.close,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            );
-                          }).toList(),
+                              );
+                            }).toList(),
+                          ),
                         ),
                       ),
                     ),
 
-                    const SizedBox(height: 20),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.grey.withValues(alpha: 0.2),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          constraints: const BoxConstraints(
-                            minHeight: 200,
-                            maxHeight: 200,
-                          ),
-                          child: SingleChildScrollView(
-                            child: Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: shuffledWords.map((word) {
-                                return GestureDetector(
-                                  onTap: () => _selectWord(word),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 12,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(
-                                        color: greenPrimary,
-                                        width: 2,
-                                      ),
-                                      borderRadius: BorderRadius.circular(30),
-                                    ),
-                                    child: Text(
-                                      showQuestionInSpanish
-                                          ? word['en']!
-                                          : word['translated']!,
-                                      style: const TextStyle(
-                                        color: Colors.black87,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                    // ── Check button ────────────────────────────────────────
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 20,
-                      ),
+                          horizontal: 20, vertical: 20),
                       child: SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
@@ -560,18 +472,21 @@ class _ScreenThreeState extends State<ScreenThree> {
                               : null,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: greenPrimary,
-                            padding: const EdgeInsets.symmetric(vertical: 18),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 18),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
                             elevation: 5,
                           ),
                           child: Text(
-                            TeacherUITranslations.get('check', _userLang),
+                            // TeacherUITranslations.get('check', _userLang),
+                            'Check',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 1.2,
+                              color: Colors.white,
                             ),
                           ),
                         ),

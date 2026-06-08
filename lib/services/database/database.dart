@@ -1,4 +1,12 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:loringo_app/screens/admin/admin_approval_content_screen.dart';
+import 'package:loringo_app/services/notifications/notification_service.dart';
+// import 'package:loringo_app/services/notifications/notification_service.dart';
+// import 'package:loringo_app/screens/admin/content_approval_screen.dart';
 
 class Database {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -9,170 +17,93 @@ class Database {
 
   CollectionReference get users => _db.collection('users');
 
-  // -------- CREATE USER --------
-  Future<void> createUser({
-    required String uid,
-    required String name,
-    required String email,
-    required String role, // 'admin', 'teacher', 'parent', 'student'
-  }) async {
-    // Detect admin by name
+  Future<void> createUser({required String uid, required String name, required String email, required String role}) async {
     String finalRole = role;
     final nameLower = name.toLowerCase();
     if (nameLower == 'admin' || nameLower == 'administrador') {
-      // Check if there are already 3 admins
-      final adminCount = await users
-          .where('role', isEqualTo: 'admin')
-          .get()
-          .then((snapshot) => snapshot.docs.length);
-
-      if (adminCount >= 3) {
-        throw Exception('Maximum number of administrators (3) reached');
-      }
+      final count = await users.where('role', isEqualTo: 'admin').get().then((s) => s.docs.length);
+      if (count >= 3) throw Exception('Maximum number of administrators (3) reached');
       finalRole = 'admin';
     }
-
     return users.doc(uid).set({
-      'name': name,
-      'email': email,
-      'role': finalRole,
-      'xp': 0,
-      'streak': 0,
-      'language': 'Spanish',
-      'state': 1,
-      'createdAt': FieldValue.serverTimestamp(),
+      'name': name, 'email': email, 'role': finalRole,
+      'xp': 0, 'streak': 0, 'language': 'Spanish',
+      'state': 1, 'createdAt': FieldValue.serverTimestamp(),
     });
   }
 
-  // -------- READ USER --------
-  Future<DocumentSnapshot> getUser(String uid) {
-    return users.doc(uid).get();
-  }
+  Future<DocumentSnapshot> getUser(String uid) => users.doc(uid).get();
+  Stream<DocumentSnapshot> getUserStream(String uid) => users.doc(uid).snapshots();
 
-  Stream<DocumentSnapshot> getUserStream(String uid) {
-    return users.doc(uid).snapshots();
-  }
-
-  // -------- UPDATE USER --------
-  Future<void> updateUser({
-    required String uid,
-    String? name,
-    String? language,
-    int? xp,
-    int? streak,
-  }) {
-    Map<String, dynamic> updates = {};
-    if (name != null) updates['name'] = name;
-    if (language != null) updates['language'] = language;
-    if (xp != null) updates['xp'] = xp;
-    if (streak != null) updates['streak'] = streak;
-
-    return users.doc(uid).update(updates);
+  Future<void> updateUser({required String uid, String? name, String? language, int? xp, int? streak}) {
+    final u = <String, dynamic>{};
+    if (name != null) u['name'] = name;
+    if (language != null) u['language'] = language;
+    if (xp != null) u['xp'] = xp;
+    if (streak != null) u['streak'] = streak;
+    return users.doc(uid).update(u);
   }
 
   // =========================
   // STUDENT PROGRESS
   // =========================
 
-  CollectionReference studentProgress(String studentId) {
-    return _db.collection('students').doc(studentId).collection('progress');
-  }
+  CollectionReference studentProgress(String studentId) =>
+      _db.collection('students').doc(studentId).collection('progress');
+  CollectionReference studentAttempts(String studentId, String activityId) =>
+      studentProgress(studentId).doc(activityId).collection('attempts');
 
-  CollectionReference studentAttempts(String studentId, String activityId) {
-    return studentProgress(studentId).doc(activityId).collection('attempts');
-  }
-
-  // -------- SAVE ACTIVITY COMPLETION --------
   Future<int> saveActivityCompletion({
-    required String studentId,
-    required String activityId,
-    required String contentId,
-    required String unitId,
-    required int score,
-    required int correctAnswers,
-    required int wrongAnswers,
-    required int xpBase,
-    required int bonusXP,
+    required String studentId, required String activityId,
+    required String contentId, required String unitId,
+    required int score, required int correctAnswers,
+    required int wrongAnswers, required int xpBase, required int bonusXP,
   }) async {
     final progressRef = studentProgress(studentId).doc(activityId);
     final progressDoc = await progressRef.get();
-
-    int totalAttempts = 1;
-    int bestScore = score;
-    int xpEarned;
-    bool isFirstCompletion = true;
+    int totalAttempts = 1, bestScore = score, xpEarned;
     dynamic firstCompletedAt;
-    final currentTimestamp = FieldValue.serverTimestamp();
+    final now = FieldValue.serverTimestamp();
 
     if (progressDoc.exists) {
-      // Not first attempt
       final data = progressDoc.data() as Map<String, dynamic>;
       totalAttempts = (data['totalAttempts'] ?? 0) + 1;
       bestScore = score > (data['bestScore'] ?? 0) ? score : (data['bestScore'] ?? 0);
-      xpEarned = 5; // Subsequent attempts get only 5 XP
-      isFirstCompletion = false;
-      firstCompletedAt = data['firstCompletedAt']; // Keep original first completion time
+      xpEarned = 5;
+      firstCompletedAt = data['firstCompletedAt'];
     } else {
-      // First attempt - calculate XP based on score percentage
-      // Perfect score (100%) gets full XP (base + bonus)
-      // Lower scores get proportional XP based on base, but always get full bonus
-      final scoreMultiplier = score / 100.0;
-      final earnedBaseXP = (xpBase * scoreMultiplier).round();
-      xpEarned = earnedBaseXP + bonusXP;
-      firstCompletedAt = currentTimestamp;
+      xpEarned = (xpBase * score / 100.0).round() + bonusXP;
+      firstCompletedAt = now;
     }
 
-    // Save attempt details in subcollection FIRST
-    final attemptId = 'attempt_$totalAttempts';
-    await studentAttempts(studentId, activityId).doc(attemptId).set({
-      'attemptNumber': totalAttempts,
-      'score': score,
-      'correctAnswers': correctAnswers,
-      'wrongAnswers': wrongAnswers,
-      'xpEarned': xpEarned,
-      'completedAt': currentTimestamp,
-    });
+    // Calculate stars based on the best score (percentage)
+    int stars = 1;
+    if (bestScore >= 90) stars = 3;
+    else if (bestScore >= 70) stars = 2;
 
-    // Update main progress document (without xpEarnedTotal)
+    await studentAttempts(studentId, activityId).doc('attempt_$totalAttempts').set({
+      'attemptNumber': totalAttempts, 'score': score,
+      'correctAnswers': correctAnswers, 'wrongAnswers': wrongAnswers,
+      'xpEarned': xpEarned, 'completedAt': now,
+    });
     await progressRef.set({
-      'activityId': activityId,
-      'contentId': contentId,
-      'unitId': unitId,
-      'isCompleted': true,
-      'firstCompletedAt': firstCompletedAt, // Keeps original timestamp from first attempt
-      'lastCompletedAt': currentTimestamp,   // Always updates to current time
-      'totalAttempts': totalAttempts,
-      'bestScore': bestScore,
+      'activityId': activityId, 'contentId': contentId, 'unitId': unitId,
+      'isCompleted': true, 'firstCompletedAt': firstCompletedAt,
+      'lastCompletedAt': now, 'totalAttempts': totalAttempts, 'bestScore': bestScore,
+      'stars': stars,
     });
-
-    // Increment total XP on the student document
-    await _db.collection('students').doc(studentId).update({
-      'xp': FieldValue.increment(xpEarned),
-    });
-
-    print(
-      'Activity $activityId completed - Attempt $totalAttempts: Score $score%, XP earned: $xpEarned',
-    );
-
+    await _db.collection('students').doc(studentId).update({'xp': FieldValue.increment(xpEarned)});
     return xpEarned;
   }
 
-  // -------- GET STUDENT PROGRESS --------
-  Future<QuerySnapshot> getStudentProgress(String studentId) {
-    return studentProgress(studentId).get();
-  }
+  Future<QuerySnapshot> getStudentProgress(String studentId) => studentProgress(studentId).get();
+  Stream<QuerySnapshot> getStudentProgressStream(String studentId) => studentProgress(studentId).snapshots();
 
-  Stream<QuerySnapshot> getStudentProgressStream(String studentId) {
-    return studentProgress(studentId).snapshots();
-  }
-
-  // -------- CHECK IF ACTIVITY IS COMPLETED --------
   Future<bool> isActivityCompleted(String studentId, String activityId) async {
     final doc = await studentProgress(studentId).doc(activityId).get();
     return doc.exists && (doc.data() as Map<String, dynamic>)['isCompleted'] == true;
   }
 
-  // -------- SAVE QUIZ COMPLETION --------
   Future<void> saveQuizCompletion({
     required String studentId,
     required String quizId,
@@ -184,11 +115,13 @@ class Database {
     required int xpEarned,
     bool updateBestOnly = false,
     String unitTitle = '',
-    bool generateReport = false,
+    bool generateReport = false,  // true ONLY for unit quizzes
     String reportType = 'unit',
+    String studentName = '',      // forwarded to push notification body
+    String feedback = '',
+    bool passed = false,
   }) async {
     if (updateBestOnly) {
-      // Replay: only update score/stars if improved; always record last attempt
       await studentProgress(studentId).doc(quizId).update({
         'score': score,
         'stars': stars,
@@ -196,7 +129,6 @@ class Database {
         'attempts': FieldValue.increment(1),
       });
     } else {
-      // First completion: write full record
       await studentProgress(studentId).doc(quizId).set({
         'quizId': quizId,
         'contentId': contentId,
@@ -208,18 +140,18 @@ class Database {
         'completedAt': FieldValue.serverTimestamp(),
         'lastAttemptAt': FieldValue.serverTimestamp(),
         'attempts': 1,
-        'isCompleted': true,
+        'isCompleted': passed,
       });
     }
 
-    // Increment total XP only if there is XP to award
     if (xpEarned > 0) {
       await _db.collection('students').doc(studentId).update({
         'xp': FieldValue.increment(xpEarned),
       });
     }
 
-    // Auto-generate report on first completion of a graded quiz
+    // Only unit quizzes generate reports + send notifications.
+    // Lesson quizzes always call with generateReport: false.
     if (generateReport && !updateBestOnly) {
       await _generateReport(
         studentId: studentId,
@@ -230,51 +162,43 @@ class Database {
         quizTotalQuestions: totalQuestions,
         quizStars: stars,
         reportType: reportType,
+        studentName: studentName,
+        feedback: feedback,
       );
     }
   }
 
-  // ── Reports ──────────────────────────────────────────────────────────────
 
-  CollectionReference reports(String studentId) {
-    return _db.collection('students').doc(studentId).collection('reports');
-  }
+  CollectionReference reports(String studentId) => _db.collection('students').doc(studentId).collection('reports');
+  Future<DocumentSnapshot> getReport(String studentId, String reportId) => reports(studentId).doc(reportId).get();
+  Stream<QuerySnapshot> getReportsStream(String studentId) => reports(studentId).snapshots();
 
-  Future<DocumentSnapshot> getReport(String studentId, String reportId) {
-    return reports(studentId).doc(reportId).get();
-  }
-
-  Stream<QuerySnapshot> getReportsStream(String studentId) {
-    return reports(studentId).snapshots();
-  }
-
-  /// Builds a completion report for a graded quiz (unit test or content final quiz).
-  /// Triggered automatically by [saveQuizCompletion] on first completion.
   Future<void> _generateReport({
     required String studentId,
     required String contentId,
     required String unitId,
     required String unitTitle,
-    required int quizCorrectCount, // raw correct-answer count
+    required int quizCorrectCount,
     required int quizTotalQuestions,
     required int quizStars,
     String reportType = 'unit',
+    String studentName = '',
+    String feedback = '',
   }) async {
-    final quizIncorrect = quizTotalQuestions - quizCorrectCount;
     final quizPercent = quizTotalQuestions == 0
         ? 0
         : (quizCorrectCount / quizTotalQuestions * 100).round();
 
-    // Count total activities across all lessons in this unit
+    // Count activities in this unit
     int totalActivities = 0;
     final lessonsSnap = await personalizedLessons(contentId, unitId).get();
-    for (final lesson in lessonsSnap.docs) {
-      final actSnap =
-          await personalizedActivities(contentId, unitId, lesson.id).get();
-      totalActivities += actSnap.docs.length;
+    for (final l in lessonsSnap.docs) {
+      totalActivities +=
+          (await personalizedActivities(contentId, unitId, l.id).get())
+              .docs.length;
     }
 
-    // Count activities the student completed in this unit
+    // Count completed activities for this student in this unit
     final progressSnap = await studentProgress(studentId).get();
     int activitiesCompleted = 0;
     for (final doc in progressSnap.docs) {
@@ -285,11 +209,8 @@ class Database {
         activitiesCompleted++;
       }
     }
-    final activitiesPercent = totalActivities == 0
-        ? 0
-        : (activitiesCompleted / totalActivities * 100).round();
 
-    // Gather previous unit quiz percentages for trend comparison
+    // Previous unit scores for trend display
     final prevSnap = await reports(studentId).get();
     final previousUnitScores = prevSnap.docs
         .where((d) =>
@@ -298,516 +219,473 @@ class Database {
             ((d.data() as Map<String, dynamic>)['quizPercent'] as int?) ?? 0)
         .toList();
 
-    // Persist report — keyed by unitId for unit reports, contentId for content reports
-    final reportKey = reportType == 'content' ? contentId : unitId;
-    await reports(studentId).doc(reportKey).set({
+    // Write report document
+    await reports(studentId)
+        .doc(reportType == 'content' ? contentId : unitId)
+        .set({
       'reportType': reportType,
       'contentId': contentId,
       'unitId': unitId,
       'unitTitle': unitTitle,
       'quizCorrect': quizCorrectCount,
-      'quizIncorrect': quizIncorrect,
+      'quizIncorrect': quizTotalQuestions - quizCorrectCount,
       'quizTotalQuestions': quizTotalQuestions,
+      'quizPercent': quizPercent,
+      'activitiesCompleted': activitiesCompleted,
+      'totalActivities': totalActivities,
+      'activitiesPercent': totalActivities == 0
+          ? 0
+          : (activitiesCompleted / totalActivities * 100).round(),
+      'previousUnitScores': previousUnitScores,
+      'feedback': feedback,
+      'generatedAt': FieldValue.serverTimestamp(),
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // Send push notification to parent – runs after report is saved.
+    // A failure here never prevents the report from being written.
+    // ─────────────────────────────────────────────────────────────
+    await NotificationService.sendReportNotification(
+      studentId: studentId,
+      studentName: studentName.isNotEmpty ? studentName : 'Your child',
+      unitTitle: unitTitle,
+    );
+  }
+
+  Future<void> saveReportOnly({
+    required String studentId,
+    required String unitId,
+    required String unitTitle,
+    required int score,
+    required int totalQuestions,
+    required int stars,
+    required String feedback,
+  }) async {
+    final quizPercent = totalQuestions == 0 ? 0 : (score / totalQuestions * 100).round();
+    
+    // Get existing report data if any (to preserve previous unit scores)
+    final existingReport = await reports(studentId).doc(unitId).get();
+    final previousUnitScores = existingReport.exists
+        ? (existingReport.data() as Map<String, dynamic>)['previousUnitScores'] as List? ?? []
+        : [];
+    
+    // ============================================================
+    // Calculate activities completed in this unit
+    // ============================================================
+    int totalActivities = 0;
+    int activitiesCompleted = 0;
+    
+    try {
+      // First, find which content this unit belongs to
+      // We need to search through content to find which one contains this unit
+      final contentSnapshot = await _db.collection('content').get();
+      
+      String? contentId;
+      for (final doc in contentSnapshot.docs) {
+        final unitsSnapshot = await doc.reference.collection('units').get();
+        final hasUnit = unitsSnapshot.docs.any((u) => u.id == unitId);
+        if (hasUnit) {
+          contentId = doc.id;
+          break;
+        }
+      }
+      
+      if (contentId != null) {
+        // Get all lessons in this unit
+        final lessonsSnapshot = await personalizedLessons(contentId, unitId).get();
+        
+        for (final lesson in lessonsSnapshot.docs) {
+          // Get all activities in this lesson
+          final activitiesSnapshot = await personalizedActivities(contentId, unitId, lesson.id).get();
+          totalActivities += activitiesSnapshot.docs.length;
+        }
+        
+        // Count completed activities for this student
+        final studentProgressSnapshot = await studentProgress(studentId).get();
+        
+        for (final progressDoc in studentProgressSnapshot.docs) {
+          final data = progressDoc.data() as Map<String, dynamic>;
+          // Check if this progress belongs to this unit and is an activity (not a quiz)
+          if (data['unitId'] == unitId && 
+              data['isCompleted'] == true &&
+              data.containsKey('activityId') &&
+              data['activityId'] != null) {
+            activitiesCompleted++;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error calculating activities for report: $e');
+      // Continue with zeros if calculation fails
+    }
+    
+    // Calculate activities percentage
+    final activitiesPercent = totalActivities == 0 
+        ? 0 
+        : (activitiesCompleted / totalActivities * 100).round();
+    
+    // Save ONLY the report document
+    await reports(studentId).doc(unitId).set({
+      'reportType': 'unit',
+      'unitId': unitId,
+      'unitTitle': unitTitle,
+      'quizCorrect': score,
+      'quizIncorrect': totalQuestions - score,
+      'quizTotalQuestions': totalQuestions,
       'quizPercent': quizPercent,
       'activitiesCompleted': activitiesCompleted,
       'totalActivities': totalActivities,
       'activitiesPercent': activitiesPercent,
       'previousUnitScores': previousUnitScores,
+      'stars': stars,
+      'feedback': feedback,
       'generatedAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
+    
+    debugPrint('✅ Report saved for student: $studentId, unit: $unitId');
+    debugPrint('   Quiz: $score/$totalQuestions ($quizPercent%)');
+    debugPrint('   Activities: $activitiesCompleted/$totalActivities ($activitiesPercent%)');
   }
 
   // =========================
-  // PERSONALIZED CONTENT (TEACHER)
+  // PERSONALIZED CONTENT
   // =========================
 
-  CollectionReference get personalizedContent => _db.collection('personalizedContent');
+  CollectionReference get personalizedContent => _db.collection('content');
 
-  // -------- CREATE (TEACHER) --------
-  Future<void> createPersonalizedContent({
-    required String contentId,
-    required String title,
-    required String description,
-    required String ageGroup,
-    required int order,
-    required String teacherId,
-    List<String>? assignedTo,
-    String status = 'pending',
-  }) {
-    return personalizedContent.doc(contentId).set({
-      'teacherId': teacherId,
-      'assignedTo': assignedTo ?? [],
-      'title': title,
-      'description': description,
-      'ageGroup': ageGroup,
-      'order': order,
-      'status': status, // pending | approved | rejected
-      'isActive': false, // set to true only when admin approves
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+  Future<void> createPersonalizedContent({required String contentId, required String title, required String description, required String ageGroup, required int order, required String teacherId, List<String>? assignedTo, String status = 'pending'}) =>
+      personalizedContent.doc(contentId).set({'teacherId': teacherId, 'assignedTo': assignedTo ?? [], 'title': title, 'description': description, 'ageGroup': ageGroup, 'order': order, 'status': status, 'isActive': false, 'createdAt': FieldValue.serverTimestamp()});
+
+  Future<void> assignContentToGroups({required String contentId, required List<String> groupIds}) =>
+      personalizedContent.doc(contentId).update({'assignedTo': groupIds, 'assignedAt': FieldValue.serverTimestamp()});
+  Future<QuerySnapshot> getPersonalizedContent(String groupId) =>
+      personalizedContent.where('assignedTo', arrayContains: groupId).orderBy('order').get();
+  Stream<QuerySnapshot> getPersonalizedContentStream(String groupId) =>
+      personalizedContent.where('status', isEqualTo: 'approved').where('assignedTo', arrayContains: groupId).snapshots();
+  Stream<QuerySnapshot> getTeacherContentStream(String teacherId) =>
+      personalizedContent.where('teacherId', isEqualTo: teacherId).orderBy('createdAt', descending: true).snapshots();
+  Stream<QuerySnapshot> getTeacherApprovedContentStream(String teacherId) =>
+      personalizedContent.where('teacherId', isEqualTo: teacherId).where('status', isEqualTo: 'approved').orderBy('createdAt', descending: true).snapshots();
+  Future<void> assignContentToGroup({required String contentId, required String groupId}) =>
+      personalizedContent.doc(contentId).update({'assignedTo': FieldValue.arrayUnion([groupId]), 'assignedAt': FieldValue.serverTimestamp()});
+  Future<void> removeContentFromGroup({required String contentId, required String groupId}) =>
+      personalizedContent.doc(contentId).update({'assignedTo': FieldValue.arrayRemove([groupId])});
+  Stream<QuerySnapshot> getPendingContentByTeacherStream(String teacherId) =>
+      personalizedContent.where('teacherId', isEqualTo: teacherId).where('status', isEqualTo: 'pending').orderBy('createdAt', descending: true).snapshots();
+  Stream<QuerySnapshot> getRejectedContentStream(String teacherId) =>
+      personalizedContent.where('teacherId', isEqualTo: teacherId).where('status', isEqualTo: 'rejected').orderBy('createdAt', descending: true).snapshots();
+  Future<DocumentSnapshot> getPersonalizedContentDoc(String contentId) => personalizedContent.doc(contentId).get();
+  Future<void> updatePersonalizedContent({required String contentId, required String title, required String description, required String ageGroup, required int order, String? status}) =>
+      personalizedContent.doc(contentId).update({'title': title, 'description': description, 'ageGroup': ageGroup, 'order': order, if (status != null) 'status': status, 'updatedAt': FieldValue.serverTimestamp()});
+  Future<void> deletePersonalizedContent(String contentId) => personalizedContent.doc(contentId).delete();
+
+  CollectionReference contentApproval(String contentId) => personalizedContent.doc(contentId).collection('approval');
+  Future<void> writeContentApproved(String contentId) async {
+    await personalizedContent.doc(contentId).update({'status': 'approved', 'isActive': true, 'updatedAt': FieldValue.serverTimestamp()});
+    await contentApproval(contentId).doc('record').set({'approvedAt': FieldValue.serverTimestamp()});
   }
-
-  /// Assign content to groups (after admin approval)
-  Future<void> assignContentToGroups({
-    required String contentId,
-    required List<String> groupIds,
-  }) {
-    return personalizedContent.doc(contentId).update({
-      'assignedTo': groupIds,
-      'assignedAt': FieldValue.serverTimestamp(),
-    });
+  Future<void> writeContentRejected(String contentId, String reason) async {
+    await personalizedContent.doc(contentId).update({'status': 'rejected', 'isActive': false, 'updatedAt': FieldValue.serverTimestamp()});
+    await contentApproval(contentId).doc('record').set({'rejectedAt': FieldValue.serverTimestamp(), 'reason': reason.isNotEmpty ? reason : 'No reason provided'});
   }
+  Future<DocumentSnapshot> getContentApprovalRecord(String contentId) => contentApproval(contentId).doc('record').get();
 
-  // -------- READ --------
-  Future<QuerySnapshot> getPersonalizedContent(String groupId) {
-    return personalizedContent
-        .where('assignedTo', arrayContains: groupId)
+  // =========================
+  // UNITS / LESSONS / ACTIVITIES / TASKS
+  // =========================
+
+  CollectionReference personalizedUnits(String contentId) => personalizedContent.doc(contentId).collection('units');
+  CollectionReference personalizedLessons(String contentId, String unitId) => personalizedUnits(contentId).doc(unitId).collection('lessons');
+  CollectionReference personalizedActivities(String contentId, String unitId, String lessonId) => personalizedLessons(contentId, unitId).doc(lessonId).collection('activities');
+  CollectionReference personalizedTasks(String contentId, String unitId, String lessonId, String activityId) => personalizedActivities(contentId, unitId, lessonId).doc(activityId).collection('tasks');
+
+  Future<void> createPersonalizedUnit({required String groupId, required String contentId, required String unitId, required String title, required int order}) =>
+      personalizedUnits(contentId).doc(unitId).set({'title': title, 'order': order, 'createdAt': FieldValue.serverTimestamp()});
+  Future<QuerySnapshot> getPersonalizedUnits(String groupId, String contentId) => personalizedUnits(contentId).orderBy('order').get();
+  Stream<QuerySnapshot> getPersonalizedUnitsStream(String groupId, String contentId) => personalizedUnits(contentId).orderBy('order').snapshots();
+  Future<void> updatePersonalizedUnit({required String groupId, required String contentId, required String unitId, required String title, required int order}) =>
+      personalizedUnits(contentId).doc(unitId).update({'title': title, 'order': order});
+  Future<void> deletePersonalizedUnit(String groupId, String contentId, String unitId) => personalizedUnits(contentId).doc(unitId).delete();
+
+  Future<void> createPersonalizedLesson({required String groupId, required String contentId, required String unitId, required String lessonId, required String title, required int order}) =>
+      personalizedLessons(contentId, unitId).doc(lessonId).set({'title': title, 'order': order, 'createdAt': FieldValue.serverTimestamp()});
+  Future<QuerySnapshot> getPersonalizedLessons(String groupId, String contentId, String unitId) => personalizedLessons(contentId, unitId).orderBy('order').get();
+  Stream<QuerySnapshot> getPersonalizedLessonsStream(String groupId, String contentId, String unitId) => personalizedLessons(contentId, unitId).orderBy('order').snapshots();
+  Future<void> updatePersonalizedLesson({required String groupId, required String contentId, required String unitId, required String lessonId, required String title, required int order}) =>
+      personalizedLessons(contentId, unitId).doc(lessonId).update({'title': title, 'order': order});
+  Future<void> deletePersonalizedLesson(String groupId, String contentId, String unitId, String lessonId) => personalizedLessons(contentId, unitId).doc(lessonId).delete();
+
+  Future<void> createPersonalizedActivity({required String groupId, required String contentId, required String unitId, required String lessonId, required String activityId, required String title, required int order, String? requiredActivityId, int? xpBase, String? difficulty}) =>
+      personalizedActivities(contentId, unitId, lessonId).doc(activityId).set({'title': title, 'order': order, 'requiredActivityId': requiredActivityId, 'xpBase': xpBase ?? 100, 'difficulty': difficulty ?? 'easy', 'createdAt': FieldValue.serverTimestamp()});
+  Future<QuerySnapshot> getPersonalizedActivities(String groupId, String contentId, String unitId, String lessonId) => personalizedActivities(contentId, unitId, lessonId).orderBy('order').get();
+  Stream<QuerySnapshot> getPersonalizedActivitiesStream(String groupId, String contentId, String unitId, String lessonId) => personalizedActivities(contentId, unitId, lessonId).orderBy('order').snapshots();
+  Future<void> updatePersonalizedActivity({required String groupId, required String contentId, required String unitId, required String lessonId, required String activityId, required String title, required int order, String? requiredActivityId, int? xpBase, String? difficulty}) =>
+      personalizedActivities(contentId, unitId, lessonId).doc(activityId).update({'title': title, 'order': order, 'requiredActivityId': requiredActivityId, 'xpBase': xpBase ?? 100, 'difficulty': difficulty ?? 'easy'});
+  Future<void> deletePersonalizedActivity(String groupId, String contentId, String unitId, String lessonId, String activityId) => personalizedActivities(contentId, unitId, lessonId).doc(activityId).delete();
+
+  Future<void> createPersonalizedTask({required String groupId, required String contentId, required String unitId, required String lessonId, required String activityId, required String taskId, required String type, required String question, required int order, required Map<String, dynamic> data}) =>
+      personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).set({'type': type, 'question': question, 'order': order, 'data': data, 'createdAt': FieldValue.serverTimestamp()});
+  Future<QuerySnapshot> getPersonalizedTasks(String groupId, String contentId, String unitId, String lessonId, String activityId) => personalizedTasks(contentId, unitId, lessonId, activityId).orderBy('order').get();
+  Stream<QuerySnapshot> getPersonalizedTasksStream(String groupId, String contentId, String unitId, String lessonId, String activityId) => personalizedTasks(contentId, unitId, lessonId, activityId).orderBy('order').snapshots();
+  Future<void> updatePersonalizedTask({required String groupId, required String contentId, required String unitId, required String lessonId, required String activityId, required String taskId, required String type, required String question, required int order, required Map<String, dynamic> data}) =>
+      personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).update({'type': type, 'question': question, 'order': order, 'data': data});
+  Future<void> deletePersonalizedTask(String groupId, String contentId, String unitId, String lessonId, String activityId, String taskId) =>
+      personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).delete();
+
+  
+  // =========================
+  // ACTIVITY TASKS
+  // =========================
+
+  Future<List<QueryDocumentSnapshot>> getActivityTasks({
+    required String contentId,
+    required String unitId,
+    required String lessonId,
+    required String activityId,
+    String collectionName = 'content',
+  }) async {
+    final snapshot = await _db
+        .collection(collectionName)
+        .doc(contentId)
+        .collection('units')
+        .doc(unitId)
+        .collection('lessons')
+        .doc(lessonId)
+        .collection('activities')
+        .doc(activityId)
+        .collection('tasks')
         .orderBy('order')
         .get();
-  }
-
-  /// Get approved content assigned to a group
-  Stream<QuerySnapshot> getPersonalizedContentStream(String groupId) {
-    return personalizedContent
-        .where('status', isEqualTo: 'approved')
-        .where('assignedTo', arrayContains: groupId)
-        .snapshots();
-  }
-
-  /// Get ALL content by a teacher (all statuses), for the teacher-level management screen
-  Stream<QuerySnapshot> getTeacherContentStream(String teacherId) {
-    return personalizedContent
-        .where('teacherId', isEqualTo: teacherId)
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
-
-  /// Get only approved content for a teacher (for teacher-level quizzes screen)
-  Stream<QuerySnapshot> getTeacherApprovedContentStream(String teacherId) {
-    return personalizedContent
-        .where('teacherId', isEqualTo: teacherId)
-        .where('status', isEqualTo: 'approved')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
-
-  /// Assign a single group to the content's assignedTo list
-  Future<void> assignContentToGroup({
-    required String contentId,
-    required String groupId,
-  }) {
-    return personalizedContent.doc(contentId).update({
-      'assignedTo': FieldValue.arrayUnion([groupId]),
-      'assignedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  /// Remove a group from the content's assignedTo list
-  Future<void> removeContentFromGroup({
-    required String contentId,
-    required String groupId,
-  }) {
-    return personalizedContent.doc(contentId).update({
-      'assignedTo': FieldValue.arrayRemove([groupId]),
-    });
-  }
-
-  /// Get pending content created by a teacher (awaiting admin review or to be assigned)
-  Stream<QuerySnapshot> getPendingContentByTeacherStream(String teacherId) {
-    return personalizedContent
-        .where('teacherId', isEqualTo: teacherId)
-        .where('status', isEqualTo: 'pending')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
-
-  /// Get rejected content for teacher to edit/resubmit
-  Stream<QuerySnapshot> getRejectedContentStream(String teacherId) {
-    return personalizedContent
-        .where('teacherId', isEqualTo: teacherId)
-        .where('status', isEqualTo: 'rejected')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
-
-  Future<DocumentSnapshot> getPersonalizedContentDoc(String contentId) {
-    return personalizedContent.doc(contentId).get();
-  }
-
-  Future<void> updatePersonalizedContent({
-    required String contentId,
-    required String title,
-    required String description,
-    required String ageGroup,
-    required int order,
-    String? status,
-  }) {
-    return personalizedContent.doc(contentId).update({
-      'title': title,
-      'description': description,
-      'ageGroup': ageGroup,
-      'order': order,
-      if (status != null) 'status': status,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  // -------- DELETE (TEACHER) --------
-  Future<void> deletePersonalizedContent(String contentId) {
-    return personalizedContent.doc(contentId).delete();
-  }
-
-  // -------- APPROVAL METADATA (subcollection) --------
-  /// Subcollection that stores approval/rejection metadata.
-  /// Main document stays clean: title, description, ageGroup, isActive,
-  /// status, teacherId, order, assignedTo, createdAt, updatedAt.
-  CollectionReference contentApproval(String contentId) {
-    return personalizedContent.doc(contentId).collection('approval');
-  }
-
-  /// Write approval record (called by admin when approving).
-  Future<void> writeContentApproved(String contentId) async {
-    await personalizedContent.doc(contentId).update({
-      'status': 'approved',
-      'isActive': true,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    await contentApproval(contentId).doc('record').set({
-      'approvedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  /// Write rejection record (called by admin when rejecting).
-  Future<void> writeContentRejected(
-      String contentId, String reason) async {
-    await personalizedContent.doc(contentId).update({
-      'status': 'rejected',
-      'isActive': false,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    await contentApproval(contentId).doc('record').set({
-      'rejectedAt': FieldValue.serverTimestamp(),
-      'reason': reason.isNotEmpty ? reason : 'No reason provided',
-    });
-  }
-
-  /// Read the approval record (teacher sees rejection reason here).
-  Future<DocumentSnapshot> getContentApprovalRecord(String contentId) {
-    return contentApproval(contentId).doc('record').get();
+    return snapshot.docs;
   }
 
   // =========================
-  // PERSONALIZED UNITS (TEACHER)
+  // MEDIA LIBRARY — unified collection for admin + teachers
   // =========================
+  //
 
-  CollectionReference personalizedUnits(String contentId) {
-    return personalizedContent.doc(contentId).collection('units');
-  }
+  // ── Collection refs ───────────────────────────────────────────────────────
 
-  Future<void> createPersonalizedUnit({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String title,
-    required int order,
-  }) {
-    return personalizedUnits(contentId).doc(unitId).set({
-      'title': title,
-      'order': order,
+  /// Root collection ref — replaces old 'image_categories'
+  CollectionReference get mediaLibrary => _db.collection('mediaLibrary');
+
+  /// imageItems subcollection inside a category — replaces old 'images'
+  CollectionReference categoryItems(String categoryId) =>
+      mediaLibrary.doc(categoryId).collection('imageItems');
+
+  // ── Category CRUD ─────────────────────────────────────────────────────────
+
+  /// Create a category for admin or teacher.
+  Future<String> createCategory({
+    required String categoryName,
+    required String ownerId,
+    required String ownerRole, // 'admin' | 'teacher'
+  }) async {
+    final ref = await mediaLibrary.add({
+      'categoryName': categoryName,
+      'ownerId': ownerId,
+      'ownerRole': ownerRole,
       'createdAt': FieldValue.serverTimestamp(),
     });
+    return ref.id;
   }
 
-  Future<QuerySnapshot> getPersonalizedUnits(String groupId, String contentId) {
-    return personalizedUnits(contentId).orderBy('order').get();
+  /// Stream of admin categories (public — all users see these).
+  Stream<QuerySnapshot> getAdminCategoriesStream() =>
+      mediaLibrary.where('ownerRole', isEqualTo: 'admin').orderBy('createdAt').snapshots();
+
+  /// Stream of a specific teacher's private categories.
+  Stream<QuerySnapshot> getTeacherCategoriesStream(String teacherId) =>
+      mediaLibrary
+          .where('ownerId', isEqualTo: teacherId)
+          .where('ownerRole', isEqualTo: 'teacher')
+          .orderBy('createdAt')
+          .snapshots();
+
+  /// One-time fetch of admin categories (used by SelectImageDialog).
+  Future<List<Map<String, dynamic>>> getAdminCategories() async {
+    try {
+      final snap = await mediaLibrary
+          .where('ownerRole', isEqualTo: 'admin')
+          .orderBy('createdAt')
+          .get();
+      return snap.docs
+          .map((d) => {'id': d.id, ...(d.data() as Map<String, dynamic>)})
+          .toList();
+    } catch (_) { return []; }
   }
 
-  Stream<QuerySnapshot> getPersonalizedUnitsStream(String groupId, String contentId) {
-    return personalizedUnits(contentId).orderBy('order').snapshots();
+  /// One-time fetch of a teacher's own categories (used by SelectImageDialog).
+  Future<List<Map<String, dynamic>>> getTeacherCategories(String teacherId) async {
+    try {
+      final snap = await mediaLibrary
+          .where('ownerId', isEqualTo: teacherId)
+          .where('ownerRole', isEqualTo: 'teacher')
+          .orderBy('createdAt')
+          .get();
+      return snap.docs
+          .map((d) => {'id': d.id, ...(d.data() as Map<String, dynamic>)})
+          .toList();
+    } catch (_) { return []; }
   }
 
-  Future<void> updatePersonalizedUnit({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String title,
-    required int order,
-  }) {
-    return personalizedUnits(contentId).doc(unitId).update({
-      'title': title,
-      'order': order,
-    });
-  }
+  /// Delete a category document only — imageItems must be deleted by caller first.
+  Future<void> deleteCategory(String categoryId) =>
+      mediaLibrary.doc(categoryId).delete();
 
-  Future<void> deletePersonalizedUnit(String groupId, String contentId, String unitId) {
-    return personalizedUnits(contentId).doc(unitId).delete();
-  }
+  // ── ImageItem CRUD ────────────────────────────────────────────────────────
 
-  // =========================
-  // PERSONALIZED LESSONS (TEACHER)
-  // =========================
+  /// Save image metadata after a successful Cloudinary + Vision upload.
+  /// Works for both admin and teacher — same subcollection structure.
+  Future<String> saveImageMetadata({
+    required String categoryId,
+    required String name,
+    required String imageUrl,
+    required String cloudinaryPublicId,
+    required String fileExtension, // 'png' or 'svg'
+  }) async {
+    final isSvg = fileExtension.toLowerCase() == 'svg';
+    // SVG files: ask Cloudinary to serve as PNG so Flutter Image.network renders correctly
+    final displayUrl = isSvg
+        ? imageUrl.replaceFirst('/upload/', '/upload/f_png,w_512,h_512,q_80/')
+        : imageUrl;
 
-  CollectionReference personalizedLessons(String contentId, String unitId) {
-    return personalizedUnits(contentId).doc(unitId).collection('lessons');
-  }
-
-  Future<void> createPersonalizedLesson({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String title,
-    required int order,
-  }) {
-    return personalizedLessons(contentId, unitId).doc(lessonId).set({
-      'title': title,
-      'order': order,
+    final ref = await categoryItems(categoryId).add({
+      'name': name,
+      'imageUrl': imageUrl,
+      'displayUrl': displayUrl,
+      'cloudinaryPublicId': cloudinaryPublicId,
+      'format': isSvg ? 'svg' : 'png',
+      'moderationStatus': 'approved', // Google Vision checked before upload
+      'isVisible': true,
       'createdAt': FieldValue.serverTimestamp(),
     });
+    return ref.id;
   }
 
-  Future<QuerySnapshot> getPersonalizedLessons(String groupId, String contentId, String unitId) {
-    return personalizedLessons(contentId, unitId).orderBy('order').get();
+  /// Real-time stream of imageItems in a category (newest first).
+  Stream<QuerySnapshot> getImagesStream(String categoryId) =>
+      categoryItems(categoryId).orderBy('createdAt', descending: true).snapshots();
+
+  /// Live count for category list badges.
+  Stream<int> getImagesCountStream(String categoryId) =>
+      categoryItems(categoryId).snapshots().map((s) => s.docs.length);
+
+  /// One-time fetch of all imageItems in a category.
+  Future<List<Map<String, dynamic>>> getImagesByCategory(String categoryId) async {
+    try {
+      final snap = await categoryItems(categoryId).orderBy('name').get();
+      return snap.docs
+          .map((d) => {'id': d.id, ...(d.data() as Map<String, dynamic>)})
+          .toList();
+    } catch (_) { return []; }
   }
 
-  Stream<QuerySnapshot> getPersonalizedLessonsStream(String groupId, String contentId, String unitId) {
-    return personalizedLessons(contentId, unitId).orderBy('order').snapshots();
-  }
+  /// Delete a single imageItem document. Cloudinary deletion handled by caller.
+  Future<void> deleteImage(String categoryId, String imageId) =>
+      categoryItems(categoryId).doc(imageId).delete();
 
-  Future<void> updatePersonalizedLesson({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String title,
-    required int order,
-  }) {
-    return personalizedLessons(contentId, unitId).doc(lessonId).update({
-      'title': title,
-      'order': order,
+  // Admin moderation helpers
+  Future<void> approveImage({required String categoryId, required String imageId}) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    await categoryItems(categoryId).doc(imageId).update({
+      'moderationStatus': 'approved', 'isVisible': true,
+      'approvedAt': FieldValue.serverTimestamp(), 'approvedBy': uid,
+      'rejectedAt': null, 'rejectedBy': null,
     });
   }
 
-  Future<void> deletePersonalizedLesson(String groupId, String contentId, String unitId, String lessonId) {
-    return personalizedLessons(contentId, unitId).doc(lessonId).delete();
-  }
-
-  // =========================
-  // PERSONALIZED ACTIVITIES (TEACHER)
-  // =========================
-
-  CollectionReference personalizedActivities(String contentId, String unitId, String lessonId) {
-    return personalizedLessons(contentId, unitId).doc(lessonId).collection('activities');
-  }
-
-  Future<void> createPersonalizedActivity({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String activityId,
-    required String title,
-    required int order,
-    String? requiredActivityId,
-    int? xpBase,
-    String? difficulty,
-  }) {
-    return personalizedActivities(contentId, unitId, lessonId).doc(activityId).set({
-      'title': title,
-      'order': order,
-      'requiredActivityId': requiredActivityId,
-      'xpBase': xpBase ?? 100,
-      'difficulty': difficulty ?? 'easy',
-      'createdAt': FieldValue.serverTimestamp(),
+  Future<void> rejectImage({required String categoryId, required String imageId}) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    await categoryItems(categoryId).doc(imageId).update({
+      'moderationStatus': 'rejected', 'isVisible': false,
+      'rejectedAt': FieldValue.serverTimestamp(), 'rejectedBy': uid,
     });
   }
 
-  Future<QuerySnapshot> getPersonalizedActivities(String groupId, String contentId, String unitId, String lessonId) {
-    return personalizedActivities(contentId, unitId, lessonId).orderBy('order').get();
-  }
+  // ── Admin dashboard stats ─────────────────────────────────────────────────
 
-  Stream<QuerySnapshot> getPersonalizedActivitiesStream(String groupId, String contentId, String unitId, String lessonId) {
-    return personalizedActivities(contentId, unitId, lessonId).orderBy('order').snapshots();
-  }
+  Future<int> getCategoriesCount() async =>
+      (await mediaLibrary.where('ownerRole', isEqualTo: 'admin').get()).docs.length;
 
-  Future<void> updatePersonalizedActivity({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String activityId,
-    required String title,
-    required int order,
-    String? requiredActivityId,
-    int? xpBase,
-    String? difficulty,
-  }) {
-    return personalizedActivities(contentId, unitId, lessonId).doc(activityId).update({
-      'title': title,
-      'order': order,
-      'requiredActivityId': requiredActivityId,
-      'xpBase': xpBase ?? 100,
-      'difficulty': difficulty ?? 'easy',
-    });
-  }
+  Stream<int> getCategoriesCountStream() =>
+      mediaLibrary.where('ownerRole', isEqualTo: 'admin').snapshots().map((s) => s.docs.length);
 
-  Future<void> deletePersonalizedActivity(String groupId, String contentId, String unitId, String lessonId, String activityId) {
-    return personalizedActivities(contentId, unitId, lessonId).doc(activityId).delete();
-  }
-
-  // =========================
-  // PERSONALIZED TASKS (TEACHER)
-  // =========================
-
-  CollectionReference personalizedTasks(String contentId, String unitId, String lessonId, String activityId) {
-    return personalizedActivities(contentId, unitId, lessonId).doc(activityId).collection('tasks');
-  }
-
-  Future<void> createPersonalizedTask({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String activityId,
-    required String taskId,
-    required String type,
-    required String question,
-    required int order,
-    required Map<String, dynamic> data,
-  }) {
-    return personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).set({
-      'type': type,
-      'question': question,
-      'order': order,
-      'data': data,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  Future<QuerySnapshot> getPersonalizedTasks(String groupId, String contentId, String unitId, String lessonId, String activityId) {
-    return personalizedTasks(contentId, unitId, lessonId, activityId).orderBy('order').get();
-  }
-
-  Stream<QuerySnapshot> getPersonalizedTasksStream(String groupId, String contentId, String unitId, String lessonId, String activityId) {
-    return personalizedTasks(contentId, unitId, lessonId, activityId).orderBy('order').snapshots();
-  }
-
-  Future<void> updatePersonalizedTask({
-    required String groupId,
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String activityId,
-    required String taskId,
-    required String type,
-    required String question,
-    required int order,
-    required Map<String, dynamic> data,
-  }) {
-    return personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).update({
-      'type': type,
-      'question': question,
-      'order': order,
-      'data': data,
-    });
-  }
-
-  Future<void> deletePersonalizedTask(String groupId, String contentId, String unitId, String lessonId, String activityId, String taskId) {
-    return personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).delete();
-  }
-
-    // =========================
-  // IMAGE CATEGORIES & MANAGEMENT (ADMIN)
-  // =========================
-
-  CollectionReference get imageCategories => _db.collection('image_categories');
-
-  // -------- GET CATEGORIES COUNT --------
-  Future<int> getCategoriesCount() async {
-    final snapshot = await imageCategories.get();
-    return snapshot.docs.length;
-  }
-
-  Stream<int> getCategoriesCountStream() {
-    return imageCategories.snapshots().map((snapshot) => snapshot.docs.length);
-  }
-
-  // -------- GET TOTAL IMAGES COUNT --------
   Future<int> getTotalImagesCount() async {
     try {
-      int totalImages = 0;
-      final categories = await imageCategories.get();
-
-      for (var categoryDoc in categories.docs) {
-        final imagesSnapshot = await imageCategories
-            .doc(categoryDoc.id)
-            .collection('images')
-            .get();
-        totalImages += imagesSnapshot.docs.length;
+      int total = 0;
+      final cats = await mediaLibrary.where('ownerRole', isEqualTo: 'admin').get();
+      for (final c in cats.docs) {
+        total += (await categoryItems(c.id).get()).docs.length;
       }
-
-      return totalImages;
-    } catch (e) {
-      print('Error counting images: $e');
-      return 0;
-    }
+      return total;
+    } catch (_) { return 0; }
   }
 
-  // -------- GET CATEGORIES LIST --------
-  Stream<QuerySnapshot> getCategoriesStream() {
-    return imageCategories.snapshots();
-  }
+  Stream<int> getImagesCountByCategoryStream(String categoryId) =>
+      getImagesCountStream(categoryId);
 
-  Future<QuerySnapshot> getCategories() {
-    return imageCategories.get();
-  }
 
-  // -------- GET IMAGES BY CATEGORY --------
-  Future<int> getImagesCountByCategory(String categoryId) async {
-    final snapshot = await imageCategories
-        .doc(categoryId)
-        .collection('images')
-        .get();
-    return snapshot.docs.length;
-  }
-
-  Stream<int> getImagesCountByCategoryStream(String categoryId) {
-    return imageCategories
-        .doc(categoryId)
-        .collection('images')
+  /// Stream of all pending content with teacher names resolved.
+  /// Used by ContentApprovalScreen — replaces the old inline _getPendingContent().
+  /// Re-emits every time the 'content' collection changes so the list stays live.
+  Stream<List<PendingContent>> getPendingContentStream() {
+    return personalizedContent
+        .where('status', isEqualTo: 'pending')
+        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs.length);
+        .asyncMap((snapshot) async {
+      final result = <PendingContent>[];
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final teacherId = data['teacherId'] as String?;
+
+        // Resolve teacher name from users collection
+        String teacherName = 'Unknown';
+        if (teacherId != null) {
+          try {
+            final teacherDoc = await users.doc(teacherId).get();
+            if (teacherDoc.exists) {
+              teacherName = (teacherDoc.data() as Map<String, dynamic>)['name'] as String? ?? 'Unknown';
+            }
+          } catch (_) {}
+        }
+
+        final createdAt = data['createdAt'] as Timestamp?;
+        result.add(PendingContent(
+          contentId: doc.id,
+          title: data['title'] as String? ?? 'Untitled',
+          description: data['description'] as String? ?? 'No description',
+          ageGroup: data['ageGroup'] as String? ?? '5-6 years',
+          teacherName: teacherName,
+          status: data['status'] as String? ?? 'pending',
+          createdAt: createdAt != null ? _formatDate(createdAt.toDate()) : 'Unknown',
+        ));
+      }
+      return result;
+    });
   }
 
-  // -------- CONTENT APPROVAL STATS --------
-  /// Get count of approved content across all groups
+  String _formatDate(DateTime date) {
+    final diff = DateTime.now().difference(date);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  // =========================
+  // CONTENT APPROVAL STATS (ADMIN)
+  // =========================
+
   Stream<int> getApprovedContentCountStream() async* {
-    try {
-      final approvedSnapshot = await _db
-          .collection('personalizedContent')
-          .where('status', isEqualTo: 'approved')
-          .get();
-
-      yield approvedSnapshot.docs.length;
-    } catch (e) {
-      print('Error counting approved content: $e');
-      yield 0;
-    }
+    try { yield (await _db.collection('content').where('status', isEqualTo: 'approved').get()).docs.length; }
+    catch (_) { yield 0; }
   }
-
-  /// Get count of pending content (assigned to groups, waiting for approval)
   Stream<int> getPendingContentCountStream() async* {
-    try {
-      final pendingSnapshot = await _db
-          .collection('personalizedContent')
-          .where('status', isEqualTo: 'pending')
-          .get();
-
-      yield pendingSnapshot.docs.length;
-    } catch (e) {
-      print('Error counting pending content: $e');
-      yield 0;
-    }
+    try { yield (await _db.collection('content').where('status', isEqualTo: 'pending').get()).docs.length; }
+    catch (_) { yield 0; }
   }
 
   // =========================
@@ -815,41 +693,128 @@ class Database {
   // =========================
 
   CollectionReference get teacherGroups => _db.collection('teacherGroups');
-
-  /// Get all groups for a teacher
-  Future<QuerySnapshot> getTeacherGroups(String teacherId) {
-    return teacherGroups
-        .where('teacherId', isEqualTo: teacherId)
-        .get();
-  }
-
-  /// Get all groups (for admin to auto-assign)
-  Future<QuerySnapshot> getAllGroups() {
-    return teacherGroups.get();
-  }
+  Future<QuerySnapshot> getTeacherGroups(String teacherId) => teacherGroups.where('teacherId', isEqualTo: teacherId).get();
+  Future<QuerySnapshot> getAllGroups() => teacherGroups.get();
 
   // =========================
-  // PERSONALIZED QUIZZES (TEACHER)
+  // ROOT QUIZZES COLLECTION
   // =========================
 
-  CollectionReference personalizedLessonQuizzes(
-    String contentId,
-    String unitId,
-    String lessonId,
-  ) {
-    return personalizedLessons(contentId, unitId)
-        .doc(lessonId)
-        .collection('quizzes');
+  CollectionReference get allQuizzes => _db.collection('quizzes');
+
+  // ----------------------------------------------------------------------
+  // UNIT QUIZ (graded, teacher creates multiple‑choice questions)
+  // ----------------------------------------------------------------------
+  Future<void> createPersonalizedUnitQuiz({
+    required String contentId,
+    required String unitId,
+    required String quizId,
+    required String title,
+    required List<Map<String, dynamic>> questions,
+    required int passingScore,
+    required int xpReward,
+    required int maxAttempts,
+  }) async {
+    final quizRef = allQuizzes.doc(quizId);
+    final batch = _db.batch();
+
+    // 1. Quiz header
+    batch.set(quizRef, {
+      'type':           'unit',
+      'contentId':      contentId,
+      'unitId':         unitId,
+      'title':          title,
+      'totalQuestions': questions.length,
+      'passingScore':   passingScore,
+      'xpReward':       xpReward.clamp(0, 100),
+      'isGraded':       true,
+      'maxAttempts': maxAttempts,
+      'createdAt':      FieldValue.serverTimestamp(),
+    });
+
+    // 2. Questions as subcollection
+    for (final q in questions) {
+      final qRef = quizRef.collection('questions').doc('q_${q['order']}');
+      batch.set(qRef, {
+        'question':     q['question'],
+        'options':      q['options'],
+        'correctIndex': q['correctIndex'],
+        'order':        q['order'],
+      });
+    }
+    await batch.commit();
   }
 
-  CollectionReference personalizedUnitQuizzes(
-    String contentId,
-    String unitId,
-  ) {
-    return personalizedUnits(contentId).doc(unitId).collection('quizzes');
+  Future<void> updatePersonalizedUnitQuiz({
+    required String quizId,   // now we only need quizId, not contentId/unitId
+    required String title,
+    required int passingScore,
+    required int xpReward,
+    required int maxAttempts,
+    required List<Map<String, dynamic>> questions,
+  }) async {
+    final quizRef = allQuizzes.doc(quizId);
+
+    await quizRef.update({
+      'title':        title,
+      'passingScore': passingScore,
+      'xpReward':     xpReward.clamp(0, 100),
+      'maxAttempts':  maxAttempts,
+      'totalQuestions': questions.length,
+      'updatedAt':    FieldValue.serverTimestamp(),
+    });
+
+    // delete all existing questions
+    final existingQuestions = await quizRef.collection('questions').get();
+    final batch = _db.batch();
+    for (final doc in existingQuestions.docs) {
+      batch.delete(doc.reference);
+    }
+
+    // add new questions
+    for (final q in questions) {
+      final qRef = quizRef.collection('questions').doc('q_${q['order']}');
+      batch.set(qRef, {
+        'question': q['question'],
+        'options': q['options'],
+        'correctIndex': q['correctIndex'],
+        'order': q['order'],
+      });
+    }
+
+    await batch.commit();
   }
 
-  /// Creates a lesson practice quiz (not graded). xpReward is clamped to 0–10.
+  Future<void> deletePersonalizedUnitQuiz({required String quizId}) async {
+    final quizRef = allQuizzes.doc(quizId);
+    // Delete questions subcollection
+    final questions = await quizRef.collection('questions').get();
+    final batch = _db.batch();
+    for (final q in questions.docs) batch.delete(q.reference);
+    batch.delete(quizRef);
+    await batch.commit();
+  }
+
+  Future<QuerySnapshot> getUnitQuizQuestions(String quizId) async {
+    return allQuizzes.doc(quizId).collection('questions').orderBy('order').get();
+  }
+
+  Stream<QuerySnapshot> getUnitQuizzesStream(String contentId, String unitId) {
+    return allQuizzes
+        .where('type', isEqualTo: 'unit')
+        .where('contentId', isEqualTo: contentId)
+        .where('unitId', isEqualTo: unitId)
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
+
+  Future<DocumentSnapshot> getPersonalizedUnitQuiz(String quizId) async {
+    return allQuizzes.doc(quizId).get();
+  }
+
+  // ----------------------------------------------------------------------
+  // LESSON QUIZ (practice, reuses activity tasks)
+  // ----------------------------------------------------------------------
   Future<void> createPersonalizedLessonQuiz({
     required String contentId,
     required String unitId,
@@ -858,103 +823,51 @@ class Database {
     required String title,
     required List<String> questionIds,
     required int xpReward,
-  }) {
-    return personalizedLessonQuizzes(contentId, unitId, lessonId)
-        .doc(quizId)
-        .set({
-      'title': title,
-      'questionIds': questionIds,
-      'type': 'lesson_quiz',
-      'isGraded': false,
+  }) async {
+    await allQuizzes.doc(quizId).set({
+      'type':         'lesson',
+      'contentId':    contentId,
+      'unitId':       unitId,
+      'lessonId':     lessonId,
+      'title':        title,
+      'questionIds':  questionIds,
+      'isGraded':     false,
       'passingScore': 0,
-      'xpReward': xpReward.clamp(0, 10),
-      'createdAt': FieldValue.serverTimestamp(),
+      'xpReward':     xpReward.clamp(0, 10),
+      'createdAt':    FieldValue.serverTimestamp(),
     });
-  }
-
-  /// Creates a graded unit test quiz.
-  Future<void> createPersonalizedUnitQuiz({
-    required String contentId,
-    required String unitId,
-    required String quizId,
-    required String title,
-    required List<String> questionIds,
-    required int passingScore,
-    required int xpReward,
-  }) {
-    return personalizedUnitQuizzes(contentId, unitId).doc(quizId).set({
-      'title': title,
-      'questionIds': questionIds,
-      'type': 'unit_test',
-      'isGraded': true,
-      'passingScore': passingScore, // number of correct questions required
-      'xpReward': xpReward.clamp(0, 100),
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  Stream<QuerySnapshot> getPersonalizedLessonQuizzesStream(
-    String contentId,
-    String unitId,
-    String lessonId,
-  ) {
-    return personalizedLessonQuizzes(contentId, unitId, lessonId).snapshots();
-  }
-
-  Stream<QuerySnapshot> getPersonalizedUnitQuizzesStream(
-    String contentId,
-    String unitId,
-  ) {
-    return personalizedUnitQuizzes(contentId, unitId).snapshots();
-  }
-
-  Future<void> deletePersonalizedLessonQuiz({
-    required String contentId,
-    required String unitId,
-    required String lessonId,
-    required String quizId,
-  }) {
-    return personalizedLessonQuizzes(contentId, unitId, lessonId)
-        .doc(quizId)
-        .delete();
-  }
-
-  Future<void> deletePersonalizedUnitQuiz({
-    required String contentId,
-    required String unitId,
-    required String quizId,
-  }) {
-    return personalizedUnitQuizzes(contentId, unitId).doc(quizId).delete();
   }
 
   Future<void> updatePersonalizedLessonQuiz({
-    required String contentId,
-    required String unitId,
-    required String lessonId,
     required String quizId,
     required String title,
     required int xpReward,
+    List<String>? questionIds, // optional — only update if provided
   }) {
-    return personalizedLessonQuizzes(contentId, unitId, lessonId)
-        .doc(quizId)
-        .update({
-      'title': title,
+    final updates = <String, dynamic>{
+      'title':    title,
       'xpReward': xpReward.clamp(0, 10),
-    });
+    };
+    if (questionIds != null) {
+      updates['questionIds'] = questionIds;
+    }
+    return _db.collection('quizzes').doc(quizId).update(updates);
+  }
+ 
+
+  Future<void> deletePersonalizedLessonQuiz({required String quizId}) async {
+    await allQuizzes.doc(quizId).delete();
   }
 
-  Future<void> updatePersonalizedUnitQuiz({
-    required String contentId,
-    required String unitId,
-    required String quizId,
-    required String title,
-    required int passingScore,
-    required int xpReward,
-  }) {
-    return personalizedUnitQuizzes(contentId, unitId).doc(quizId).update({
-      'title': title,
-      'passingScore': passingScore,
-      'xpReward': xpReward.clamp(0, 100),
-    });
+  Stream<QuerySnapshot> getLessonQuizzesStream(
+      String contentId, String unitId, String lessonId) {
+    return allQuizzes
+        .where('type', isEqualTo: 'lesson')
+        .where('contentId', isEqualTo: contentId)
+        .where('unitId', isEqualTo: unitId)
+        .where('lessonId', isEqualTo: lessonId)
+        .orderBy('createdAt', descending: true)
+        .snapshots();
   }
+  
 }

@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/components/adaptive_navigation_scaffold.dart';
 import 'package:loringo_app/components/app_bottom_nav_bar.dart';
@@ -6,8 +6,9 @@ import 'package:loringo_app/components/app_drawer.dart';
 import 'package:loringo_app/screens/admin/admin_approval_content_screen.dart';
 import 'package:loringo_app/screens/admin/admin_dashboard_screen.dart';
 import 'package:loringo_app/screens/admin/admin_images_screen.dart';
-import 'package:loringo_app/services/auth/auth_gate.dart';
+// import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/widget/secured_screen.dart';
 
 class AdminNavigationScreen extends StatefulWidget {
   const AdminNavigationScreen({super.key});
@@ -56,27 +57,6 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
         return const AdminDashboardScreen();
     }
   }
-
-  // Widget _buildSettingsScreen() {
-  //   return Center(
-  //     child: Column(
-  //       mainAxisAlignment: MainAxisAlignment.center,
-  //       children: [
-  //         const Icon(Icons.settings, size: 100, color: Color(0xFF4CAF50)),
-  //         const SizedBox(height: 24),
-  //         const Text(
-  //           'Settings',
-  //           style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-  //         ),
-  //         const SizedBox(height: 12),
-  //         const Text(
-  //           'Admin settings coming soon',
-  //           style: TextStyle(color: Colors.grey),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
 
   Widget _buildSidebarContent() {
     return AppDrawer(
@@ -138,18 +118,6 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
             if (Navigator.canPop(context)) Navigator.pop(context);
           },
         ),
-        // ListTile(
-        //   leading:
-        //       const Icon(Icons.settings, color: AppColors.primary),
-        //   title: const Text('Settings'),
-        //   trailing: _currentIndex == 3
-        //       ? const Icon(Icons.check_circle, color: AppColors.primary)
-        //       : null,
-        //   onTap: () {
-        //     setState(() => _currentIndex = 3);
-        //     if (Navigator.canPop(context)) Navigator.pop(context);
-        //   },
-        // ),
       ],
     );
   }
@@ -171,13 +139,15 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
   Widget build(BuildContext context) {
     final currentTitle = _navigationItems[_currentIndex]['title'] as String;
 
-    return AdaptiveNavigationScaffold(
-      title: currentTitle,
-      appBarColor: AppColors.primary,
-      sidebarContent: _buildSidebarContent(),
-      body: _getCurrentScreen(),
-      floatingActionButton: null,
-      bottomNavigatorBar: _buildBottomNavigationBar(),
+    return SecuredScreen(
+      child: AdaptiveNavigationScaffold(
+        title: currentTitle,
+        appBarColor: AppColors.primary,
+        sidebarContent: _buildSidebarContent(),
+        body: _getCurrentScreen(),
+        floatingActionButton: null,
+        bottomNavigatorBar: _buildBottomNavigationBar(),
+      ),
     );
   }
 }

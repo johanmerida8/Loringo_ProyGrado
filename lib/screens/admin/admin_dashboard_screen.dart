@@ -1,5 +1,7 @@
+// admin_dashboard_screen.dart
 import 'package:flutter/material.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -8,212 +10,255 @@ class AdminDashboardScreen extends StatefulWidget {
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+class _AdminDashboardScreenState extends State<AdminDashboardScreen>
+    with SingleTickerProviderStateMixin {
   final Database _db = Database();
+  late AnimationController _animCtrl;
+  late Animation<double> _fadeIn;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 600));
+    _fadeIn = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
+    _animCtrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Welcome Card
-          Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(20),
+    return FadeTransition(
+      opacity: _fadeIn,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md, AppSpacing.md, AppSpacing.md, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Hero welcome card ─────────────────────────────────────────
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSpacing.lg),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF4CAF50), Color(0xFF81C784)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
+                gradient: AppDecorations.primaryGradient,
+                borderRadius: BorderRadius.circular(AppRadii.lg),
+                boxShadow: [
+                  BoxShadow(
+                      color: AppColors.primarySoft(0.35),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8)),
+                ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.all(AppSpacing.sm + 2),
+                      decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(AppRadii.md)),
+                      child: const Icon(Icons.admin_panel_settings_rounded,
+                          color: AppColors.onPrimary, size: 26),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Admin Dashboard',
+                              style: TextStyle(
+                                  color: AppColors.onPrimary,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold)),
+                          Text('System Oversight',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 13)),
+                        ]),
+                  ]),
+                  const SizedBox(height: AppSpacing.md),
                   const Text(
-                    'Welcome to Admin Dashboard',
+                    'Manage and oversee all platform content, approvals and media assets.',
                     style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Manage and oversee all system content',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
+                        color: Colors.white70, fontSize: 13, height: 1.5),
                   ),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 32),
-          
-          // Stats Grid
-          const Text(
-            'System Statistics',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            children: [
-              // Total Images
-              FutureBuilder<int>(
-                future: _db.getTotalImagesCount(),
-                builder: (context, snapshot) {
-                  return _buildStatCard(
-                    'Total Images',
-                    snapshot.data?.toString() ?? '0',
-                    Icons.image,
-                    Colors.blue,
-                    isLoading: snapshot.connectionState == ConnectionState.waiting,
-                  );
-                },
-              ),
-              
-              // Categories
-              StreamBuilder<int>(
-                stream: _db.getCategoriesCountStream(),
-                builder: (context, snapshot) {
-                  return _buildStatCard(
-                    'Categories',
-                    snapshot.data?.toString() ?? '0',
-                    Icons.folder,
-                    Colors.orange,
-                    isLoading: snapshot.connectionState == ConnectionState.waiting,
-                  );
-                },
-              ),
 
-              // Approved Content
-              StreamBuilder<int>(
-                stream: _db.getApprovedContentCountStream(),
-                builder: (context, snapshot) {
-                  return _buildStatCard(
-                    'Approved Content',
-                    snapshot.data?.toString() ?? '0',
-                    Icons.check_circle,
-                    Colors.green,
-                    isLoading: snapshot.connectionState == ConnectionState.waiting,
-                  );
-                },
+            const SizedBox(height: AppSpacing.lg),
+
+            // ── Section label ─────────────────────────────────────────────
+            Row(children: [
+              Container(
+                width: 4, height: 18,
+                decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(2)),
               ),
-              
-              // Pending Approval
-              StreamBuilder<int>(
-                stream: _db.getPendingContentCountStream(),
-                builder: (context, snapshot) {
-                  return _buildStatCard(
-                    'Pending Approval',
-                    snapshot.data?.toString() ?? '0',
-                    Icons.hourglass_bottom,
-                    Colors.amber,
-                    isLoading: snapshot.connectionState == ConnectionState.waiting,
-                  );
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          
-          // Coming Soon Message
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: Colors.blue.withOpacity(0.3),
-              ),
-            ),
-            child: const Row(
+              const SizedBox(width: AppSpacing.sm),
+              const Text('System Statistics',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            ]),
+
+            const SizedBox(height: AppSpacing.md),
+
+            // ── Stats grid ────────────────────────────────────────────────
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: AppSpacing.md,
+              mainAxisSpacing: AppSpacing.md,
+              childAspectRatio: 1.05,
               children: [
-                Icon(Icons.info, color: Colors.blue),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Dashboard updates in real-time',
-                    style: TextStyle(color: Colors.blue),
+                FutureBuilder<int>(
+                  future: _db.getTotalImagesCount(),
+                  builder: (_, snap) => _StatCard(
+                    label: 'Total Images',
+                    value: snap.data?.toString() ?? '—',
+                    icon: Icons.image_rounded,
+                    color: const Color(0xFF2196F3),
+                    isLoading:
+                        snap.connectionState == ConnectionState.waiting,
+                  ),
+                ),
+                StreamBuilder<int>(
+                  stream: _db.getCategoriesCountStream(),
+                  builder: (_, snap) => _StatCard(
+                    label: 'Categories',
+                    value: snap.data?.toString() ?? '—',
+                    icon: Icons.folder_rounded,
+                    color: Colors.orange,
+                    isLoading:
+                        snap.connectionState == ConnectionState.waiting,
+                  ),
+                ),
+                StreamBuilder<int>(
+                  stream: _db.getApprovedContentCountStream(),
+                  builder: (_, snap) => _StatCard(
+                    label: 'Approved Content',
+                    value: snap.data?.toString() ?? '—',
+                    icon: Icons.check_circle_rounded,
+                    color: AppColors.primary,
+                    isLoading:
+                        snap.connectionState == ConnectionState.waiting,
+                  ),
+                ),
+                StreamBuilder<int>(
+                  stream: _db.getPendingContentCountStream(),
+                  builder: (_, snap) => _StatCard(
+                    label: 'Pending Approval',
+                    value: snap.data?.toString() ?? '—',
+                    icon: Icons.hourglass_bottom_rounded,
+                    color: Colors.amber[700]!,
+                    isLoading:
+                        snap.connectionState == ConnectionState.waiting,
                   ),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  static Widget _buildStatCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color, {
-    bool isLoading = false,
-  }) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(12),  // Reduced from 16
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: color.withOpacity(0.3),
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 36, color: color),  // Reduced from 40
-            const SizedBox(height: 8),  // Reduced from 12
-            if (isLoading)
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 26,  // Reduced from 28
-                  fontWeight: FontWeight.bold,
+            const SizedBox(height: AppSpacing.lg),
+
+            // ── Info banner ───────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md, vertical: AppSpacing.md - 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2196F3).withOpacity(0.07),
+                borderRadius: BorderRadius.circular(AppRadii.md),
+                border: Border.all(
+                    color: const Color(0xFF2196F3).withOpacity(0.2)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.sync_rounded,
+                    color: Color(0xFF2196F3), size: 20),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text('Dashboard updates in real-time',
+                      style: TextStyle(
+                          color: Color(0xFF2196F3),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500)),
                 ),
-              ),
-            const SizedBox(height: 6),  // Reduced from 8
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 13,  // Reduced from 14
-                color: Colors.grey[600],
-              ),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              ]),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Stat card ─────────────────────────────────────────────────────────────────
+
+class _StatCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final bool isLoading;
+
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    this.isLoading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+        border: Border.all(color: color.withOpacity(0.15), width: 1.5),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.md - 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 28, color: color),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          isLoading
+              ? SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: color))
+              : Text(value,
+                  style: const TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.bold,
+                      letterSpacing: -0.5)),
+          const SizedBox(height: AppSpacing.xs + 2),
+          Text(label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500)),
+        ],
       ),
     );
   }

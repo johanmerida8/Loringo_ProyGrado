@@ -1,5 +1,6 @@
+// admin_upload_image_screen.dart
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/image_service.dart';
 
@@ -7,188 +8,145 @@ class AdminUploadImageScreen extends StatefulWidget {
   final String categoryId;
   final String categoryName;
 
-  const AdminUploadImageScreen({
-    super.key,
-    required this.categoryId,
-    required this.categoryName,
-  });
+  const AdminUploadImageScreen(
+      {super.key, required this.categoryId, required this.categoryName});
 
   @override
-  State<AdminUploadImageScreen> createState() => _AdminUploadImageScreenState();
+  State<AdminUploadImageScreen> createState() =>
+      _AdminUploadImageScreenState();
 }
 
 class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
-  final imageService = ImageService();
-  static const int minRecommendedImages = 15; // Flexible minimum
-  List<Map<String, dynamic>> selectedFiles = [];
-  bool isUploading = false;
+  final _imageService   = ImageService();
+  final _db             = Database();
+  static const int _minRec = 15;
+
+  List<Map<String, dynamic>> _selectedFiles = [];
+  bool _isUploading    = false;
+  int  _uploadedCount  = 0;
+  int  _totalCount     = 0;
 
   Future<void> _selectImages() async {
     try {
-      final pickedFiles = await imageService.pickMultipleImages();
-      if (pickedFiles == null || pickedFiles.isEmpty) return;
-
+      final picked = await _imageService.pickMultipleImages();
+      if (picked == null || picked.isEmpty) return;
       setState(() {
-        selectedFiles = pickedFiles
-            .map((file) => {
-                  'file': file,
-                  'name': file.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
-                  'isSvg': file.name.toLowerCase().endsWith('.svg'),
+        _selectedFiles = picked
+            .map((f) => {
+                  'file':  f,
+                  'name':  f.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
+                  'isSvg': f.name.toLowerCase().endsWith('.svg'),
                 })
             .toList();
       });
-
-      _showPreviewDialog();
+      if (mounted) _showPreviewSheet();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: AppColors.danger,
+            behavior: SnackBarBehavior.floating));
+      }
     }
   }
 
-  void _showPreviewDialog() {
-    showDialog(
+  void _showPreviewSheet() {
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Preview (${selectedFiles.length} images)'),
-        content: SizedBox(
-          width: 600,
-          height: 500,
-          child: GridView.builder(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 4,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: selectedFiles.length,
-            itemBuilder: (context, index) {
-              final file = selectedFiles[index]['file'];
-              final isSvg = selectedFiles[index]['isSvg'] as bool;
-              
-              return Stack(
-                children: [
-                  Column(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: isSvg
-                                ? Container(
-                                    color: Colors.blue[50],
-                                    child: const Center(
-                                      child: Icon(
-                                        Icons.image_aspect_ratio,
-                                        color: Colors.blue,
-                                        size: 40,
-                                      ),
-                                    ),
-                                  )
-                                : Image.memory(
-                                    file.bytes!,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) => Container(
-                                      color: Colors.grey[300],
-                                      child: const Center(
-                                        child: Icon(Icons.broken_image, color: Colors.grey),
-                                      ),
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Tooltip(
-                        message: file.name,
-                        child: Text(
-                          file.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() => selectedFiles.removeAt(index));
-                        Navigator.pop(context);
-                        if (selectedFiles.isNotEmpty) {
-                          _showPreviewDialog();
-                        }
-                      },
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.8),
-                          shape: BoxShape.circle,
-                        ),
-                        padding: const EdgeInsets.all(4),
-                        child: const Icon(
-                          Icons.close,
-                          color: Colors.white,
-                          size: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              setState(() => selectedFiles = []);
-              Navigator.pop(context);
-            },
-            child: const Text('Clear All'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Back'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              _showUploadConfirmDialog();
-            },
-            icon: const Icon(Icons.cloud_upload),
-            label: const Text('Upload'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue,
-            ),
-          ),
-        ],
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _PreviewSheet(
+        selectedFiles: _selectedFiles,
+        onRemove: (i) {
+          setState(() => _selectedFiles.removeAt(i));
+          Navigator.pop(context);
+          if (_selectedFiles.isNotEmpty) _showPreviewSheet();
+        },
+        onClearAll: () {
+          setState(() => _selectedFiles = []);
+          Navigator.pop(context);
+        },
+        onUpload: () {
+          Navigator.pop(context);
+          _confirmAndUpload();
+        },
       ),
     );
   }
 
-  void _showUploadConfirmDialog() {
+  void _confirmAndUpload() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Upload'),
-        content: Text('Upload ${selectedFiles.length} images to "${widget.categoryName}"?'),
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.lg)),
+        title: const Row(children: [
+          Icon(Icons.cloud_upload_rounded,
+              color: AppColors.primary, size: 24),
+          SizedBox(width: AppSpacing.sm + 2),
+          Text('Confirm Upload',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 17)),
+        ]),
+        content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              RichText(
+                  text: TextSpan(
+                      style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.black87,
+                          height: 1.5),
+                      children: [
+                    TextSpan(
+                        text:
+                            '${_selectedFiles.length} image${_selectedFiles.length != 1 ? "s" : ""}'),
+                    const TextSpan(
+                        text:
+                            ' will be scanned before uploading.'),
+                  ])),
+              const SizedBox(height: AppSpacing.md),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.sm + 2),
+                decoration: BoxDecoration(
+                    color: AppColors.primarySoft(0.06),
+                    borderRadius:
+                        BorderRadius.circular(AppRadii.sm),
+                    border: Border.all(
+                        color: AppColors.primarySoft(0.2))),
+                child: Row(children: [
+                  const Icon(Icons.folder_rounded,
+                      color: AppColors.primary, size: 16),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                      child: Text('To: ${widget.categoryName}',
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary))),
+                ]),
+              ),
+            ]),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel',
+                  style: TextStyle(color: AppColors.muted))),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(ctx);
               _uploadImages();
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-            child: const Text('Upload'),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.onPrimary,
+                shape: RoundedRectangleBorder(
+                    borderRadius:
+                        BorderRadius.circular(AppRadii.sm)),
+                elevation: 0),
+            child: const Text('Upload Now',
+                style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -196,190 +154,583 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
   }
 
   Future<void> _uploadImages() async {
-    if (selectedFiles.isEmpty) return;
+    if (_selectedFiles.isEmpty) return;
+    setState(() {
+      _isUploading   = true;
+      _uploadedCount = 0;
+      _totalCount    = _selectedFiles.length;
+    });
 
-    setState(() => isUploading = true);
-
-    int successCount = 0;
-    int failedCount = 0;
-    int rejectedCount = 0;
-
-    for (int i = 0; i < selectedFiles.length; i++) {
-      final file = selectedFiles[i]['file'];
-      final imageName = selectedFiles[i]['name'];
-
+    int success = 0, rejected = 0, failed = 0;
+    for (final entry in _selectedFiles) {
+      final file      = entry['file'];
+      final imageName = entry['name'] as String;
+      final ext       = file.name.split('.').last;
       try {
-        // Get upload result (moderation handled by Cloudinary)
-        final uploadResult = await imageService.uploadToCloudinary(
-          file,
-          categoryName: widget.categoryName,
-        );
-
-        // Check if upload was successful
-        if (uploadResult is! Map || uploadResult['success'] != true) {
-          final reason = uploadResult['reason'] ?? uploadResult['error'] ?? 'Upload failed';
-          rejectedCount++;
-          print('Rejected ${i + 1}/${selectedFiles.length}: $imageName - $reason');
-          continue;
+        final result = await _imageService.uploadToCloudinary(
+            file, categoryName: widget.categoryName);
+        if (result['success'] != true) {
+          rejected++;
+        } else {
+          await _db.saveImageMetadata(
+            categoryId:         widget.categoryId,
+            name:               imageName,
+            imageUrl:           result['secure_url'] as String,
+            cloudinaryPublicId: result['public_id'] as String,
+            fileExtension:      ext,
+          );
+          success++;
         }
-
-        // Extract the secure URL from the result
-        final imageUrl = uploadResult['secure_url'] as String;
-
-        final cloudinaryPublicId = 'imagesPredefined/${widget.categoryName}/$imageName';
-
-        await imageService.saveImageMetadata(
-          name: imageName,
-          categoryId: widget.categoryId,
-          imageUrl: imageUrl,
-          cloudinaryPublicId: cloudinaryPublicId,
-          fileExtension: file.name.split('.').last,
-        );
-
-        successCount++;
-        print('Uploaded ${i + 1}/${selectedFiles.length}: $imageName');
-      } catch (e) {
-        failedCount++;
-        print('Failed ${i + 1}/${selectedFiles.length}: $imageName - $e');
+      } catch (_) {
+        failed++;
       }
+      if (mounted) setState(() => _uploadedCount++);
     }
 
     setState(() {
-      isUploading = false;
-      selectedFiles = [];
+      _isUploading   = false;
+      _selectedFiles = [];
     });
+    if (!mounted) return;
 
-    final parts = <String>[];
-    if (successCount > 0) parts.add('Uploaded: $successCount');
-    if (rejectedCount > 0) parts.add('Rejected: $rejectedCount (inappropriate)');
-    if (failedCount > 0) parts.add('Failed: $failedCount');
-    
-    final message = parts.isEmpty ? 'No images processed' : parts.join(', ');
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: failedCount == 0 && rejectedCount == 0 ? Colors.green : Colors.orange,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-
-      Navigator.pop(context);
-    }
+    final allGood = rejected == 0 && failed == 0;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Row(children: [
+        Icon(allGood ? Icons.check_circle : Icons.warning_rounded,
+            color: AppColors.onPrimary, size: 18),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+            child: Text([
+          if (success > 0)  '$success uploaded',
+          if (rejected > 0) '$rejected rejected',
+          if (failed > 0)   '$failed failed',
+        ].join(' · '))),
+      ]),
+      backgroundColor: allGood ? AppColors.primary : Colors.orange,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md)),
+      duration: const Duration(seconds: 4),
+    ));
+    if (success > 0) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final isRecommendedAmount = selectedFiles.length >= minRecommendedImages;
-    
+    final hasFiles      = _selectedFiles.isNotEmpty;
+    final isRecommended = _selectedFiles.length >= _minRec;
+    final progress =
+        _totalCount > 0 ? _uploadedCount / _totalCount : 0.0;
+
     return Scaffold(
+      backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
-        title: Text(widget.categoryName),
+        title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.categoryName,
+                  style: const TextStyle(
+                      color: AppColors.onPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16)),
+              const Text('Upload Images',
+                  style: TextStyle(
+                      color: Colors.white70, fontSize: 11)),
+            ]),
         backgroundColor: AppColors.primary,
+        elevation: 0,
+        iconTheme:
+            const IconThemeData(color: AppColors.onPrimary),
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.image_not_supported, size: 80, color: Colors.grey),
-            const SizedBox(height: 20),
-            const Text(
-              'Select images to upload',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      body: _isUploading
+          ? _UploadingView(
+              progress: progress,
+              uploaded: _uploadedCount,
+              total: _totalCount)
+          : _IdleView(
+              selectedCount: _selectedFiles.length,
+              minRecommended: _minRec,
+              isRecommended: isRecommended,
+              hasFiles: hasFiles,
+              onPreview: _showPreviewSheet,
+              onClear: () =>
+                  setState(() => _selectedFiles = []),
             ),
-            const SizedBox(height: 10),
-            Text(
-              'Selected: ${selectedFiles.length} images',
-              style: TextStyle(
-                fontSize: 16,
-                color: isRecommendedAmount ? Colors.green : Colors.orange,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              'Recommended: $minRecommendedImages+ images',
-              style: const TextStyle(
-                fontSize: 13,
-                color: Colors.grey,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-            const SizedBox(height: 30),
-            if (selectedFiles.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _showPreviewDialog,
-                        icon: const Icon(Icons.preview),
-                        label: const Text('Preview'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          setState(() => selectedFiles = []);
-                        },
-                        icon: const Icon(Icons.clear),
-                        label: const Text('Clear'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                        ),
-                      ),
-                    ),
-                  ],
+      floatingActionButton: _isUploading
+          ? null
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                FloatingActionButton.extended(
+                  heroTag: 'select',
+                  onPressed: _selectImages,
+                  backgroundColor: AppColors.primary,
+                  elevation: 3,
+                  icon: const Icon(
+                      Icons.add_photo_alternate_rounded,
+                      color: AppColors.onPrimary),
+                  label: const Text('Select Images',
+                      style: TextStyle(
+                          color: AppColors.onPrimary,
+                          fontWeight: FontWeight.bold)),
                 ),
-              ),
-          ],
-        ),
-      ),
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FloatingActionButton.extended(
-            onPressed: isUploading ? null : _selectImages,
-            label: Text(isUploading ? 'Uploading...' : 'Select Images'),
-            icon: isUploading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Colors.white),
-                    ),
-                  )
-                : const Icon(Icons.add_photo_alternate),
-            backgroundColor: AppColors.primary,
-            tooltip: 'Select images',
-          ),
-          if (selectedFiles.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: FloatingActionButton.extended(
-                onPressed: isUploading ? null : _showUploadConfirmDialog,
-                label: Text(isUploading ? 'Uploading...' : 'Upload All'),
-                icon: isUploading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation(Colors.white),
+                if (hasFiles) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  FloatingActionButton.extended(
+                    heroTag: 'upload',
+                    onPressed: _confirmAndUpload,
+                    backgroundColor: isRecommended
+                        ? const Color(0xFF2196F3)
+                        : Colors.orange,
+                    elevation: 3,
+                    icon: const Icon(Icons.cloud_upload_rounded,
+                        color: AppColors.onPrimary),
+                    label: Text('Upload ${_selectedFiles.length}',
+                        style: const TextStyle(
+                            color: AppColors.onPrimary,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+// ── Idle view ─────────────────────────────────────────────────────────────────
+
+class _IdleView extends StatelessWidget {
+  final int selectedCount, minRecommended;
+  final bool isRecommended, hasFiles;
+  final VoidCallback onPreview, onClear;
+
+  const _IdleView({
+    required this.selectedCount,
+    required this.minRecommended,
+    required this.isRecommended,
+    required this.hasFiles,
+    required this.onPreview,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 100, height: 100,
+                  decoration: BoxDecoration(
+                    gradient: hasFiles
+                        ? LinearGradient(
+                            colors: [
+                              Colors.orange.shade400,
+                              Colors.orange.shade700
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight)
+                        : AppDecorations.primaryGradient,
+                    borderRadius: BorderRadius.circular(26),
+                    boxShadow: [
+                      BoxShadow(
+                          color: (hasFiles
+                                  ? Colors.orange
+                                  : AppColors.primary)
+                              .withOpacity(0.4),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6))
+                    ],
+                  ),
+                  child: Icon(
+                      hasFiles
+                          ? Icons.photo_library_rounded
+                          : Icons.add_photo_alternate_outlined,
+                      size: 46,
+                      color: AppColors.onPrimary),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                    hasFiles
+                        ? 'Ready to Upload'
+                        : 'Select PNG or SVG images',
+                    style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: AppSpacing.sm),
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.sm),
+                  decoration: BoxDecoration(
+                      color: (isRecommended
+                              ? AppColors.primary
+                              : Colors.orange)
+                          .withOpacity(0.1),
+                      borderRadius:
+                          BorderRadius.circular(AppRadii.pill),
+                      border: Border.all(
+                          color: (isRecommended
+                                  ? AppColors.primary
+                                  : Colors.orange)
+                              .withOpacity(0.3))),
+                  child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                            isRecommended
+                                ? Icons.check_circle
+                                : Icons.info_outline,
+                            size: 16,
+                            color: isRecommended
+                                ? AppColors.primary
+                                : Colors.orange),
+                        const SizedBox(width: AppSpacing.xs + 2),
+                        Text(
+                          selectedCount == 0
+                              ? 'No images selected'
+                              : isRecommended
+                                  ? '$selectedCount selected · Ready!'
+                                  : '$selectedCount selected · ${minRecommended - selectedCount} more recommended',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: isRecommended
+                                  ? AppColors.primary
+                                  : Colors.orange),
                         ),
-                      )
-                    : const Icon(Icons.cloud_upload),
-                backgroundColor: isRecommendedAmount ? Colors.blue : Colors.orange,
-                tooltip: 'Upload selected images',
+                      ]),
+                ),
+                const SizedBox(height: AppSpacing.xs + 2),
+                Text(
+                    'Recommended: $minRecommended+ images per category',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey[500],
+                        fontStyle: FontStyle.italic)),
+                if (hasFiles) ...[
+                  const SizedBox(height: 28),
+                  Row(children: [
+                    Expanded(child: OutlinedButton.icon(
+                      onPressed: onPreview,
+                      icon: const Icon(Icons.preview_rounded, size: 18),
+                      label: const Text('Preview',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.orange,
+                          side: const BorderSide(
+                              color: Colors.orange, width: 1.5),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: AppSpacing.md - 3),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                  AppRadii.md))),
+                    )),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(child: OutlinedButton.icon(
+                      onPressed: onClear,
+                      icon: const Icon(Icons.clear_rounded, size: 18),
+                      label: const Text('Clear',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                          side: const BorderSide(
+                              color: AppColors.danger, width: 1.5),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: AppSpacing.md - 3),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                  AppRadii.md))),
+                    )),
+                  ]),
+                ] else ...[
+                  const SizedBox(height: AppSpacing.md),
+                  Text('Only PNG and SVG files are accepted',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey[400])),
+                ],
+                const SizedBox(height: 100),
+              ]),
+        ),
+      );
+}
+
+// ── Uploading view ────────────────────────────────────────────────────────────
+
+class _UploadingView extends StatelessWidget {
+  final double progress;
+  final int uploaded, total;
+
+  const _UploadingView(
+      {required this.progress,
+      required this.uploaded,
+      required this.total});
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 90, height: 90,
+                  decoration: BoxDecoration(
+                    gradient: AppDecorations.primaryGradient,
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                          color: AppColors.primarySoft(0.4),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6))
+                    ],
+                  ),
+                  child: const Icon(Icons.cloud_upload_rounded,
+                      size: 44, color: AppColors.onPrimary),
+                ),
+                const SizedBox(height: 28),
+                const Text('Uploading Images…',
+                    style: TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: AppSpacing.xs + 2),
+                Text('$uploaded of $total processed',
+                    style: TextStyle(
+                        fontSize: 14, color: Colors.grey[600])),
+                const SizedBox(height: 24),
+                ClipRRect(
+                  borderRadius:
+                      BorderRadius.circular(AppRadii.sm),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 10,
+                    backgroundColor: AppColors.divider,
+                    valueColor: const AlwaysStoppedAnimation(
+                        AppColors.primary),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text('${(progress * 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary)),
+                const SizedBox(height: 20),
+                Text('Scanning each image for content safety…',
+                    style: TextStyle(
+                        fontSize: 12, color: Colors.grey[400])),
+              ]),
+        ),
+      );
+}
+
+// ── Preview sheet ─────────────────────────────────────────────────────────────
+
+class _PreviewSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> selectedFiles;
+  final void Function(int) onRemove;
+  final VoidCallback onClearAll, onUpload;
+
+  const _PreviewSheet({
+    required this.selectedFiles,
+    required this.onRemove,
+    required this.onClearAll,
+    required this.onUpload,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      builder: (ctx, ctrl) => Container(
+        decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppRadii.lg + 4))),
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg,
+                AppSpacing.md, AppSpacing.lg, 0),
+            child: Column(children: [
+              Center(
+                  child: Container(
+                      width: 36, height: 4,
+                      decoration: BoxDecoration(
+                          color: AppColors.divider,
+                          borderRadius:
+                              BorderRadius.circular(2)))),
+              const SizedBox(height: AppSpacing.md),
+              Row(children: [
+                Container(
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    decoration: BoxDecoration(
+                        color: AppColors.primarySoft(0.1),
+                        borderRadius:
+                            BorderRadius.circular(AppRadii.sm)),
+                    child: const Icon(
+                        Icons.photo_library_rounded,
+                        color: AppColors.primary,
+                        size: 20)),
+                const SizedBox(width: AppSpacing.md),
+                Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          'Preview — ${selectedFiles.length} image${selectedFiles.length != 1 ? "s" : ""}',
+                          style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold)),
+                      const Text('Tap × to remove',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.muted)),
+                    ]),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: onClearAll,
+                  icon: Icon(Icons.delete_sweep,
+                      size: 16, color: AppColors.danger),
+                  label: Text('Clear all',
+                      style: TextStyle(
+                          color: AppColors.danger,
+                          fontSize: 12)),
+                ),
+              ]),
+              const SizedBox(height: AppSpacing.md),
+              const Divider(height: 1),
+            ]),
+          ),
+          Expanded(
+            child: GridView.builder(
+              controller: ctrl,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              gridDelegate:
+                  const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10),
+              itemCount: selectedFiles.length,
+              itemBuilder: (_, i) {
+                final file  = selectedFiles[i]['file'];
+                final isSvg = selectedFiles[i]['isSvg'] as bool;
+                final name  = selectedFiles[i]['name'] as String;
+                return Stack(fit: StackFit.expand, children: [
+                  ClipRRect(
+                    borderRadius:
+                        BorderRadius.circular(AppRadii.md),
+                    child: Container(
+                      decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          border: Border.all(
+                              color: AppColors.divider)),
+                      child: isSvg
+                          ? Column(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                    Icons
+                                        .image_aspect_ratio_rounded,
+                                    color: Colors.blue[300],
+                                    size: 32),
+                                const Text('SVG',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight:
+                                            FontWeight.bold,
+                                        color: Colors.blue)),
+                              ])
+                          : Image.memory(file.bytes!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  const Icon(
+                                      Icons.broken_image,
+                                      color:
+                                          AppColors.muted)),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 0, left: 0, right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.xs + 2,
+                          vertical: AppSpacing.xs),
+                      decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          borderRadius: const BorderRadius.vertical(
+                              bottom: Radius.circular(
+                                  AppRadii.md - 1))),
+                      child: Text(name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: AppColors.onPrimary,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w500)),
+                    ),
+                  ),
+                  Positioned(
+                    top: AppSpacing.xs, right: AppSpacing.xs,
+                    child: GestureDetector(
+                      onTap: () => onRemove(i),
+                      child: Container(
+                          width: 22, height: 22,
+                          decoration: BoxDecoration(
+                              color: AppColors.danger,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                    color: AppColors.danger
+                                        .withOpacity(0.4),
+                                    blurRadius: 4)
+                              ]),
+                          child: const Icon(Icons.close,
+                              color: AppColors.onPrimary,
+                              size: 13)),
+                    ),
+                  ),
+                ]);
+              },
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.sm,
+                AppSpacing.md,
+                MediaQuery.of(context).padding.bottom +
+                    AppSpacing.md),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: onUpload,
+                icon: const Icon(Icons.cloud_upload_rounded,
+                    color: AppColors.onPrimary, size: 20),
+                label: Text(
+                    'Upload ${selectedFiles.length} Image${selectedFiles.length != 1 ? "s" : ""}',
+                    style: const TextStyle(
+                        color: AppColors.onPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md),
+                    shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppRadii.md)),
+                    elevation: 3),
               ),
             ),
-        ],
+          ),
+        ]),
       ),
     );
   }

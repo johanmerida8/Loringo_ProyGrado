@@ -3,21 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/teacher_theme.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_confirm_dialog.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 
 class TeacherAppDrawer extends StatelessWidget {
   const TeacherAppDrawer({
     super.key,
     required this.currentIndex,
-    required this.language,
     required this.onTabSelected,
   });
 
   final int currentIndex;
-  final String language;
   final ValueChanged<int> onTabSelected;
-
-  String _t(String key) => TeacherUITranslations.get(key, language);
 
   @override
   Widget build(BuildContext context) {
@@ -25,35 +20,35 @@ class TeacherAppDrawer extends StatelessWidget {
       backgroundColor: Colors.white,
       child: Column(
         children: [
-          _DrawerHeader(language: language),
+          const _DrawerHeader(),
           const Divider(),
-          _NavSectionLabel(label: _t('navigation')),
+          const _NavSectionLabel(label: 'Navigation'),
           _DrawerNavTile(
             icon: Icons.group,
-            title: _t('myGroupsLabel'),
+            title: 'My Groups',
             selected: currentIndex == 0,
             onTap: () => _selectTab(context, 0),
           ),
           _DrawerNavTile(
             icon: Icons.assignment,
-            title: _t('assignUnits'),
+            title: 'Assign Units',
             selected: currentIndex == 1,
             onTap: () => _selectTab(context, 1),
           ),
           _DrawerNavTile(
             icon: Icons.analytics,
-            title: _t('studentProgress'),
+            title: 'Student Progress',
             selected: currentIndex == 2,
             onTap: () => _selectTab(context, 2),
           ),
           _DrawerNavTile(
             icon: Icons.settings,
-            title: _t('settings'),
+            title: 'Settings',
             selected: currentIndex == 3,
             onTap: () => _selectTab(context, 3),
           ),
           const Spacer(),
-          _SignOutTile(language: language),
+          const _SignOutTile(),
         ],
       ),
     );
@@ -66,9 +61,7 @@ class TeacherAppDrawer extends StatelessWidget {
 }
 
 class _DrawerHeader extends StatelessWidget {
-  const _DrawerHeader({required this.language});
-
-  final String language;
+  const _DrawerHeader();
 
   @override
   Widget build(BuildContext context) {
@@ -78,28 +71,28 @@ class _DrawerHeader extends StatelessWidget {
       decoration: const BoxDecoration(
         gradient: TeacherDecorations.primaryGradient,
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const CircleAvatar(
+          CircleAvatar(
             radius: 35,
             backgroundColor: Colors.white,
             child: Icon(Icons.school, size: 40, color: TeacherColors.primary),
           ),
-          const SizedBox(height: TeacherSpacing.md - 4),
+          SizedBox(height: TeacherSpacing.md - 4),
           Text(
-            TeacherUITranslations.get('teacherPanel', language),
-            style: const TextStyle(
+            'Teacher Panel',
+            style: TextStyle(
               color: TeacherColors.onPrimary,
               fontSize: 24,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: TeacherSpacing.xs),
+          SizedBox(height: TeacherSpacing.xs),
           Text(
-            TeacherUITranslations.get('classroomManagement', language),
+            'Classroom Management',
             style: TextStyle(
-              color: TeacherColors.onPrimary.withOpacity(0.8),
+              color: TeacherColors.onPrimary,
               fontSize: 14,
             ),
           ),
@@ -164,17 +157,15 @@ class _DrawerNavTile extends StatelessWidget {
 }
 
 class _SignOutTile extends StatelessWidget {
-  const _SignOutTile({required this.language});
-
-  final String language;
+  const _SignOutTile();
 
   Future<void> _handleSignOut(BuildContext context) async {
     final confirmed = await showTeacherConfirmDialog(
       context: context,
-      title: TeacherUITranslations.get('signOut', language),
-      message: TeacherUITranslations.get('signOutConfirm', language),
-      confirmLabel: TeacherUITranslations.get('signOut', language),
-      cancelLabel: TeacherUITranslations.get('cancel', language),
+      title: 'Sign Out',
+      message: 'Are you sure you want to sign out?',
+      confirmLabel: 'Sign Out',
+      cancelLabel: 'Cancel',
     );
 
     if (!confirmed) return;
@@ -196,7 +187,7 @@ class _SignOutTile extends StatelessWidget {
       ),
       child: ListTile(
         leading: const Icon(Icons.logout, color: TeacherColors.danger),
-        title: Text(TeacherUITranslations.get('signOut', language)),
+        title: const Text('Sign Out'),
         onTap: () => _handleSignOut(context),
       ),
     );

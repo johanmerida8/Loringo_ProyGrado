@@ -7,7 +7,7 @@ import 'package:flutter_svg/svg.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 import 'package:lottie/lottie.dart';
 
 class ScreenOne extends StatefulWidget {
@@ -271,7 +271,8 @@ class _ScreenOneState extends State<ScreenOne> {
                           elevation: 5,
                         ),
                         child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
+                          // TeacherUITranslations.get('continueBtnText', _userLang),
+                          'Continue',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
@@ -307,7 +308,8 @@ class _ScreenOneState extends State<ScreenOne> {
                           elevation: 5,
                         ),
                         child: Text(
-                          TeacherUITranslations.get('continueBtnText', _userLang),
+                          // TeacherUITranslations.get('continueBtnText', _userLang),
+                          'Continue',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
@@ -407,7 +409,8 @@ class _ScreenOneState extends State<ScreenOne> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      TeacherUITranslations.get('selectCorrectImage', _userLang),
+                      // TeacherUITranslations.get('selectCorrectImage', _userLang),
+                      'Select the correct image',
                       style: const TextStyle(fontSize: 20, color: Colors.black54),
                     ),
                     const SizedBox(height: 16),
@@ -496,7 +499,8 @@ class _ScreenOneState extends State<ScreenOne> {
                             elevation: 5,
                           ),
                           child: Text(
-                            TeacherUITranslations.get('check', _userLang),
+                            // TeacherUITranslations.get('check', _userLang),
+                            'Check',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 18,

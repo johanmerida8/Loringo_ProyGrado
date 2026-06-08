@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/teacher_theme.dart';
-import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 
 class TeacherGroupCard extends StatelessWidget {
   const TeacherGroupCard({
@@ -86,7 +86,9 @@ class _StudentCountRow extends StatelessWidget {
           .snapshots(),
       builder: (context, snapshot) {
         final count = snapshot.data?.docs.length ?? 0;
-        final label = TeacherUITranslations.get('studentsLabel', language);
+        final label = count == 1
+            ? '1 student'
+            : '$count students';
         return Row(
           children: [
             const Icon(Icons.person, size: 14, color: TeacherColors.muted),
@@ -112,8 +114,6 @@ class _GroupActionsMenu extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
-  String _t(String key) => TeacherUITranslations.get(key, language);
-
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
@@ -125,7 +125,7 @@ class _GroupActionsMenu extends StatelessWidget {
             children: [
               const Icon(Icons.person_add, color: TeacherColors.primary),
               const SizedBox(width: TeacherSpacing.sm),
-              Text(_t('manageStudents')),
+              Text('Manage Students'),
             ],
           ),
         ),
@@ -135,7 +135,7 @@ class _GroupActionsMenu extends StatelessWidget {
             children: [
               const Icon(Icons.edit, color: Colors.blue),
               const SizedBox(width: TeacherSpacing.sm),
-              Text(_t('edit')),
+              Text('Edit Group'),
             ],
           ),
         ),
@@ -145,7 +145,7 @@ class _GroupActionsMenu extends StatelessWidget {
             children: [
               const Icon(Icons.delete, color: TeacherColors.danger),
               const SizedBox(width: TeacherSpacing.sm),
-              Text(_t('delete')),
+              Text('Delete Group'),
             ],
           ),
         ),

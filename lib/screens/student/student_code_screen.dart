@@ -14,7 +14,16 @@ class StudentCodeScreen extends StatefulWidget {
 
 class _StudentCodeScreenState extends State<StudentCodeScreen> {
   final accessCodeController = TextEditingController();
+  
   bool isLoading = false;
+  bool _isNavigating = false;  // ← Add this
+
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingSession();
+  }
 
   @override
   void dispose() {
@@ -22,8 +31,33 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
     super.dispose();
   }
 
+  // check if student already has a saved session
+  Future<void> _checkExistingSession() async {
+    if (_isNavigating) return;  // ← Prevent multiple navigation
+    if (await StudentAuthService.isLoggedIn()) {
+      _isNavigating = true;  // ← Set flag
+      final loginData = await StudentAuthService.getStoredStudentLogin();
+      if (loginData != null && mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StudentMainScreen(
+              studentId: loginData['studentId']!,
+              studentName: loginData['studentName']!,
+              studentAvatar: loginData['studentAvatar']?.isEmpty ?? true 
+                  ? null 
+                  : loginData['studentAvatar'],
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   /// Login with access code
   void _loginWithCode() async {
+    final enteredCode = accessCodeController.text.trim().toUpperCase();
+
     if (accessCodeController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -62,6 +96,7 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
         studentId: studentId,
         studentName: studentName,
         studentAvatar: studentAvatar,
+        accessCode: enteredCode,
       );
 
       if (mounted) {

@@ -1,13 +1,10 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:just_audio/just_audio.dart';
-// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
 import 'package:lottie/lottie.dart';
 
 class ScreenOne extends StatefulWidget {
@@ -41,9 +38,7 @@ class ScreenOne extends StatefulWidget {
 class _ScreenOneState extends State<ScreenOne> {
   final FlutterTts flutterTts = FlutterTts();
   final player = AudioPlayer();
-  late final OnDeviceTranslator translator;
 
-  String _userLang = 'English';
   String word = '';
   List<Map<String, dynamic>> options = [];
   String selectedOption = '';
@@ -54,58 +49,7 @@ class _ScreenOneState extends State<ScreenOne> {
   @override
   void initState() {
     super.initState();
-    _setUp();
-  }
-
-  Future<void> _setUp() async {
-    await _initTranslator();
-    await _fetchTask();
-  }
-
-  Future<void> _initTranslator() async {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
-    String userLang = 'Spanish'; // Default language
-    
-    // Only fetch user language if user is authenticated
-    if (userId != null) {
-      final userDoc = await FirebaseFirestore.instance
-          .collection("users")
-          .doc(userId)
-          .get();
-      
-      if (userDoc.exists) {
-        userLang = userDoc['language'] ?? 'Spanish';
-      }
-    }
-    _userLang = userLang;
-    final targetLang = _mapLanguageToEnum(userLang);
-
-    translator = OnDeviceTranslator(
-      sourceLanguage: TranslateLanguage.english,
-      targetLanguage: targetLang,
-    );
-  }
-
-  TranslateLanguage _mapLanguageToEnum(String lang) {
-    switch (lang.toLowerCase()) {
-      case 'spanish':
-        return TranslateLanguage.spanish;
-      case 'french':
-        return TranslateLanguage.french;
-      case 'german':
-        return TranslateLanguage.german;
-      case 'italian':
-        return TranslateLanguage.italian;
-      default:
-        return TranslateLanguage.spanish;
-    }
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-    translator.close();
-    player.dispose();
+    _fetchTask();
   }
 
   Future<void> _fetchTask() async {
@@ -127,54 +71,20 @@ class _ScreenOneState extends State<ScreenOne> {
         final taskData = doc.data();
         if (taskData != null && taskData['type'] == 'image_select') {
           final data = taskData['data'] as Map<String, dynamic>? ?? {};
-          String fetchedWord = data['word'] ?? taskData['question'] ?? '';
-          List<dynamic> fetchedOptions = data['options'] ?? [];
-
-          String translatedWord = await translator.translateText(fetchedWord);
-
-          List<Map<String, dynamic>> translatedOptions = fetchedOptions.map((
-            option,
-          ) {
-            return {
-              'text': option['text'],
-              'image': option['image'],
-              'isCorrect': option['isCorrect'],
-            };
-          }).toList();
-
+          
           setState(() {
-            word = translatedWord;
-            options = translatedOptions;
+            word = data['word'] ?? taskData['question'] ?? '';
+            options = List<Map<String, dynamic>>.from(data['options'] ?? []);
           });
         }
       }
     } catch (e) {
-      throw Exception('Error fetching task: $e');
+      debugPrint('Error fetching task: $e');
     }
   }
 
   void _speak(String text) async {
-    final targetLang = translator.targetLanguage;
-
-    String ttsLang = 'es';
-    switch (targetLang) {
-      case TranslateLanguage.spanish:
-        ttsLang = 'es';
-        break;
-      case TranslateLanguage.french:
-        ttsLang = 'fr';
-        break;
-      case TranslateLanguage.german:
-        ttsLang = 'de';
-        break;
-      case TranslateLanguage.italian:
-        ttsLang = 'it';
-        break;
-      default:
-        ttsLang = 'es';
-    }
-
-    await flutterTts.setLanguage(ttsLang);
+    await flutterTts.setLanguage('en-GB');
     await flutterTts.speak(text);
   }
 
@@ -240,85 +150,39 @@ class _ScreenOneState extends State<ScreenOne> {
                     animationType == 'success'
                         ? 'assets/animation/correct.json'
                         : 'assets/animation/fail.json',
-                    height: 150,
+                    height: 120,
                   ),
                   const SizedBox(height: 20),
-                  if (isCorrect)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          print('DEBUG ScreenOne: CONTINUE button pressed');
-                          Navigator.pop(context); // Close bottom sheet
-                          if (widget.onTaskComplete != null) {
-                            print(
-                              'DEBUG ScreenOne: Calling onTaskComplete callback with isCorrect=$isCorrect',
-                            );
-                            widget.onTaskComplete!(isCorrect); // Pass result
-                          } else {
-                            print('DEBUG ScreenOne: No callback, popping back');
-                            Navigator.pop(
-                              context,
-                            ); // Fallback: exit if no callback
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: greenPrimary,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 5,
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        if (widget.onTaskComplete != null) {
+                          widget.onTaskComplete!(isCorrect);
+                        } else {
+                          Navigator.pop(context);
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isCorrect ? greenPrimary : Colors.orange,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Text(
-                          // TeacherUITranslations.get('continueBtnText', _userLang),
-                          'Continue',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
+                        elevation: 5,
+                      ),
+                      child: Text(
+                        isCorrect ? 'Continue' : 'Try Again',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
                         ),
                       ),
                     ),
-                  if (!isCorrect)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          print('DEBUG ScreenOne: TRY AGAIN button pressed');
-                          Navigator.pop(context); // Close bottom sheet
-                          if (widget.onTaskComplete != null) {
-                            print(
-                              'DEBUG ScreenOne: Calling onTaskComplete callback with isCorrect=$isCorrect',
-                            );
-                            widget.onTaskComplete!(isCorrect); // Pass wrong result
-                          } else {
-                            print('DEBUG ScreenOne: No callback, popping back');
-                            Navigator.pop(context);
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 5,
-                        ),
-                        child: Text(
-                          // TeacherUITranslations.get('continueBtnText', _userLang),
-                          'Continue',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ),
-                    ),
+                  ),
                 ],
               ),
             );
@@ -367,9 +231,7 @@ class _ScreenOneState extends State<ScreenOne> {
                                 Radius.circular(30),
                               ),
                               child: LinearProgressIndicator(
-                                value:
-                                    widget.currentTaskNumber /
-                                    widget.totalTasks,
+                                value: widget.currentTaskNumber / widget.totalTasks,
                                 backgroundColor: Colors.blueGrey,
                                 valueColor: const AlwaysStoppedAnimation<Color>(
                                   greenPrimary,
@@ -408,10 +270,9 @@ class _ScreenOneState extends State<ScreenOne> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      // TeacherUITranslations.get('selectCorrectImage', _userLang),
+                    const Text(
                       'Select the correct image',
-                      style: const TextStyle(fontSize: 20, color: Colors.black54),
+                      style: TextStyle(fontSize: 20, color: Colors.black54),
                     ),
                     const SizedBox(height: 16),
                     Expanded(
@@ -419,12 +280,11 @@ class _ScreenOneState extends State<ScreenOne> {
                         padding: const EdgeInsets.symmetric(horizontal: 20),
                         child: GridView.builder(
                           itemCount: options.length,
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 16,
-                                crossAxisSpacing: 16,
-                              ),
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 16,
+                            crossAxisSpacing: 16,
+                          ),
                           itemBuilder: (context, index) {
                             final option = options[index];
                             final isSelected = selectedOption == option['text'];
@@ -433,14 +293,10 @@ class _ScreenOneState extends State<ScreenOne> {
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 300),
                                 decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? greenPrimary
-                                      : Colors.white,
+                                  color: isSelected ? greenPrimary : Colors.white,
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(
-                                    color: isSelected
-                                        ? greenPrimary
-                                        : greyAccent,
+                                    color: isSelected ? greenPrimary : greyAccent,
                                     width: 4,
                                   ),
                                   boxShadow: [
@@ -454,8 +310,7 @@ class _ScreenOneState extends State<ScreenOne> {
                                 child: Center(
                                   child: Padding(
                                     padding: const EdgeInsets.all(12.0),
-                                    child:
-                                        option['image'].toString().endsWith('.svg') &&
+                                    child: option['image'].toString().endsWith('.svg') &&
                                         !option['image'].toString().contains('f_png')
                                         ? SvgPicture.network(
                                             option['image'],
@@ -487,9 +342,7 @@ class _ScreenOneState extends State<ScreenOne> {
                       child: SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: selectedOption.isEmpty
-                              ? null
-                              : _checkAnswer,
+                          onPressed: selectedOption.isEmpty ? null : _checkAnswer,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: greenPrimary,
                             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -498,10 +351,9 @@ class _ScreenOneState extends State<ScreenOne> {
                             ),
                             elevation: 5,
                           ),
-                          child: Text(
-                            // TeacherUITranslations.get('check', _userLang),
+                          child: const Text(
                             'Check',
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
                               fontWeight: FontWeight.bold,

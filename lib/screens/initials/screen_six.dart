@@ -214,7 +214,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Lottie.asset(
               correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json',
-              height: 130,
+              height: 120,
             ),
             const SizedBox(height: 16),
             SizedBox(

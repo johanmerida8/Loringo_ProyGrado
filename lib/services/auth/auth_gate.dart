@@ -7,8 +7,7 @@ import 'package:loringo_app/screens/teacher/teacher_home_screen.dart';
 import 'package:loringo_app/screens/parent/parent_home_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
-// import 'package:loringo_app/services/notification/onesignal_service.dart';
-import 'package:loringo_app/services/notifications/one_signal_service.dart'; // Add this import
+import 'package:loringo_app/services/notifications/one_signal_service.dart';
 
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
@@ -18,33 +17,28 @@ class AuthGate extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, authSnapshot) {
-        // Loading state
         if (authSnapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
         
-        // Not logged in → show login screen
         if (!authSnapshot.hasData) {
           return const LoginOrRegister();
         }
 
         final uid = authSnapshot.data!.uid;
         
-        // Logged in → fetch user role and route
         return FutureBuilder<DocumentSnapshot>(
           future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
           key: ValueKey(uid),
           builder: (context, userSnapshot) {
-            // Still loading → show spinner
             if (userSnapshot.connectionState == ConnectionState.waiting) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
             }
 
-            // Check for error
             if (userSnapshot.hasError) {
               debugPrint('Error loading user document: ${userSnapshot.error}');
               return _buildErrorScreen(
@@ -53,7 +47,6 @@ class AuthGate extends StatelessWidget {
               );
             }
 
-            // Document doesn't exist
             if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
               debugPrint('User document not found for UID: $uid');
               return _buildErrorScreen(
@@ -67,12 +60,8 @@ class AuthGate extends StatelessWidget {
             
             debugPrint('User role: $role for UID: $uid');
 
-            // ✅ Initialize OneSignal for mobile users (all roles)
-            if (!kIsWeb) {
-              // Call without waiting to not block navigation
-              OneSignalNotificationService.initializeUser(uid).catchError((e) {
-                debugPrint('OneSignal init error: $e');
-              });
+            if (!kIsWeb && (role == 'parent' || role == 'teacher')) {
+              _initializeNotificationsForRole(uid, role!);
             }
 
             // Route based on role
@@ -90,6 +79,12 @@ class AuthGate extends StatelessWidget {
         );
       },
     );
+  }
+
+  void _initializeNotificationsForRole(String uid, String role) {
+    OneSignalNotificationService.initializeUser(uid).catchError((e) {
+      debugPrint('OneSignal initialization error for $role: $e');
+    });
   }
 
   Widget _buildErrorScreen(BuildContext context, String message) {
@@ -111,7 +106,6 @@ class AuthGate extends StatelessWidget {
               onPressed: () async {
                 await FirebaseAuth.instance.signOut();
                 if (context.mounted) {
-                  // Force rebuild
                   Navigator.of(context).pushReplacement(
                     MaterialPageRoute(builder: (_) => const AuthGate()),
                   );
@@ -136,10 +130,13 @@ class _ParentRouter extends StatefulWidget {
   State<_ParentRouter> createState() => _ParentRouterState();
 }
 
-class _ParentRouterState extends State<_ParentRouter> {
+class _ParentRouterState extends State<_ParentRouter> with AutomaticKeepAliveClientMixin {
   bool? _hasChildren;
   bool _isLoading = true;
   String? _error;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -175,6 +172,8 @@ class _ParentRouterState extends State<_ParentRouter> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+    
     if (_isLoading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),

@@ -4,7 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/components/app_drawer.dart';
-import 'package:loringo_app/screens/teacher/navigation_group_screen.dart';
+import 'package:loringo_app/screens/teacher/group_navigation_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_content_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_league_screen.dart';
@@ -441,7 +441,6 @@ class _GroupCard extends StatelessWidget {
       final snap = await FirebaseFirestore.instance
           .collection('content')
           .where('assignedTo', arrayContains: groupId)
-          .where('status', isEqualTo: 'approved')
           .get();
       return snap.docs.length;
     } catch (_) {

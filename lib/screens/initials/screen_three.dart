@@ -194,7 +194,7 @@ class _ScreenThreeState extends State<ScreenThree> {
                 animationType == 'success'
                     ? 'assets/animation/correct.json'
                     : 'assets/animation/fail.json',
-                height: 150,
+                height: 120,
               ),
               const SizedBox(height: 20),
               SizedBox(

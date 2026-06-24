@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:loringo_app/components/app_drawer.dart';
-import 'package:loringo_app/screens/teacher/student_progress.dart';
+import 'package:loringo_app/screens/teacher/group_details/invite_student_modal.dart';
+import 'package:loringo_app/screens/teacher/student_progress_dashboard.dart';
 import 'package:loringo_app/screens/teacher/teacher_level_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -319,18 +320,12 @@ class _TeacherGroupDetailsScreenState
   }
 
   void _showInviteStudentModal() {
-    showModalBottomSheet(
+    showInviteStudentModal(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _InviteStudentModal(
-        groupId:    widget.groupId,
-        groupName:  widget.groupName,
-        groupCode:  widget.groupCode,
-        groupColor: widget.groupColor,
-        onCopyCode: _copyCodeToClipboard,
-        onInviteSent: _loadGroupMembers,
-      ),
+      groupId: widget.groupId,
+      groupName: widget.groupName,
+      groupCode: widget.groupCode,
+      groupColor: widget.groupColor,
     );
   }
 
@@ -346,6 +341,7 @@ class _TeacherGroupDetailsScreenState
           onLoaded:       (items) => _contentItems = items,
           preloadedItems: _contentItems,
         ),
+        // Full Screen button — top-right floating pill
         Positioned(
           top: AppSpacing.sm,
           right: AppSpacing.sm,
@@ -394,7 +390,6 @@ class _TeacherGroupDetailsScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Section label ──────────────────────────────────────────────
           _SectionLabel('Teacher'),
           const SizedBox(height: AppSpacing.md),
 
@@ -443,7 +438,7 @@ class _TeacherGroupDetailsScreenState
 
           const SizedBox(height: AppSpacing.xl),
 
-          // ── Students header ────────────────────────────────────────────
+          // Students header
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -787,21 +782,14 @@ class _TeacherGroupDetailsScreenState
       _buildSettingsTab(),
     ];
 
+    // Tab labels for the inline header
+    const tabLabels = ['Content', 'Members', 'Statistics', 'Settings'];
+
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        leading: Builder(
-          builder: (ctx) => IconButton(
-            icon: const Icon(Icons.menu_rounded, color: AppColors.onPrimary),
-            onPressed: () => Scaffold.of(ctx).openDrawer(),
-          ),
-        ),
-        title: Text(_groupName, style: AppText.appBarTitle),
-      ),
+      // ── No AppBar — header lives inside the body like teacher_home_screen ──
       drawer: AppDrawer(
-        title: 'Teacher Panel',
+        title: _groupName,
         subtitle: _userName.isNotEmpty ? _userName : null,
         navItems: [
           ListTile(
@@ -814,7 +802,59 @@ class _TeacherGroupDetailsScreenState
           ),
         ],
       ),
-      body: SafeArea(child: screens[_currentIndex]),
+      body: Builder(
+        builder: (ctx) => SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Inline header (matches teacher_home_screen.dart) ──────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+                child: Row(
+                  children: [
+                    // Hamburger
+                    GestureDetector(
+                      onTap: () => Scaffold.of(ctx).openDrawer(),
+                      child: Container(
+                        padding: const EdgeInsets.all(AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySoft(0.1),
+                          borderRadius: BorderRadius.circular(AppRadii.md),
+                        ),
+                        child: const Icon(Icons.menu_rounded,
+                            color: AppColors.primary, size: 22),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_groupName, style: AppText.h1),
+                          // Subtle current tab label beneath group name
+                          Text(
+                            tabLabels[_currentIndex],
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  ],
+                ),
+              ),
+
+              // ── Tab content (fills remaining space) ──────────────────────
+              Expanded(child: screens[_currentIndex]),
+            ],
+          ),
+        ),
+      ),
       bottomNavigationBar: Container(
         margin: const EdgeInsets.all(AppSpacing.md),
         height: 75,
@@ -958,259 +998,4 @@ class _PeriodOption extends StatelessWidget {
           ),
         ),
       );
-}
-
-// ── Invite Student Modal ──────────────────────────────────────────────────────
-
-class _InviteStudentModal extends StatefulWidget {
-  final String        groupId;
-  final String        groupName;
-  final String        groupCode;
-  final Color         groupColor;
-  final VoidCallback  onCopyCode;
-  final VoidCallback  onInviteSent;
-
-  const _InviteStudentModal({
-    required this.groupId,
-    required this.groupName,
-    required this.groupCode,
-    required this.groupColor,
-    required this.onCopyCode,
-    required this.onInviteSent,
-  });
-
-  @override
-  State<_InviteStudentModal> createState() => _InviteStudentModalState();
-}
-
-class _InviteStudentModalState extends State<_InviteStudentModal> {
-  final _emailController = TextEditingController();
-  bool _isLoading = false;
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _sendInvitation() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty ||
-        !RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Please enter a valid email'),
-        backgroundColor: Colors.orange,
-      ));
-      return;
-    }
-    setState(() => _isLoading = true);
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .where('role', isEqualTo: 'parent')
-          .limit(1)
-          .get();
-
-      if (snap.docs.isEmpty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('No parent found with that email'),
-          backgroundColor: Colors.orange,
-        ));
-        return;
-      }
-
-      await FirebaseFirestore.instance.collection('notifications').add({
-        'userId': snap.docs.first.id,
-        'type':   'group_invitation',
-        'title':  'Group Invitation',
-        'message': 'You have been invited to the group ${widget.groupName}',
-        'data': {
-          'groupId':   widget.groupId,
-          'groupName': widget.groupName,
-          'groupCode': widget.groupCode,
-        },
-        'isRead':    false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      widget.onInviteSent();
-      if (mounted) Navigator.pop(context);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Invitation sent to $email'),
-        backgroundColor: AppColors.primary,
-      ));
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error: $e'),
-        backgroundColor: AppColors.danger,
-      ));
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.lg + 6)),
-      ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.md,
-        left: AppSpacing.lg, right: AppSpacing.lg, top: AppSpacing.lg,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle
-            Center(child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                  color: AppColors.divider,
-                  borderRadius: BorderRadius.circular(2)),
-            )),
-            const SizedBox(height: AppSpacing.md),
-
-            // Title row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(children: [
-                  const Icon(Icons.person_add_rounded,
-                      color: AppColors.primary, size: 26),
-                  const SizedBox(width: AppSpacing.md),
-                  const Text('Invite Student', style: AppText.h1),
-                ]),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded, color: AppColors.muted),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-
-            // Group code card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [widget.groupColor, widget.groupColor.withOpacity(0.75)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(AppRadii.lg),
-              ),
-              child: Column(
-                children: [
-                  const Text('Group Code',
-                      style: TextStyle(fontSize: 13, color: Colors.white70)),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    widget.groupCode,
-                    style: const TextStyle(
-                      fontSize: 34, fontWeight: FontWeight.bold,
-                      color: AppColors.onPrimary, letterSpacing: 4,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(widget.groupName,
-                      style: const TextStyle(
-                          fontSize: 13, color: Colors.white70)),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: widget.onCopyCode,
-                icon: const Icon(Icons.copy_rounded),
-                label: const Text('Copy Code',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: widget.groupColor,
-                  foregroundColor: AppColors.onPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadii.md)),
-                  elevation: 0,
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-
-            // Divider
-            Row(children: [
-              Expanded(child: Divider(color: AppColors.divider)),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                child: Text('OR',
-                    style: TextStyle(
-                        color: Colors.grey[500], fontWeight: FontWeight.bold)),
-              ),
-              Expanded(child: Divider(color: AppColors.divider)),
-            ]),
-            const SizedBox(height: AppSpacing.lg),
-
-            const Text('Send Direct Invitation',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text("Enter parent's email to send a group invitation",
-                style: AppText.caption),
-            const SizedBox(height: AppSpacing.md),
-
-            TextField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
-              decoration: InputDecoration(
-                labelText: 'Parent Email',
-                hintText: 'example@email.com',
-                prefixIcon: const Icon(Icons.email_outlined),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.md)),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.md),
-                    borderSide: BorderSide(color: AppColors.divider)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.md),
-                    borderSide:
-                        const BorderSide(color: AppColors.primary, width: 2)),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _isLoading ? null : _sendInvitation,
-                icon: _isLoading
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: AppColors.onPrimary))
-                    : const Icon(Icons.send_rounded),
-                label: const Text('Send Invitation',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: AppColors.onPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadii.md)),
-                  elevation: 0,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

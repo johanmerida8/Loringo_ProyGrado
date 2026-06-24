@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 /// Avatar Selector Widget
 /// Allows users to select an avatar from predefined options
@@ -21,16 +22,28 @@ class _AvatarSelectorState extends State<AvatarSelector> {
 
   // Lista de avatares disponibles
   final List<String> avatars = [
-    'assets/avatars/turtle.png',
-    'assets/avatars/squirrel.png',
-    'assets/avatars/penguin.png',
-    'assets/avatars/parrot.png',
-    'assets/avatars/panda.png',
-    'assets/avatars/otter.png',
-    'assets/avatars/koala.png',
-    'assets/avatars/frog.png',
-    'assets/avatars/elephant.png',
     'assets/avatars/arctic-fox.png',
+    'assets/avatars/bear.png',
+    'assets/avatars/beaver.png',
+    'assets/avatars/cat.png',
+    'assets/avatars/deer.png',
+    'assets/avatars/dinosaur.png',
+    'assets/avatars/dog.png',
+    'assets/avatars/elephant.png',
+    'assets/avatars/frog.png',
+    'assets/avatars/giraffe.png',
+    'assets/avatars/gorilla.png',
+    'assets/avatars/koala.png',
+    'assets/avatars/lizard.png',
+    'assets/avatars/monkey.png',
+    'assets/avatars/otter.png',
+    'assets/avatars/panda.png',
+    'assets/avatars/parrot.png',
+    'assets/avatars/penguin.png',
+    'assets/avatars/raccoon.png',
+    'assets/avatars/squirrel.png',
+    'assets/avatars/turtle.png',
+    'assets/avatars/zebra.png',
   ];
 
   @override
@@ -42,7 +55,7 @@ class _AvatarSelectorState extends State<AvatarSelector> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: AppRadii.lgAll),
       child: Container(
         padding: const EdgeInsets.all(20),
         constraints: const BoxConstraints(maxWidth: 400),
@@ -55,30 +68,30 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFB7E0FF).withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(12),
+                    color: AppColors.tint(AppColors.primary),
+                    borderRadius: AppRadii.mdAll,
                   ),
                   child: const Icon(
                     Icons.face_rounded,
-                    color: Color(0xFF4A90E2),
+                    color: AppColors.primary,
                     size: 28,
                   ),
                 ),
                 const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
-                    'Elige tu Avatar',
+                    'Choose your Avatar',
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFFFE5D26),
+                      color: AppColors.primaryDark,
                     ),
                   ),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close),
-                  color: Colors.grey[600],
+                  color: AppColors.muted,
                 ),
               ],
             ),
@@ -110,25 +123,17 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: isSelected
-                            ? const Color(0xFFB7E0FF)
-                            : Colors.grey[100],
-                        borderRadius: BorderRadius.circular(16),
+                            ? AppColors.tint(AppColors.primary, .15)
+                            : AppColors.subtleFill,
+                        borderRadius: AppRadii.lgAll,
                         border: Border.all(
                           color: isSelected
-                              ? const Color(0xFF4A90E2)
-                              : Colors.grey[300]!,
+                              ? AppColors.primary
+                              : AppColors.divider,
                           width: isSelected ? 3 : 1,
                         ),
                         boxShadow: isSelected
-                            ? [
-                                BoxShadow(
-                                  color: const Color(
-                                    0xFFB7E0FF,
-                                  ).withOpacity(0.4),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ]
+                            ? AppShadows.floating(AppColors.primary)
                             : [],
                       ),
                       child: Stack(
@@ -142,7 +147,7 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                                 errorBuilder: (context, error, stackTrace) {
                                   return Icon(
                                     Icons.image_not_supported,
-                                    color: Colors.grey[400],
+                                    color: AppColors.muted,
                                     size: 40,
                                   );
                                 },
@@ -156,12 +161,12 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                               child: Container(
                                 padding: const EdgeInsets.all(4),
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFFA2CA71),
+                                  color: AppColors.success,
                                   shape: BoxShape.circle,
                                 ),
                                 child: const Icon(
                                   Icons.check,
-                                  color: Colors.white,
+                                  color: AppColors.onPrimary,
                                   size: 16,
                                 ),
                               ),
@@ -187,18 +192,18 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                       }
                     : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFCFB3),
-                  foregroundColor: Colors.white,
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: AppRadii.mdAll,
                   ),
                   elevation: 3,
                   disabledBackgroundColor: Colors.grey[300],
                 ),
                 child: const Text(
                   'Confirm Avatar',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: AppText.button,
                 ),
               ),
             ),

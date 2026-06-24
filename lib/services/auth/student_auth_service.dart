@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class StudentAuthService {
@@ -66,5 +67,37 @@ class StudentAuthService {
       'studentAvatar': prefs.getString(_keyStudentAvatar) ?? '',
       'accessCode': prefs.getString(_keyAccessCode) ?? '',
     };
+  }
+
+  static Future<void> updateStudentAvatar({
+    required String studentId,
+    required String newAvatar,
+  }) async {
+    try {
+      // 1. update avatar
+      await FirebaseFirestore.instance
+        .collection('students')
+        .doc(studentId)
+        .update({
+          'avatar': newAvatar,
+        });
+      
+      // 2. update shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyStudentAvatar, newAvatar);
+    } catch (e) {
+      print('Error updating avatar: $e');
+      rethrow;
+    }
+  }
+
+  static Future<String> getStoredAvatar() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyStudentAvatar) ?? 'assets/avatars/panda.png';
+  }
+
+  static Future<String?> getStudentId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyStudentAvatar);
   }
 }

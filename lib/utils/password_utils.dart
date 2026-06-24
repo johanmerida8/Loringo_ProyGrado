@@ -1,24 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class PasswordUtils {
+  PasswordUtils._();
+
+  // Compiled once to avoid recreating on every keystroke
+  static final RegExp _hasUppercase = RegExp(r'[A-Z]');
+  static final RegExp _hasLowercase = RegExp(r'[a-z]');
+  static final RegExp _hasDigit = RegExp(r'[0-9]');
+  static final RegExp _hasSpecial = RegExp(r'''[!@#$%^&*()_+\-=\[\]{};:"\\|,.<>\/?`~]''');
+
+  // Core rules as individual booleans
+  static bool _longEnough(String p) => p.length >= 8;
+  static bool _hasUpper(String p) => _hasUppercase.hasMatch(p);
+  static bool _hasLower(String p) => _hasLowercase.hasMatch(p);
+  static bool _hasNum(String p) => _hasDigit.hasMatch(p);
+  static bool _hasSpecialChar(String p) => _hasSpecial.hasMatch(p);
+
+  /// Returns true only when ALL 5 rules pass
   static bool isPasswordValid(String password) {
-    return password.length >= 8 &&
-        password.contains(RegExp(r'[A-Z]')) &&
-        password.contains(RegExp(r'[a-z]')) &&
-        password.contains(RegExp(r'[0-9]')) &&
-        password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+    return _longEnough(password) &&
+        _hasUpper(password) &&
+        _hasLower(password) &&
+        _hasNum(password) &&
+        _hasSpecialChar(password);
   }
 
-  static String getPasswordStrength(String password) {
+  /// 0–5 score (one point per rule satisfied)
+  static int strengthScore(String password) {
     int score = 0;
+    if (_longEnough(password)) score++;
+    if (_hasUpper(password)) score++;
+    if (_hasLower(password)) score++;
+    if (_hasNum(password)) score++;
+    if (_hasSpecialChar(password)) score++;
+    return score;
+  }
 
-    if (password.length >= 8) score++;
-    if (password.contains(RegExp(r'[A-Z]'))) score++;
-    if (password.contains(RegExp(r'[a-z]'))) score++;
-    if (password.contains(RegExp(r'[0-9]'))) score++;
-    if (password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) score++;
-
-    switch (score) {
+  /// Human-readable label matching the score
+  static String getPasswordStrength(String password) {
+    switch (strengthScore(password)) {
       case 0:
       case 1:
         return 'Very Weak';
@@ -35,51 +56,35 @@ class PasswordUtils {
     }
   }
 
+  /// Colour that corresponds to the strength level
   static Color getPasswordStrengthColor(String password) {
-    int score = 0;
-
-    if (password.length >= 8) score++;
-    if (password.contains(RegExp(r'[A-Z]'))) score++;
-    if (password.contains(RegExp(r'[a-z]'))) score++;
-    if (password.contains(RegExp(r'[0-9]'))) score++;
-    if (password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) score++;
-
-    switch (score) {
+    switch (strengthScore(password)) {
       case 0:
       case 1:
-        return Colors.red;
+        return AppColors.danger;
       case 2:
-        return Colors.orange;
+        return AppColors.warning;
       case 3:
-        return Colors.yellow[700]!;
+        return const Color(0xFFE6C629);
       case 4:
-        return Colors.lightGreen;
+        return AppColors.primaryLight;
       case 5:
-        return Colors.green;
+        return AppColors.success;
       default:
-        return Colors.red;
+        return AppColors.danger;
     }
   }
 
+  /// Returns the list of rules that the password is still MISSING
   static List<String> getPasswordRequirements(String password) {
-    List<String> requirements = [];
-
-    if (password.length < 8) {
-      requirements.add('At least 8 characters');
+    final List<String> missing = [];
+    if (!_longEnough(password)) missing.add('At least 8 characters');
+    if (!_hasUpper(password)) missing.add('At least 1 uppercase letter (A-Z)');
+    if (!_hasLower(password)) missing.add('At least 1 lowercase letter (a-z)');
+    if (!_hasNum(password)) missing.add('At least 1 number (0-9)');
+    if (!_hasSpecialChar(password)) {
+      missing.add('At least 1 special character (!@#\$%^&*...)');
     }
-    if (!password.contains(RegExp(r'[A-Z]'))) {
-      requirements.add('One uppercase letter');
-    }
-    if (!password.contains(RegExp(r'[a-z]'))) {
-      requirements.add('One lowercase letter');
-    }
-    if (!password.contains(RegExp(r'[0-9]'))) {
-      requirements.add('One number');
-    }
-    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) {
-      requirements.add('One special character');
-    }
-
-    return requirements;
+    return missing;
   }
 }

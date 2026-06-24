@@ -1,3 +1,4 @@
+// quizzes_tab.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -9,12 +10,10 @@ class QuizzesTab extends StatelessWidget {
     super.key,
     required this.groupId,
     required this.groupColor,
-    this.contentStream,
   });
 
   final String groupId;
-final Color groupColor;
-  final Stream<QuerySnapshot>? contentStream;
+  final Color groupColor;
   final Database _db = Database();
 
   @override
@@ -25,20 +24,20 @@ final Color groupColor;
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: contentStream ?? _db.getPersonalizedContentStream(groupId),
+      stream: _db.getTeacherContentStream(teacherId),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final approvedContent = snapshot.data!.docs;
-        if (approvedContent.isEmpty) {
-          return const _NoApprovedContent();
+        final contentDocs = snapshot.data?.docs ?? [];
+        if (contentDocs.isEmpty) {
+          return const _NoContentEmptyState();
         }
 
         return ListView.builder(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
-          itemCount: approvedContent.length + 1,
+          itemCount: contentDocs.length + 1,
           itemBuilder: (context, index) {
             if (index == 0) {
               return Padding(
@@ -59,7 +58,7 @@ final Color groupColor;
                 ),
               );
             }
-            final doc = approvedContent[index - 1];
+            final doc = contentDocs[index - 1];
             return _ContentQuizCard(
               contentDoc: doc,
               groupId: groupId,
@@ -75,8 +74,8 @@ final Color groupColor;
 
 // ── Empty state ───────────────────────────────────────────────────────────────
 
-class _NoApprovedContent extends StatelessWidget {
-  const _NoApprovedContent();
+class _NoContentEmptyState extends StatelessWidget {
+  const _NoContentEmptyState();
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +94,7 @@ class _NoApprovedContent extends StatelessWidget {
             const Text('No Content Available', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Text(
-              'Approve content first to start creating quizzes for your students.',
+              'Create content first to start creating quizzes for your students.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey.shade500, height: 1.5),
             ),
@@ -123,7 +122,7 @@ class _ContentQuizCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final data  = contentDoc.data() as Map<String, dynamic>;
+    final data = contentDoc.data() as Map<String, dynamic>;
     final title = data['title'] as String? ?? 'Untitled';
 
     return Container(
@@ -210,7 +209,7 @@ class _UnitSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final unitData  = unitDoc.data() as Map<String, dynamic>;
+    final unitData = unitDoc.data() as Map<String, dynamic>;
     final unitTitle = unitData['title'] as String? ?? 'Untitled';
 
     return Column(
@@ -416,7 +415,7 @@ class _LessonQuizTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final data  = lessonDoc.data() as Map<String, dynamic>;
+    final data = lessonDoc.data() as Map<String, dynamic>;
     final title = data['title'] as String? ?? 'Untitled';
 
     return Padding(

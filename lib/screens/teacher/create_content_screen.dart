@@ -1,3 +1,4 @@
+// create_content_screen.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -29,7 +30,6 @@ class _CreatePersonalizedContentScreenState
   late TextEditingController orderController;
   String selectedAgeGroup = '5-6 years';
   bool isLoading = false;
-  String? _rejectionReason;
 
   @override
   void initState() {
@@ -44,21 +44,6 @@ class _CreatePersonalizedContentScreenState
       text: widget.existingData?['order']?.toString() ?? '',
     );
     selectedAgeGroup = widget.existingData?['ageGroup'] ?? '5-6 years';
-    // Load rejection reason from approval subcollection
-    if (widget.contentId != null &&
-        widget.existingData?['status'] == 'rejected') {
-      _loadRejectionReason();
-    }
-  }
-
-  Future<void> _loadRejectionReason() async {
-    final doc = await _db.getContentApprovalRecord(widget.contentId!);
-    if (doc.exists && mounted) {
-      setState(() {
-        _rejectionReason =
-            (doc.data() as Map<String, dynamic>?)?['reason'] as String?;
-      });
-    }
   }
 
   @override
@@ -106,28 +91,22 @@ class _CreatePersonalizedContentScreenState
           return;
         }
 
-        print('[Content] Updating content | id: $contentId | title: "${titleController.text.trim()}"');
         await _db.updatePersonalizedContent(
           contentId: contentId,
           title: titleController.text.trim(),
           description: descriptionController.text.trim(),
           ageGroup: selectedAgeGroup,
           order: int.parse(orderController.text.trim()),
-          status: widget.existingData?['status'] == 'rejected' ? 'pending' : widget.existingData?['status'],
         );
-        print('[Content] ✅ Content updated successfully | id: $contentId');
       } else {
-        print('[Content] Creating new content | id: $contentId | title: "${titleController.text.trim()}" | teacherId: $teacherId');
         await _db.createPersonalizedContent(
           contentId: contentId,
           title: titleController.text.trim(),
           description: descriptionController.text.trim(),
           ageGroup: selectedAgeGroup,
-          status: 'pending',
           order: int.parse(orderController.text.trim()),
           teacherId: teacherId,
         );
-        print('[Content] ✅ Content created successfully | id: $contentId | status: pending | awaiting admin approval');
       }
 
       if (mounted) {
@@ -136,7 +115,7 @@ class _CreatePersonalizedContentScreenState
             content: Text(
               widget.contentId != null
                   ? 'Content updated successfully!'
-                  : 'Content created! Awaiting admin approval before assignment.',
+                  : 'Content created successfully!',
             ),
             backgroundColor: Colors.green,
           ),
@@ -144,7 +123,6 @@ class _CreatePersonalizedContentScreenState
         Navigator.pop(context);
       }
     } catch (e) {
-      print('[Content] ❌ Error submitting content: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -175,7 +153,6 @@ class _CreatePersonalizedContentScreenState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header section
               Text(
                 'Create your content here',
                 style: TextStyle(
@@ -184,34 +161,6 @@ class _CreatePersonalizedContentScreenState
                   fontStyle: FontStyle.italic,
                 ),
               ),
-              const SizedBox(height: 16),
-              if (widget.existingData?['status'] == 'rejected')
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    border: Border.all(color: Colors.red, width: 1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Rejection Reason:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red[700],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _rejectionReason ?? 'No reason provided',
-                        style: TextStyle(color: Colors.grey[700]),
-                      ),
-                    ],
-                  ),
-                ),
-
               const SizedBox(height: 16),
               TextFormField(
                 controller: titleController,

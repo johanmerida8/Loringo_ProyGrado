@@ -1,9 +1,18 @@
+// lib/components/app_drawer.dart
+//
+// Reads the current user's Firestore role and routes the header tap to:
+//   teacher → TeacherProfileScreen
+//   admin   → AdminProfileScreen
+//   parent  → ParentProfileScreen  (via its existing call-site in parent_home_screen)
+//   other   → legacy ProfileScreen (fallback)
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/initials/profile_screen.dart';
-import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/screens/admin/admin_profile_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_profile_screen.dart' hide AdminProfileScreen;
+import 'package:loringo_app/screens/initials/profile_screen.dart' hide TeacherProfileScreen, AdminProfileScreen;
 import 'package:loringo_app/theme/app_theme.dart';
-
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({
@@ -16,23 +25,44 @@ class AppDrawer extends StatelessWidget {
   });
 
   final IconData headerIcon;
-
   final String title;
-
   final String? subtitle;
-
   final List<Widget> navItems;
-
   final bool wrapInDrawer;
 
-  // -- Header ----------------------------------------------------------------
+  // ── Navigate to the role-appropriate profile screen ───────────────────────
+
+  Future<void> _openProfile(BuildContext context) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    // Fetch role from Firestore (cached in memory by Firestore SDK).
+    String role = '';
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users').doc(uid).get();
+      role = (doc.data()?['role'] as String?) ?? '';
+    } catch (_) {}
+
+    if (!context.mounted) return;
+
+    switch (role) {
+      case 'teacher':
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const TeacherProfileScreen()));
+        break;
+      case 'admin':
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const AdminProfileScreen()));
+        break;
+    }
+  }
+
+  // ── Header ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const ProfileScreen()),
-      ),
+      onTap: () => _openProfile(context),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
@@ -52,101 +82,44 @@ class AppDrawer extends StatelessWidget {
                 CircleAvatar(
                   radius: 35,
                   backgroundColor: Colors.white,
-                  child:
-                      Icon(headerIcon, size: 40, color: AppColors.primary),
+                  child: Icon(headerIcon, size: 40, color: AppColors.primary),
                 ),
                 Container(
                   padding: const EdgeInsets.all(3),
                   decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
+                    color: Colors.white, shape: BoxShape.circle),
                   child: const Icon(Icons.edit,
                       size: 14, color: AppColors.primary),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            Text(title,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold)),
             if (subtitle != null && subtitle!.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text(
-                subtitle!,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.85),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              Text(subtitle!,
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.85),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
             ],
             const SizedBox(height: 6),
-            Text(
-              'Tap to view profile',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.65),
-                fontSize: 11,
-              ),
-            ),
+            Text('Tap to view profile',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.65), fontSize: 11)),
           ],
         ),
       ),
     );
   }
 
-  // -- Sign-out --------------------------------------------------------------
-
-  Widget _buildSignOut(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: Colors.grey[300]!, width: 1)),
-      ),
-      child: ListTile(
-        leading: const Icon(Icons.logout, color: Colors.red),
-        title: const Text('Sign Out', style: TextStyle(color: Colors.red)),
-        onTap: () async {
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('Sign Out'),
-              content: const Text('Are you sure you want to sign out?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  child: const Text('Sign Out'),
-                ),
-              ],
-            ),
-          );
-          if (confirmed == true) {
-            await FirebaseAuth.instance.signOut();
-            if (context.mounted) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => const AuthGate()),
-                (route) => false,
-              );
-            }
-          }
-        },
-      ),
-    );
-  }
-
-  // -- Build -----------------------------------------------------------------
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -159,7 +132,6 @@ class AppDrawer extends StatelessWidget {
             children: navItems,
           ),
         ),
-        _buildSignOut(context),
       ],
     );
 

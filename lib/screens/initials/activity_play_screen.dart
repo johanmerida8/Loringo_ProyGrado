@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 // import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
+import 'package:loringo_app/screens/initials/screen_eight.dart';
+import 'package:loringo_app/screens/initials/screen_nine.dart';
 import 'package:loringo_app/screens/initials/screen_one.dart';
 import 'package:loringo_app/screens/initials/screen_five.dart';
 import 'package:loringo_app/screens/initials/screen_four.dart';
@@ -258,6 +260,34 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           taskId: taskDoc.id,
           onTaskComplete: _nextReadingTask,
           currentTaskNumber: currentTaskIndex, totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+      
+      case 'sentence_builder':
+        return ScreenEight(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
+          activityId: widget.activityId,
+          taskId: taskDoc.id,
+          onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex,
+          totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+      
+      case 'repeat_after_me':
+        return ScreenNine(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
+          activityId: widget.activityId,
+          taskId: taskDoc.id,
+          onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex,
+          totalTasks: tasks.length,
           collectionName: widget.collectionName,
         );
 

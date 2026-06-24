@@ -2,17 +2,23 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:loringo_app/components/my_button.dart';
 import 'package:loringo_app/components/my_loading.dart';
 import 'package:loringo_app/components/my_textfield.dart';
 import 'package:loringo_app/components/recaptcha/recaptcha_widget.dart';
 import 'package:loringo_app/components/responsive.dart';
-// import 'package:loringo_app/screens/initials/login_screen.dart';
+import 'package:loringo_app/components/wave_form.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/password_utils.dart';
+
+const _kGradient = LinearGradient(
+  colors: [Color(0xFFF6E96B), Color(0xFFBEDC74), Color(0xFFA2CA71)],
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+);
+const _kBottomColor = Color(0xFFF2F8F2);
 
 class RegisterScreen extends StatefulWidget {
   final void Function()? onTap;
-
   const RegisterScreen({super.key, required this.onTap});
 
   @override
@@ -20,501 +26,503 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  static const Color greenPrimary = Color(0xFF4CAF50);
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
 
-  final nameController = TextEditingController();
-  final emailController = TextEditingController();
-  final passwordController = TextEditingController();
-  final confirmPasswordController = TextEditingController();
-
-  bool isLoading = false;
-  String errorMsg = '';
-  bool isAdminName = false;
-  String? selectedUserType; // 'teacher', 'parent', 'student'
-  String passwordStrength = '';
-  bool showPasswordStrength = false;
+  bool _isLoading = false;
+  String _errorMsg = '';
+  bool _isAdminName = false;
+  String? _selectedRole;
+  String _passStrength = '';
+  bool _showPassStrength = false;
   bool _captchaVerified = false;
 
   @override
   void dispose() {
-    nameController.dispose();
-    emailController.dispose();
-    passwordController.dispose();
-    confirmPasswordController.dispose();
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    _confirmCtrl.dispose();
     super.dispose();
   }
 
   void _checkAdminName() {
-    final name = nameController.text.trim().toLowerCase();
-    final isAdmin = name == 'admin' || name == 'administrador';
-    if (isAdmin != isAdminName) {
+    final l = _nameCtrl.text.trim().toLowerCase();
+    final isAdmin = l == 'admin' || l == 'administrador';
+    if (isAdmin != _isAdminName) {
       setState(() {
-        isAdminName = isAdmin;
-        if (isAdmin) {
-          selectedUserType = null;
-        }
+        _isAdminName = isAdmin;
+        if (isAdmin) _selectedRole = null;
       });
     }
   }
 
-  Future<void> signUp() async {
-    // Manual validation
-    setState(() {
-      errorMsg = '';
-    });
-
-    final name = nameController.text.trim();
-
+  Future<void> _signUp() async {
+    setState(() => _errorMsg = '');
+    final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      setState(() {
-        errorMsg = 'Name is required';
-      });
+      setState(() => _errorMsg = 'Name is required');
       return;
     }
-
-    if (emailController.text.trim().isEmpty) {
-      setState(() {
-        errorMsg = 'Email is required';
-      });
+    if (_emailCtrl.text.trim().isEmpty) {
+      setState(() => _errorMsg = 'Email is required');
       return;
     }
-
-    if (!emailController.text.contains('@')) {
-      setState(() {
-        errorMsg = 'Please enter a valid email';
-      });
+    if (!_emailCtrl.text.contains('@')) {
+      setState(() => _errorMsg = 'Enter a valid email');
       return;
     }
-
-    if (passwordController.text.isEmpty) {
-      setState(() {
-        errorMsg = 'Password is required';
-      });
+    if (_passCtrl.text.isEmpty) {
+      setState(() => _errorMsg = 'Password is required');
       return;
     }
-
-    if (!PasswordUtils.isPasswordValid(passwordController.text)) {
-      final requirements = PasswordUtils.getPasswordRequirements(passwordController.text);
-      setState(() {
-        errorMsg = 'Password must contain: ${requirements.join(', ')}';
-      });
+    if (!PasswordUtils.isPasswordValid(_passCtrl.text)) {
+      setState(() => _errorMsg =
+          'Password must contain: ${PasswordUtils.getPasswordRequirements(_passCtrl.text).join(', ')}');
       return;
     }
-
-    if (confirmPasswordController.text.isEmpty) {
-      setState(() {
-        errorMsg = 'Please confirm your password';
-      });
+    if (_confirmCtrl.text.isEmpty) {
+      setState(() => _errorMsg = 'Please confirm your password');
       return;
     }
-
-    if (confirmPasswordController.text != passwordController.text) {
-      setState(() {
-        errorMsg = 'Passwords do not match';
-      });
+    if (_confirmCtrl.text != _passCtrl.text) {
+      setState(() => _errorMsg = 'Passwords do not match');
       return;
     }
-    final nameLower = name.toLowerCase();
-    final isAdmin = nameLower == 'admin' || nameLower == 'administrador';
-
-    // Validate user type selection (skip for admin)
-    if (!isAdmin && selectedUserType == null) {
-      setState(() {
-        errorMsg = 'Please select your role: Teacher or Parent';
-      });
+    final isAdmin = name.toLowerCase() == 'admin' || name.toLowerCase() == 'administrador';
+    if (!isAdmin && _selectedRole == null) {
+      setState(() => _errorMsg = 'Please select your role: Teacher or Parent');
       return;
     }
-
-    // Captcha required on web
     if (kIsWeb && !_captchaVerified) {
-      setState(() => errorMsg = 'Please complete the captcha');
+      setState(() => _errorMsg = 'Please complete the captcha');
       return;
     }
 
-    setState(() {
-      isLoading = true;
-      errorMsg = '';
-    });
-
+    setState(() => _isLoading = true);
     try {
-      // Check if admin limit reached
-      if (isAdmin) {
-        final adminSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .where('role', isEqualTo: 'admin')
-            .get();
-
-        if (adminSnapshot.docs.length >= 3) {
-          setState(() {
-            errorMsg = 'Maximum of 3 administrators already exists';
-            isLoading = false;
-          });
-          return;
-        }
-      }
-
-      final credential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
-            email: emailController.text.trim(),
-            password: passwordController.text.trim(),
-          );
-
-      final uid = credential.user?.uid;
-      if (uid == null) throw Exception('Failed to get user ID');
-
-      // Determine role
-      final role = isAdmin ? 'admin' : selectedUserType!;
-
-      // Create user document
-      await FirebaseFirestore.instance.collection("users").doc(uid).set({
-        "name": name,
-        "email": emailController.text.trim(),
-        "role": role,
-        "xp": 0,
-        "streak": 0,
-        "language": "Spanish",
-        "state": 1,
-        "createdAt": FieldValue.serverTimestamp(),
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
+      final uid = cred.user?.uid ?? (throw Exception('No UID'));
+      final role = isAdmin ? 'admin' : _selectedRole!;
+      
+      // Simplified user creation - only essential fields
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'name': name,
+        'email': _emailCtrl.text.trim(),
+        'role': role,
+        'createdAt': FieldValue.serverTimestamp(),
       });
-
-      // Clone levels only for students
-      if (role == 'student') {
-        final levelsSnapshot = await FirebaseFirestore.instance
-            .collection("levels")
-            .get();
-        for (final doc in levelsSnapshot.docs) {
-          await FirebaseFirestore.instance
-              .collection("users")
-              .doc(uid)
-              .collection("levels")
-              .doc(doc.id)
-              .set({
-                'isUnlocked': doc['levelNumber'] == 1,
-                'levelNumber': doc['levelNumber'],
-                'title': doc['title'],
-              });
-        }
-      }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Account created successfully as $role'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Account created as $role'),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.md)),
+        ));
         Navigator.pop(context);
       }
     } on FirebaseAuthException catch (e) {
       resetRecaptcha();
       setState(() {
         _captchaVerified = false;
-        // Check for specific error codes
-        if (e.code == 'email-already-in-use') {
-          errorMsg =
-              'This email is already registered. Please use a different email or sign in.';
-        } else if (e.code == 'weak-password') {
-          errorMsg = 'Password is too weak. Please use a stronger password.';
-        } else if (e.code == 'invalid-email') {
-          errorMsg = 'Invalid email format. Please check your email address.';
-        } else {
-          errorMsg = e.message ?? 'An error occurred during registration';
-        }
+        _errorMsg = e.code == 'email-already-in-use'
+            ? 'This email is already registered.'
+            : e.code == 'weak-password'
+                ? 'Password is too weak.'
+                : e.code == 'invalid-email'
+                    ? 'Invalid email format.'
+                    : (e.message ?? 'Registration failed');
       });
     } catch (e) {
       resetRecaptcha();
       setState(() {
         _captchaVerified = false;
-        errorMsg = e.toString();
+        _errorMsg = e.toString();
       });
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  double get _strengthFraction {
+    switch (_passStrength.toLowerCase()) {
+      case 'weak':
+        return 0.33;
+      case 'medium':
+        return 0.66;
+      case 'strong':
+        return 1.0;
+      default:
+        return 0.1;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Scaffold(
-        backgroundColor: Color(0xFFFAEDCA),
-        body: MyLoading(),
+    if (_isLoading) {
+      return Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(gradient: _kGradient),
+          child: const MyLoading(),
+        ),
       );
     }
 
+    final screenH = MediaQuery.of(context).size.height;
+    final heroH = screenH * 0.38;
+    final maxW = kIsWeb ? 480.0 : double.infinity;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFFAEDCA),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Responsive(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 25.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const SizedBox(height: 50),
+      backgroundColor: _kBottomColor,
+      body: Stack(
+        children: [
+          Container(color: _kBottomColor),
 
-                  //logo
-                  Image.asset(
-                    'assets/images/loro-llave.png',
-                    width: 160,
-                    height: 250,
-                    fit: BoxFit.contain,
-                  ),
-
-                  Text('Create your account!', style: TextStyle(fontSize: 16)),
-
-                  const SizedBox(height: 25),
-                  //name textfield
-                  MyTextField(
-                    controller: nameController,
-                    hintText: 'Full Name',
-                    obscureText: false,
-                    isEnabled: true,
-                    onChanged: (value) => _checkAdminName(),
-                  ),
-
-                  const SizedBox(height: 15),
-
-                  //email textfield
-                  MyTextField(
-                    controller: emailController,
-                    hintText: 'Email',
-                    obscureText: false,
-                    isEnabled: true,
-                  ),
-
-                  const SizedBox(height: 15),
-                  //password textfield
-                  MyTextField(
-                    controller: passwordController,
-                    hintText: 'Password',
-                    obscureText: true,
-                    isEnabled: true,
-                    onChanged: (value) {
-                      setState(() {
-                        passwordStrength = PasswordUtils.getPasswordStrength(value);
-                        showPasswordStrength = value.isNotEmpty;
-                      });
-                    },
-                  ),
-                  if (showPasswordStrength) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Container(
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: PasswordUtils.getPasswordStrengthColor(passwordController.text),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          passwordStrength,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: PasswordUtils.getPasswordStrengthColor(passwordController.text),
-                          ),
-                        ),
-                      ],
+          // Fixed Hero Section with gradient
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: heroH + 20,
+            child: Container(
+              decoration: const BoxDecoration(gradient: _kGradient),
+              child: SafeArea(
+                bottom: false,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Spacer(),
+                    Image.asset(
+                      'assets/images/loro-llave.png',
+                      width: 100,
+                      height: 135,
+                      fit: BoxFit.contain,
                     ),
-                    const SizedBox(height: 4),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Use 8+ chars, uppercase, lowercase, number & special character',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  const SizedBox(height: 15),
-                  //confirm password textfield
-                  MyTextField(
-                    controller: confirmPasswordController,
-                    hintText: 'Confirm Password',
-                    obscureText: true,
-                    isEnabled: true,
-                  ),
-
-                  const SizedBox(height: 25),
-
-                  // Show admin indicator or user type selection
-                  if (isAdminName)
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFD700).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: const Color(0xFFFFD700),
-                          width: 2,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(
-                            Icons.admin_panel_settings,
-                            color: Color(0xFFD97706),
-                            size: 28,
-                          ),
-                          SizedBox(width: 12),
-                          Text(
-                            'Registering as Administrator',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFFD97706),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else ...[
-                    // User type selection
+                    const SizedBox(height: AppSpacing.md),
                     const Text(
-                      'Who are you?',
+                      'Create your account',
+                      textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF387F39),
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2E6B30),
                       ),
                     ),
-
-                    const SizedBox(height: 15),
-
-                    // Radio buttons in rows
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: selectedUserType == 'teacher'
-                                    ? const Color(0xFFA2CA71)
-                                    : Colors.grey.shade300,
-                                width: 2,
-                              ),
-                            ),
-                            child: RadioListTile<String>(
-                              title: const Text(
-                                'Teacher',
-                                style: TextStyle(fontWeight: FontWeight.w500),
-                              ),
-                              value: 'teacher',
-                              groupValue: selectedUserType,
-                              activeColor: const Color(0xFFA2CA71),
-                              onChanged: (value) {
-                                setState(() {
-                                  selectedUserType = value;
-                                });
-                              },
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: selectedUserType == 'parent'
-                                    ? const Color(0xFFFFCFB3)
-                                    : Colors.grey.shade300,
-                                width: 2,
-                              ),
-                            ),
-                            child: RadioListTile<String>(
-                              title: const Text(
-                                'Parent',
-                                style: TextStyle(fontWeight: FontWeight.w500),
-                              ),
-                              value: 'parent',
-                              groupValue: selectedUserType,
-                              activeColor: const Color(0xFFFFCFB3),
-                              onChanged: (value) {
-                                setState(() {
-                                  selectedUserType = value;
-                                });
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: AppSpacing.xs),
+                    const Text(
+                      'Sign up to Loringo',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF3D7A3F),
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
+                    const Spacer(),
                   ],
-
-                  // Show error message if validation fails
-                  if (errorMsg.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 15),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        errorMsg,
-                        style: TextStyle(
-                          color: Colors.red.shade700,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-
-                  const SizedBox(height: 20),
-
-                  if (kIsWeb) ...[
-                    RecaptchaWidget(
-                      onVerified: (token) =>
-                          setState(() => _captchaVerified = token.isNotEmpty),
-                    ),
-                    const SizedBox(height: 16),
-                  ] else
-                    const SizedBox(height: 10),
-
-                  MyButton(
-                    onTap: signUp,
-                    text: 'Register',
-                    color: const Color.fromRGBO(162, 202, 113, 1),
-                  ),
-
-                  const SizedBox(height: 50),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('Already a member?'),
-                      const SizedBox(width: 4),
-                      GestureDetector(
-                        onTap: widget.onTap,
-                        child: Text(
-                          'Sign In',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 50),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+
+          // Wave Divider
+          Positioned(
+            top: heroH - 8,
+            left: 0,
+            right: 0,
+            child: const WaveDivider(
+              color: _kBottomColor,
+              height: 54,
+              waveIntensity: 1.0,
+            ),
+          ),
+
+          // Scrollable Form
+          Positioned(
+            top: heroH + 20,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxW),
+                  child: Responsive(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: AppSpacing.lg),
+
+                          // Form card with semi-transparent background
+                          Container(
+                            padding: const EdgeInsets.all(AppSpacing.lg),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.95),
+                              borderRadius: BorderRadius.circular(AppRadii.lg + 4),
+                              border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF387F39).withOpacity(0.12),
+                                  blurRadius: 24,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                MyTextField(
+                                  controller: _nameCtrl,
+                                  hintText: 'Full Name',
+                                  obscureText: false,
+                                  isEnabled: true,
+                                  onChanged: (_) => _checkAdminName(),
+                                ),
+                                const SizedBox(height: AppSpacing.md),
+                                MyTextField(
+                                  controller: _emailCtrl,
+                                  hintText: 'Email',
+                                  obscureText: false,
+                                  isEnabled: true,
+                                ),
+                                const SizedBox(height: AppSpacing.md),
+                                MyTextField(
+                                  controller: _passCtrl,
+                                  hintText: 'Password',
+                                  obscureText: true,
+                                  isEnabled: true,
+                                  onChanged: (v) => setState(() {
+                                    _passStrength = PasswordUtils.getPasswordStrength(v);
+                                    _showPassStrength = v.isNotEmpty;
+                                  }),
+                                ),
+                                if (_showPassStrength) ...[
+                                  const SizedBox(height: AppSpacing.sm),
+                                  Row(children: [
+                                    Expanded(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(2),
+                                        child: LinearProgressIndicator(
+                                          value: _strengthFraction,
+                                          minHeight: 4,
+                                          backgroundColor: Colors.grey.shade200,
+                                          valueColor: AlwaysStoppedAnimation<Color>(
+                                              PasswordUtils.getPasswordStrengthColor(_passCtrl.text)),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: AppSpacing.md),
+                                    Text(_passStrength,
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: PasswordUtils.getPasswordStrengthColor(_passCtrl.text))),
+                                  ]),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Text(
+                                      '8+ chars, uppercase, lowercase, number & special character',
+                                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                                ],
+                                const SizedBox(height: AppSpacing.md),
+                                MyTextField(
+                                  controller: _confirmCtrl,
+                                  hintText: 'Confirm Password',
+                                  obscureText: true,
+                                  isEnabled: true,
+                                ),
+                                const SizedBox(height: AppSpacing.lg),
+                                if (_isAdminName)
+                                  Container(
+                                    padding: const EdgeInsets.all(AppSpacing.md),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFF8E1),
+                                      borderRadius: BorderRadius.circular(AppRadii.md),
+                                      border: Border.all(color: const Color(0xFFFFCA28), width: 1.5),
+                                    ),
+                                    child: const Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.admin_panel_settings_rounded,
+                                            color: Color(0xFFD97706), size: 24),
+                                        SizedBox(width: AppSpacing.sm),
+                                        Text('Registering as Administrator',
+                                            style: TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFFD97706))),
+                                      ],
+                                    ),
+                                  )
+                                else ...[
+                                  Text('I am a…',
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.grey.shade700)),
+                                  const SizedBox(height: AppSpacing.sm),
+                                  Row(children: [
+                                    Expanded(
+                                        child: GestureDetector(
+                                      onTap: () => setState(() => _selectedRole = 'teacher'),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 180),
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: AppSpacing.md, horizontal: AppSpacing.sm),
+                                        decoration: BoxDecoration(
+                                          color: _selectedRole == 'teacher'
+                                              ? AppColors.primary.withOpacity(0.1)
+                                              : Colors.grey.shade50,
+                                          borderRadius: BorderRadius.circular(AppRadii.md),
+                                          border: Border.all(
+                                              color: _selectedRole == 'teacher'
+                                                  ? AppColors.primary
+                                                  : Colors.grey.shade300,
+                                              width: _selectedRole == 'teacher' ? 2 : 1),
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.school_rounded,
+                                                color: _selectedRole == 'teacher'
+                                                    ? AppColors.primary
+                                                    : Colors.grey.shade500,
+                                                size: 26),
+                                            const SizedBox(height: AppSpacing.xs),
+                                            Text('Teacher',
+                                                style: TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: _selectedRole == 'teacher'
+                                                        ? AppColors.primary
+                                                        : Colors.grey.shade600)),
+                                          ],
+                                        ),
+                                      ),
+                                    )),
+                                    const SizedBox(width: AppSpacing.md),
+                                    Expanded(
+                                        child: GestureDetector(
+                                      onTap: () => setState(() => _selectedRole = 'parent'),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 180),
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: AppSpacing.md, horizontal: AppSpacing.sm),
+                                        decoration: BoxDecoration(
+                                          color: _selectedRole == 'parent'
+                                              ? const Color(0xFFFF9800).withOpacity(0.1)
+                                              : Colors.grey.shade50,
+                                          borderRadius: BorderRadius.circular(AppRadii.md),
+                                          border: Border.all(
+                                              color: _selectedRole == 'parent'
+                                                  ? const Color(0xFFFF9800)
+                                                  : Colors.grey.shade300,
+                                              width: _selectedRole == 'parent' ? 2 : 1),
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.family_restroom_rounded,
+                                                color: _selectedRole == 'parent'
+                                                    ? const Color(0xFFFF9800)
+                                                    : Colors.grey.shade500,
+                                                size: 26),
+                                            const SizedBox(height: AppSpacing.xs),
+                                            Text('Parent',
+                                                style: TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: _selectedRole == 'parent'
+                                                        ? const Color(0xFFFF9800)
+                                                        : Colors.grey.shade600)),
+                                          ],
+                                        ),
+                                      ),
+                                    )),
+                                  ]),
+                                ],
+                                if (_errorMsg.isNotEmpty) ...[
+                                  const SizedBox(height: AppSpacing.md),
+                                  Container(
+                                    padding: const EdgeInsets.all(AppSpacing.md - 2),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.danger.withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                                      border: Border.all(color: AppColors.danger.withOpacity(0.3)),
+                                    ),
+                                    child: Row(children: [
+                                      Icon(Icons.error_outline, color: AppColors.danger, size: 16),
+                                      const SizedBox(width: AppSpacing.sm),
+                                      Expanded(
+                                          child: Text(_errorMsg,
+                                              style: TextStyle(fontSize: 13, color: AppColors.danger))),
+                                    ]),
+                                  ),
+                                ],
+                                if (kIsWeb) ...[
+                                  const SizedBox(height: AppSpacing.md),
+                                  RecaptchaWidget(
+                                    onVerified: (t) => setState(
+                                        () => _captchaVerified = t.isNotEmpty)),
+                                ],
+                                const SizedBox(height: AppSpacing.lg),
+                                ElevatedButton(
+                                  onPressed: _signUp,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.primary,
+                                    foregroundColor: AppColors.onPrimary,
+                                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(AppRadii.md)),
+                                    elevation: 0,
+                                  ),
+                                  child: const Text('Create Account',
+                                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Text('Already have an account? ',
+                                  style: TextStyle(
+                                      color: Color(0xFF3D7A3F),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500)),
+                              GestureDetector(
+                                onTap: widget.onTap,
+                                child: const Text(
+                                  'Sign In',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2E6B30),
+                                    fontSize: 14,
+                                    decoration: TextDecoration.underline,
+                                    decorationColor: Color(0xFF2E6B30),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: AppSpacing.xl * 2),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

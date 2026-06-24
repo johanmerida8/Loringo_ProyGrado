@@ -225,7 +225,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     
     int xpEarned = 0;
     
-    // Declare these variables outside the try block so they're accessible later
+    // Declare these variables outside the try block
     int currentAttemptCount = 0;
     int remainingAttempts = 0;
 
@@ -244,19 +244,28 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
           currentAttemptCount = data['attempts'] as int? ?? 0;
         }
         
-        // Calculate XP based on performance (no penalty for retakes)
+        // ============================================================
+        // XP CALCULATION
+        // ============================================================
         if (!wasCompleted && passed) {
+          // First time passing: award XP based on percentage correct
           xpEarned = (correctCount * maxXpReward / totalQ).round();
           if (xpEarned < 5 && correctCount > 0) {
             xpEarned = 5;
           }
+          debugPrint('First time passing: $correctCount/$totalQ = $scorePercent% → $xpEarned XP');
         } else if (wasCompleted && correctCount > previousScore) {
           // Improvement bonus
           final previousPercent = (previousScore / totalQ * 100).round();
           final newPercent = (correctCount / totalQ * 100).round();
           final improvement = newPercent - previousPercent;
           xpEarned = (improvement / 5).round().clamp(3, 10);
+          debugPrint('Improvement: ${previousScore}→${correctCount} ($improvement% improvement) → $xpEarned XP');
+        } else {
+          debugPrint('No XP earned - wasCompleted: $wasCompleted, passed: $passed, correctCount: $correctCount, previousScore: $previousScore');
         }
+        
+        debugPrint('Saving quiz completion with xpEarned: $xpEarned');
         
         await _db.saveQuizCompletion(
           studentId: widget.studentId!,
@@ -287,15 +296,16 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     setState(() => _isSubmitting = false);
     if (!mounted) return;
 
-    // ✅ CALCULATE REMAINING ATTEMPTS HERE
+    // Calculate remaining attempts
     final newAttemptsUsed = currentAttemptCount + 1;
     remainingAttempts = _maxAttempts - newAttemptsUsed;
     
-    debugPrint('    Submit Quiz - Attempts Calculation:');
+    debugPrint('   Submit Quiz - Attempts Calculation:');
     debugPrint('   currentAttemptCount: $currentAttemptCount');
     debugPrint('   newAttemptsUsed: $newAttemptsUsed');
     debugPrint('   _maxAttempts: $_maxAttempts');
     debugPrint('   remainingAttempts: $remainingAttempts');
+    debugPrint('   Final xpEarned being passed to ActivityCompleteScreen: $xpEarned');
 
     Navigator.pushReplacement(
       context,
@@ -362,37 +372,37 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
   }
 
   // NEW: Build attempts remaining indicator for header
-  Widget _buildAttemptsRemaining() {
-    if (widget.isPreview || _isLoadingAttempts) {
-      return const SizedBox.shrink();
-    }
+  // Widget _buildAttemptsRemaining() {
+  //   if (widget.isPreview || _isLoadingAttempts) {
+  //     return const SizedBox.shrink();
+  //   }
     
-    final remaining = _maxAttempts - _attemptsUsed;
-    final color = remaining > 0 ? Colors.blue : Colors.red;
+  //   final remaining = _maxAttempts - _attemptsUsed;
+  //   final color = remaining > 0 ? Colors.blue : Colors.red;
     
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            remaining > 0 ? Icons.refresh_rounded : Icons.warning_amber_rounded,
-            size: 14,
-            color: color,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            'Attempts: $remaining/$_maxAttempts',
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
-          ),
-        ],
-      ),
-    );
-  }
+  //   return Container(
+  //     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+  //     decoration: BoxDecoration(
+  //       color: color.withOpacity(0.1),
+  //       borderRadius: BorderRadius.circular(12),
+  //     ),
+  //     child: Row(
+  //       mainAxisSize: MainAxisSize.min,
+  //       children: [
+  //         Icon(
+  //           remaining > 0 ? Icons.refresh_rounded : Icons.warning_amber_rounded,
+  //           size: 14,
+  //           color: color,
+  //         ),
+  //         const SizedBox(width: 4),
+  //         Text(
+  //           'Attempts: $remaining/$_maxAttempts',
+  //           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
 
   @override
   Widget build(BuildContext context) {

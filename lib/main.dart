@@ -1,13 +1,18 @@
 import 'package:cloudinary_flutter/cloudinary_context.dart';
 import 'package:cloudinary_url_gen/cloudinary.dart';
 import 'package:firebase_core/firebase_core.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:loringo_app/firebase_options.dart';
+import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/initials/splash_screen.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,23 +32,37 @@ void main() async {
     final oneSignalAppId = dotenv.env['ONESIGNAL_APP_ID'];
     if (oneSignalAppId != null && oneSignalAppId.isNotEmpty) {
       await OneSignal.initialize(oneSignalAppId);
-      await OneSignal.Notifications.requestPermission(true);
       if (kDebugMode) {
         OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
-        print('✅ OneSignal initialized for mobile');
+        print('   OneSignal initialized for mobile');
       }
     } else {
       if (kDebugMode) {
-        print('⚠️ OneSignal App ID not found in .env file');
+        print('   OneSignal App ID not found in .env file');
       }
     }
   } else {
     if (kDebugMode) {
-      print('⚠️ OneSignal skipped on web platform');
+      print('   OneSignal skipped on web platform');
     }
   }
 
-  runApp(const MyApp());
+  // initialize supabase
+  await Supabase.initialize(
+    url: dotenv.env['SUPABASE_URL']!,
+    // ignore: deprecated_member_use
+    anonKey: dotenv.env['SUPABASE_ANON_KEY'],
+  );
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => BiometricProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
+      ],
+      child: const MyApp(),
+    )
+  );
 }
 
 class MyApp extends StatelessWidget {

@@ -86,7 +86,6 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
       final contentSnap = await FirebaseFirestore.instance
           .collection('content')
           .where('assignedTo', arrayContains: widget.groupId)
-          .where('status', isEqualTo: 'approved')
           .get();
 
       final contentDocs = contentSnap.docs

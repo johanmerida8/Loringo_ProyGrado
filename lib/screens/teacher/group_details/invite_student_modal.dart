@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:loringo_app/services/notifications/one_signal_service.dart';
 
 void showInviteStudentModal({
   required BuildContext context,
@@ -336,11 +337,18 @@ class _SendInvitationSection extends StatelessWidget {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
+      // send push notification
+      await OneSignalNotificationService.sendNotification(
+        userId: parentId, 
+        title: 'Group Invitation', 
+        message: 'You have been invited to the group $groupName'
+      );
+
       if (!context.mounted) return;
       onSent();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ Invitation sent to $email'),
+          content: Text('Invitation sent to $email'),
           backgroundColor: const Color(0xFF4CAF50),
         ),
       );
@@ -348,7 +356,7 @@ class _SendInvitationSection extends StatelessWidget {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('❌ Error: $e'),
+          content: Text('Error: $e'),
           backgroundColor: Colors.red,
         ),
       );

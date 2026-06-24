@@ -21,7 +21,7 @@ class AdminImagesScreen extends StatelessWidget {
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadii.lg)),
         title: Row(children: [
-          Container(
+          Container(  
             padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
                 color: AppColors.primarySoft(0.1),

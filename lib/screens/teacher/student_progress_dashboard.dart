@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/models/teacher/student_progress.dart';
 import 'package:loringo_app/screens/teacher/report_preview_screen.dart';
 import 'package:loringo_app/screens/teacher/student_detail_progress_screen.dart';
-import 'package:loringo_app/screens/teacher/widgets/feedback_dialog.dart';
 
 // ───────────────────────────── Dashboard Screen ───────────────────────────
 
@@ -34,10 +33,10 @@ class _StudentProgressDashboardState
   bool _loading = true;
   String? _error;
 
-  List<UnitInfo> _units = [];  // ✅ Using your UnitInfo model
+  List<UnitInfo> _units = [];
   UnitInfo? _selectedUnit;
-  Map<String, RawProgress> _rawProgress = {};  // ✅ Using your RawProgress
-  List<StudentStats> _stats = [];  // ✅ Using your StudentStats
+  Map<String, RawProgress> _rawProgress = {};
+  List<StudentStats> _stats = [];
 
   @override
   void initState() {
@@ -54,11 +53,9 @@ class _StudentProgressDashboardState
     try {
       final db = FirebaseFirestore.instance;
 
-      // ── Step 1: content docs ──────────────────────────────────────────
       final contentSnap = await db
           .collection('content')
           .where('assignedTo', arrayContains: widget.groupId)
-          .where('status', isEqualTo: 'approved')
           .get();
 
       final allUnitResults = await Future.wait(
@@ -100,17 +97,14 @@ class _StudentProgressDashboardState
                   .expand((snap) => snap.docs.map((d) => d.id))
                   .toList();
 
-              // Get lesson quizzes
               final lessonQuizzesSnap = await db
                   .collection('quizzes')
                   .where('type', isEqualTo: 'lesson')
                   .where('contentId', isEqualTo: contentId)
                   .where('unitId', isEqualTo: unitId)
                   .get();
-              
               final lessonQuizIds = lessonQuizzesSnap.docs.map((d) => d.id).toList();
 
-              // Get unit quiz
               final unitQuizzesSnap = await db
                   .collection('quizzes')
                   .where('type', isEqualTo: 'unit')
@@ -118,8 +112,9 @@ class _StudentProgressDashboardState
                   .where('unitId', isEqualTo: unitId)
                   .limit(1)
                   .get();
-              
-              final unitQuizId = unitQuizzesSnap.docs.isNotEmpty ? unitQuizzesSnap.docs.first.id : null;
+              final unitQuizId = unitQuizzesSnap.docs.isNotEmpty
+                  ? unitQuizzesSnap.docs.first.id
+                  : null;
 
               return UnitInfo(
                 contentId: contentId,
@@ -136,7 +131,6 @@ class _StudentProgressDashboardState
 
       final units = allUnitResults.expand((list) => list).toList();
 
-      // ── Step 2: Load progress for all students ─────────────────────────
       final rawProgress = <String, RawProgress>{};
 
       await Future.wait(widget.students.map((student) async {
@@ -152,8 +146,6 @@ class _StudentProgressDashboardState
 
         final xp = (studentDoc.data() as Map<String, dynamic>?)?['xp'] as int? ?? 0;
         final byUnit = <String, UnitRawData>{};
-
-        // Track unique completed activities
         final Map<String, Set<String>> completedActivityIdsPerUnit = {};
 
         for (final doc in progressSnap.docs) {
@@ -164,7 +156,6 @@ class _StudentProgressDashboardState
           byUnit.putIfAbsent(unitId, () => UnitRawData());
           completedActivityIdsPerUnit.putIfAbsent(unitId, () => {});
 
-          // Activities
           if (data.containsKey('activityId') && data['isCompleted'] == true) {
             final activityId = data['activityId'] as String;
             if (!completedActivityIdsPerUnit[unitId]!.contains(activityId)) {
@@ -173,18 +164,16 @@ class _StudentProgressDashboardState
               byUnit[unitId]!.activityScoreSum += (data['bestScore'] as int?) ?? 0;
             }
           }
-          
-          // Lesson Quizzes
+
           if (data.containsKey('quizId') && data['isCompleted'] == true) {
             final quizId = data['quizId'] as String;
             final score = (data['score'] as int?) ?? 0;
             final total = (data['totalQuestions'] as int?) ?? 0;
-            
+
             if (quizId.startsWith('lesson_quiz_')) {
               byUnit[unitId]!.completedLessonQuizzes++;
               byUnit[unitId]!.lessonQuizScoreSum += (score / total * 100).round();
-            }
-            else if (quizId.startsWith('unit_quiz_')) {
+            } else if (quizId.startsWith('unit_quiz_')) {
               byUnit[unitId]!.unitQuizScore = score;
               byUnit[unitId]!.unitQuizTotal = total;
             }
@@ -223,30 +212,27 @@ class _StudentProgressDashboardState
       int totalActivities = 0;
       int activityScoreSum = 0;
       int activitiesWithScore = 0;
-      
       int completedLessonQuizzes = 0;
       int totalLessonQuizzes = 0;
       int lessonQuizScoreSum = 0;
-      
       int? unitQuizScore;
       int? unitQuizTotal;
 
       for (final unit in targetUnits) {
         totalActivities += unit.totalActivities;
         totalLessonQuizzes += unit.totalLessonQuizzes;
-        
+
         if (raw.byUnit.containsKey(unit.unitId)) {
           final u = raw.byUnit[unit.unitId]!;
           completedActivities += u.completedActivities;
           completedLessonQuizzes += u.completedLessonQuizzes;
-          
+
           if (u.completedActivities > 0) {
             activityScoreSum += u.activityScoreSum;
             activitiesWithScore += u.completedActivities;
           }
-          
           lessonQuizScoreSum += u.lessonQuizScoreSum;
-          
+
           if (_selectedUnit != null) {
             unitQuizScore = u.unitQuizScore;
             unitQuizTotal = u.unitQuizTotal;
@@ -254,19 +240,24 @@ class _StudentProgressDashboardState
         }
       }
 
-      final avgActivityScore = activitiesWithScore == 0 ? 0 : (activityScoreSum / activitiesWithScore).round();
-      final avgLessonQuizScore = completedLessonQuizzes == 0 ? 0 : (lessonQuizScoreSum / completedLessonQuizzes).round();
-      final unitQuizPercent = (unitQuizTotal != null && unitQuizTotal! > 0 && unitQuizScore != null) 
-          ? (unitQuizScore! / unitQuizTotal! * 100).round() 
+      final avgActivityScore = activitiesWithScore == 0
+          ? 0
+          : (activityScoreSum / activitiesWithScore).round();
+      final avgLessonQuizScore = completedLessonQuizzes == 0
+          ? 0
+          : (lessonQuizScoreSum / completedLessonQuizzes).round();
+      final unitQuizPercent = (unitQuizTotal != null &&
+              unitQuizTotal! > 0 &&
+              unitQuizScore != null)
+          ? (unitQuizScore! / unitQuizTotal! * 100).round()
           : 0;
-      
-      final overallScore = (
-        (avgActivityScore * 0.4) +
-        (avgLessonQuizScore * 0.3) +
-        (unitQuizPercent * 0.3)
-      ).round();
-      
-      final overallStars = overallScore >= 90 ? 3 : (overallScore >= 70 ? 2 : 1);
+
+      final overallScore = ((avgActivityScore * 0.4) +
+              (avgLessonQuizScore * 0.3) +
+              (unitQuizPercent * 0.3))
+          .round();
+      final overallStars =
+          overallScore >= 90 ? 3 : (overallScore >= 70 ? 2 : 1);
 
       return StudentStats(
         studentId: studentId,
@@ -291,47 +282,18 @@ class _StudentProgressDashboardState
     setState(() => _stats = stats);
   }
 
-  // Future<void> _showFeedbackForStudent(StudentStats stats) async {
-  //   final reportsSnap = await FirebaseFirestore.instance
-  //       .collection('students')
-  //       .doc(stats.studentId)
-  //       .collection('reports')
-  //       .orderBy('generatedAt', descending: true)
-  //       .limit(1)
-  //       .get();
-    
-  //   if (reportsSnap.docs.isEmpty) {
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       const SnackBar(content: Text('No report found for this student')),
-  //     );
-  //     return;
-  //   }
-    
-  //   final reportDoc = reportsSnap.docs.first;
-  //   final currentFeedback = reportDoc.data()['feedback'] as String? ?? '';
-    
-  //   showDialog(
-  //     context: context,
-  //     builder: (context) => TeacherFeedbackDialog(
-  //       studentId: stats.studentId,
-  //       reportId: reportDoc.id,
-  //       currentFeedback: currentFeedback,
-  //       studentName: stats.name,
-  //       unitTitle: _selectedUnit?.unitTitle ?? 'Unit',
-  //     ),
-  //   );
-  // }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
+      // showAppBar is always false when embedded inside navigation_group_screen
       appBar: widget.showAppBar
           ? AppBar(
               backgroundColor: _green,
               elevation: 0,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                    color: Colors.white),
                 onPressed: () => Navigator.pop(context),
               ),
               title: Column(
@@ -339,9 +301,13 @@ class _StudentProgressDashboardState
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text('Progress Dashboard',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18)),
                   Text(widget.groupName,
-                      style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12)),
                 ],
               ),
               actions: [
@@ -381,7 +347,8 @@ class _StudentProgressDashboardState
               onPressed: _loadData,
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(backgroundColor: _green, foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: _green, foregroundColor: Colors.white),
             ),
           ],
         ),
@@ -395,7 +362,8 @@ class _StudentProgressDashboardState
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.people_outline_rounded, size: 72, color: Colors.grey[400]),
+            Icon(Icons.people_outline_rounded,
+                size: 72, color: Colors.grey[400]),
             const SizedBox(height: 16),
             Text('No students in this group yet',
                 style: TextStyle(fontSize: 16, color: Colors.grey[600])),
@@ -421,14 +389,20 @@ class _StudentProgressDashboardState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('FILTER BY UNIT',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey[500], letterSpacing: 0.8)),
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[500],
+                  letterSpacing: 0.8)),
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
                 _unitChip(null, 'All Units'),
-                ...List.generate(_units.length, (i) => _unitChip(_units[i], _units[i].unitTitle)),
+                ...List.generate(
+                    _units.length,
+                    (i) => _unitChip(_units[i], _units[i].unitTitle)),
               ],
             ),
           ),
@@ -452,12 +426,14 @@ class _StudentProgressDashboardState
           decoration: BoxDecoration(
             color: isSelected ? _green : Colors.grey[100],
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: isSelected ? _green : Colors.grey[300]!),
+            border: Border.all(
+                color: isSelected ? _green : Colors.grey[300]!),
           ),
           child: Text(label,
               style: TextStyle(
                 color: isSelected ? Colors.white : Colors.grey[700],
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                fontWeight:
+                    isSelected ? FontWeight.bold : FontWeight.w500,
                 fontSize: 13,
               )),
         ),
@@ -468,45 +444,71 @@ class _StudentProgressDashboardState
   Widget _buildSummaryCard() {
     if (_stats.isEmpty) return const SizedBox.shrink();
 
-    final avgOverallScore = _stats.map((s) => s.overallScore).reduce((a, b) => a + b) ~/ _stats.length;
+    final avgOverallScore = _stats
+            .map((s) => s.overallScore)
+            .reduce((a, b) => a + b) ~/
+        _stats.length;
     final totalActivities = _selectedUnit != null
         ? _selectedUnit!.totalActivities
         : _units.fold(0, (sum, u) => sum + u.totalActivities);
-    
     final totalQuizzes = _selectedUnit != null
-        ? (_selectedUnit!.totalLessonQuizzes + (_selectedUnit!.hasUnitQuiz ? 1 : 0))
-        : _units.fold(0, (sum, u) => sum + u.totalLessonQuizzes + (u.hasUnitQuiz ? 1 : 0));
-
+        ? (_selectedUnit!.totalLessonQuizzes +
+            (_selectedUnit!.hasUnitQuiz ? 1 : 0))
+        : _units.fold(
+            0,
+            (sum, u) =>
+                sum + u.totalLessonQuizzes + (u.hasUnitQuiz ? 1 : 0));
     final unitLabel = _selectedUnit?.unitTitle ?? 'All Units';
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [_green, _greenLight], begin: Alignment.topLeft, end: Alignment.bottomRight),
+        gradient: const LinearGradient(
+            colors: [_green, _greenLight],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: _green.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
+        boxShadow: [
+          BoxShadow(
+              color: _green.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 6))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.bar_chart_rounded, color: Colors.white, size: 18),
+              const Icon(Icons.bar_chart_rounded,
+                  color: Colors.white, size: 18),
               const SizedBox(width: 6),
-              Text(unitLabel, style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500)),
+              Text(unitLabel,
+                  style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500)),
               const Spacer(),
               GestureDetector(
                 onTap: _loadData,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12)),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.refresh_rounded, color: Colors.white, size: 14),
+                      Icon(Icons.refresh_rounded,
+                          color: Colors.white, size: 14),
                       SizedBox(width: 4),
-                      Text('Refresh', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                      Text('Refresh',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
@@ -516,13 +518,29 @@ class _StudentProgressDashboardState
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(child: _SummaryMetric(icon: Icons.people_rounded, label: 'Students', value: '${_stats.length}')),
+              Expanded(
+                  child: _SummaryMetric(
+                      icon: Icons.people_rounded,
+                      label: 'Students',
+                      value: '${_stats.length}')),
               _verticalDivider(),
-              Expanded(child: _SummaryMetric(icon: Icons.assessment_rounded, label: 'Avg Score', value: '$avgOverallScore%')),
+              Expanded(
+                  child: _SummaryMetric(
+                      icon: Icons.assessment_rounded,
+                      label: 'Avg Score',
+                      value: '$avgOverallScore%')),
               _verticalDivider(),
-              Expanded(child: _SummaryMetric(icon: Icons.assignment_turned_in_rounded, label: 'Activities', value: '$totalActivities')),
+              Expanded(
+                  child: _SummaryMetric(
+                      icon: Icons.assignment_turned_in_rounded,
+                      label: 'Activities',
+                      value: '$totalActivities')),
               _verticalDivider(),
-              Expanded(child: _SummaryMetric(icon: Icons.quiz_rounded, label: 'Quizzes', value: '$totalQuizzes')),
+              Expanded(
+                  child: _SummaryMetric(
+                      icon: Icons.quiz_rounded,
+                      label: 'Quizzes',
+                      value: '$totalQuizzes')),
             ],
           ),
         ],
@@ -530,11 +548,14 @@ class _StudentProgressDashboardState
     );
   }
 
-  Widget _verticalDivider() => Container(width: 1, height: 48, color: Colors.white.withOpacity(0.3));
+  Widget _verticalDivider() => Container(
+      width: 1, height: 48, color: Colors.white.withOpacity(0.3));
 
   Widget _buildStudentList() {
     if (_stats.isEmpty) {
-      return Center(child: Text('No progress data available yet', style: TextStyle(color: Colors.grey[600], fontSize: 14)));
+      return Center(
+          child: Text('No progress data available yet',
+              style: TextStyle(color: Colors.grey[600], fontSize: 14)));
     }
 
     return ListView.builder(
@@ -558,7 +579,8 @@ class _SummaryMetric extends StatelessWidget {
   final String label;
   final String value;
 
-  const _SummaryMetric({required this.icon, required this.label, required this.value});
+  const _SummaryMetric(
+      {required this.icon, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -567,12 +589,21 @@ class _SummaryMetric extends StatelessWidget {
       children: [
         Icon(icon, color: Colors.white, size: 22),
         const SizedBox(height: 4),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold)),
+        Text(label,
+            style: const TextStyle(color: Colors.white70, fontSize: 10)),
       ],
     );
   }
 }
+
+// ── Simplified student card ───────────────────────────────────────────────
+// Removed: stats chips row (activities / quizzes / avg scores)
+// Kept: rank, avatar, name, overall score badge, XP, progress bar, action buttons
 
 class _StudentProgressCard extends StatelessWidget {
   final StudentStats stats;
@@ -589,29 +620,36 @@ class _StudentProgressCard extends StatelessWidget {
 
   Widget _rankWidget() {
     switch (rank) {
-      case 1: return const Text('🥇', style: TextStyle(fontSize: 24));
-      case 2: return const Text('🥈', style: TextStyle(fontSize: 24));
-      case 3: return const Text('🥉', style: TextStyle(fontSize: 24));
+      case 1:
+        return const Text('🥇', style: TextStyle(fontSize: 24));
+      case 2:
+        return const Text('🥈', style: TextStyle(fontSize: 24));
+      case 3:
+        return const Text('🥉', style: TextStyle(fontSize: 24));
       default:
         return Container(
-          width: 30, height: 30,
-          decoration: BoxDecoration(color: Colors.grey[200], shape: BoxShape.circle),
-          child: Center(child: Text('$rank', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey))),
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+              color: Colors.grey[200], shape: BoxShape.circle),
+          child: Center(
+              child: Text('$rank',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey))),
         );
     }
   }
 
   Future<void> _exportStudentReport(BuildContext context) async {
     try {
-      // Get student data
       final studentDoc = await FirebaseFirestore.instance
           .collection('students')
           .doc(stats.studentId)
           .get();
-      
       final studentData = studentDoc.data() ?? {};
-      
-      // Get the latest report for this student
+
       final reportsSnap = await FirebaseFirestore.instance
           .collection('students')
           .doc(stats.studentId)
@@ -619,17 +657,17 @@ class _StudentProgressCard extends StatelessWidget {
           .orderBy('generatedAt', descending: true)
           .limit(1)
           .get();
-      
+
       if (reportsSnap.docs.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No report found for this student')),
+          const SnackBar(
+              content: Text('No report found for this student')),
         );
         return;
       }
-      
+
       final report = reportsSnap.docs.first.data();
-      
-      // Navigate to PDF preview/export screen
+
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -640,7 +678,6 @@ class _StudentProgressCard extends StatelessWidget {
           ),
         ),
       );
-      
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading report: $e')),
@@ -651,29 +688,40 @@ class _StudentProgressCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatar = stats.avatar;
-    final percentInt = (stats.activityPercent * 100).round().clamp(0, 100);
+    // Progress bar reflects activities completed vs total
+    final progressPercent =
+        (stats.activityPercent * 100).round().clamp(0, 100);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top row
+            // ── Top row: rank · avatar · name + score · XP ───────────
             Row(
               children: [
                 _rankWidget(),
                 const SizedBox(width: 10),
                 CircleAvatar(
                   radius: 22,
-                  backgroundColor: const Color(0xFF4CAF50).withOpacity(0.15),
-                  backgroundImage: avatar.isNotEmpty ? AssetImage(avatar) : null,
+                  backgroundColor:
+                      const Color(0xFF4CAF50).withOpacity(0.15),
+                  backgroundImage:
+                      avatar.isNotEmpty ? AssetImage(avatar) : null,
                   child: avatar.isEmpty
-                      ? Text(stats.name.isNotEmpty ? stats.name[0].toUpperCase() : '?',
-                          style: const TextStyle(color: Color(0xFF4CAF50), fontWeight: FontWeight.bold, fontSize: 16))
+                      ? Text(
+                          stats.name.isNotEmpty
+                              ? stats.name[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                              color: Color(0xFF4CAF50),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16))
                       : null,
                 ),
                 const SizedBox(width: 12),
@@ -681,38 +729,59 @@ class _StudentProgressCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(stats.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text(stats.name,
+                          style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold)),
                       const SizedBox(height: 2),
+                      // Score badge — labelled clearly as "Overall"
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(color: _scoreColor.withOpacity(0.15), borderRadius: BorderRadius.circular(12)),
-                        child: Text(stats.overallScoreText,
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _scoreColor)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                            color: _scoreColor.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Text(
+                          'Overall ${stats.overallScore}%',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: _scoreColor),
+                        ),
                       ),
                     ],
                   ),
                 ),
+                // XP chip
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFF8E1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFFFCA28), width: 1),
+                    border: Border.all(
+                        color: const Color(0xFFFFCA28), width: 1),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.bolt_rounded, size: 14, color: Color(0xFFFFCA28)),
+                      const Icon(Icons.bolt_rounded,
+                          size: 14, color: Color(0xFFFFCA28)),
                       const SizedBox(width: 2),
-                      Text('${stats.xp} XP', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF795548))),
+                      Text('${stats.xp} XP',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF795548))),
                     ],
                   ),
                 ),
               ],
             ),
+
             const SizedBox(height: 14),
-            
-            // Progress bar
+
+            // ── Progress bar (activities completed) ───────────────────
             Row(
               children: [
                 Expanded(
@@ -722,31 +791,38 @@ class _StudentProgressCard extends StatelessWidget {
                       value: stats.activityPercent,
                       minHeight: 10,
                       backgroundColor: Colors.grey[200],
-                      valueColor: AlwaysStoppedAnimation<Color>(_scoreColor),
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(_scoreColor),
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
-                SizedBox(width: 40, child: Text('$percentInt%', textAlign: TextAlign.right,
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _scoreColor))),
-              ],
-            ),
-            const SizedBox(height: 12),
-            
-            // Stats chips
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                _statChip(icon: Icons.assignment_rounded, label: stats.activityProgressText, color: const Color(0xFF4CAF50)),
-                _statChip(icon: Icons.quiz_rounded, label: stats.lessonQuizProgressText, color: const Color(0xFF7C3AED)),
-                _statChip(icon: Icons.trending_up_rounded, label: 'Avg: ${stats.avgActivityScore}% / ${stats.avgLessonQuizScore}%', color: Colors.blueAccent),
+                SizedBox(
+                  width: 44,
+                  child: Text(
+                    // Clear label: completed/total activities
+                    '${stats.completedActivities}/${stats.totalActivities}',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: _scoreColor),
+                  ),
+                ),
               ],
             ),
 
+            const SizedBox(height: 4),
+
+            // Caption under progress bar so it is unambiguous
+            Text(
+              'Activities completed',
+              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+            ),
+
             const SizedBox(height: 12),
-            
-            // Two buttons: View Details + View Report (PDF)
+
+            // ── Action buttons ─────────────────────────────────────────
             Row(
               children: [
                 Expanded(
@@ -768,7 +844,8 @@ class _StudentProgressCard extends StatelessWidget {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.blueGrey,
                       side: const BorderSide(color: Colors.blueGrey),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
                 ),
@@ -776,12 +853,14 @@ class _StudentProgressCard extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _exportStudentReport(context),
-                    icon: const Icon(Icons.picture_as_pdf_rounded, size: 18),
+                    icon: const Icon(Icons.picture_as_pdf_rounded,
+                        size: 18),
                     label: const Text('Report'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red,
                       side: const BorderSide(color: Colors.red),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
                 ),
@@ -790,17 +869,6 @@ class _StudentProgressCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _statChip({required IconData icon, required String label, required Color color}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w500)),
-      ],
     );
   }
 }

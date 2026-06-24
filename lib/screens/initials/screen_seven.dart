@@ -348,7 +348,7 @@ class _ScreenSevenState extends State<ScreenSeven>
             const SizedBox(height: 8),
             Lottie.asset(
               correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json',
-              height: 140,
+              height: 120,
             ),
             const SizedBox(height: 16),
             SizedBox(

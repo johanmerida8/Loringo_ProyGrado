@@ -2,7 +2,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/group_details/quizzes_tab.dart';
-import 'package:loringo_app/services/database/database.dart';
+// import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class TeacherQuizzesScreen extends StatelessWidget {
@@ -16,7 +16,6 @@ class TeacherQuizzesScreen extends StatelessWidget {
         body: Center(child: Text('Not authenticated')),
       );
     }
-    final db = Database();
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
@@ -29,7 +28,6 @@ class TeacherQuizzesScreen extends StatelessWidget {
       body: QuizzesTab(
         groupId:       '',
         groupColor:    AppColors.primary,
-        contentStream: db.getTeacherApprovedContentStream(teacherId),
       ),
     );
   }

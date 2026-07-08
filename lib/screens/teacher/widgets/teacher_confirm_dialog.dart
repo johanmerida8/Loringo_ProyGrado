@@ -1,5 +1,6 @@
+// teacher_confirm_dialog.dart
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/teacher/teacher_theme.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 Future<bool> showTeacherConfirmDialog({
   required BuildContext context,
@@ -12,6 +13,9 @@ Future<bool> showTeacherConfirmDialog({
   final result = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.md),
+      ),
       title: Text(title),
       content: Text(message),
       actions: [
@@ -23,7 +27,7 @@ Future<bool> showTeacherConfirmDialog({
           onPressed: () => Navigator.pop(context, true),
           style: TextButton.styleFrom(
             foregroundColor:
-                destructive ? TeacherColors.danger : TeacherColors.primary,
+                destructive ? AppColors.danger : AppColors.primary,
           ),
           child: Text(confirmLabel),
         ),

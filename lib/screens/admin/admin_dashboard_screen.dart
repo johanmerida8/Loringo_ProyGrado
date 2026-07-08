@@ -55,37 +55,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                       offset: const Offset(0, 8)),
                 ],
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Row(children: [
-                    Container(
-                      padding: const EdgeInsets.all(AppSpacing.sm + 2),
-                      decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(AppRadii.md)),
-                      child: const Icon(Icons.admin_panel_settings_rounded,
-                          color: AppColors.onPrimary, size: 26),
+                  Container(
+                    padding: const EdgeInsets.all(AppSpacing.sm + 2),
+                    decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(AppRadii.md)),
+                    child: const Icon(Icons.admin_panel_settings_rounded,
+                        color: AppColors.onPrimary, size: 26),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Image Manager',
+                            style: TextStyle(
+                                color: AppColors.onPrimary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold)),
+                        Text('Manage Image Library',
+                            style: TextStyle(
+                                color: Colors.white70, fontSize: 13)),
+                      ],
                     ),
-                    const SizedBox(width: AppSpacing.md),
-                    const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Admin Dashboard',
-                              style: TextStyle(
-                                  color: AppColors.onPrimary,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold)),
-                          Text('System Oversight',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 13)),
-                        ]),
-                  ]),
-                  const SizedBox(height: AppSpacing.md),
-                  const Text(
-                    'Manage and oversee all platform content, approvals and media assets.',
-                    style: TextStyle(
-                        color: Colors.white70, fontSize: 13, height: 1.5),
                   ),
                 ],
               ),
@@ -102,7 +96,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     borderRadius: BorderRadius.circular(2)),
               ),
               const SizedBox(width: AppSpacing.sm),
-              const Text('System Statistics',
+              const Text('Statistics',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
             ]),
 
@@ -124,8 +118,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     value: snap.data?.toString() ?? '—',
                     icon: Icons.image_rounded,
                     color: const Color(0xFF2196F3),
-                    isLoading:
-                        snap.connectionState == ConnectionState.waiting,
+                    isLoading: snap.connectionState == ConnectionState.waiting,
                   ),
                 ),
                 StreamBuilder<int>(
@@ -135,30 +128,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     value: snap.data?.toString() ?? '—',
                     icon: Icons.folder_rounded,
                     color: Colors.orange,
-                    isLoading:
-                        snap.connectionState == ConnectionState.waiting,
-                  ),
-                ),
-                StreamBuilder<int>(
-                  stream: _db.getApprovedContentCountStream(),
-                  builder: (_, snap) => _StatCard(
-                    label: 'Approved Content',
-                    value: snap.data?.toString() ?? '—',
-                    icon: Icons.check_circle_rounded,
-                    color: AppColors.primary,
-                    isLoading:
-                        snap.connectionState == ConnectionState.waiting,
-                  ),
-                ),
-                StreamBuilder<int>(
-                  stream: _db.getPendingContentCountStream(),
-                  builder: (_, snap) => _StatCard(
-                    label: 'Pending Approval',
-                    value: snap.data?.toString() ?? '—',
-                    icon: Icons.hourglass_bottom_rounded,
-                    color: Colors.amber[700]!,
-                    isLoading:
-                        snap.connectionState == ConnectionState.waiting,
+                    isLoading: snap.connectionState == ConnectionState.waiting,
                   ),
                 ),
               ],
@@ -177,11 +147,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     color: const Color(0xFF2196F3).withOpacity(0.2)),
               ),
               child: const Row(children: [
-                Icon(Icons.sync_rounded,
-                    color: Color(0xFF2196F3), size: 20),
+                Icon(Icons.sync_rounded, color: Color(0xFF2196F3), size: 20),
                 SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Text('Dashboard updates in real-time',
+                  child: Text('Real-time updates',
                       style: TextStyle(
                           color: Color(0xFF2196F3),
                           fontSize: 13,

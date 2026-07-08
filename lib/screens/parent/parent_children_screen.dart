@@ -1,5 +1,5 @@
 // parent_children_screen.dart
-import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:loringo_app/screens/parent/parent_join_group_screen.dart';
@@ -132,7 +132,7 @@ class ParentChildrenScreen extends StatelessWidget {
         children: [
           // ── Inline header ──
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 56, 20, 4),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
             child: const Text(
               'My Children',
               style: TextStyle(

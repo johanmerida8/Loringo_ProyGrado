@@ -1,46 +1,55 @@
+// create_unit_screen.dart
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
+// import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class CreatePersonalizedUnitScreen extends StatefulWidget {
   final String groupId;
   final String contentId;
   final String? unitId;
   final Map<String, dynamic>? existingData;
-  final Color groupColor; // Add this
+  final Color groupColor;
 
   const CreatePersonalizedUnitScreen({
     super.key,
     required this.groupId,
     required this.contentId,
-    required this.groupColor, // Add this
+    required this.groupColor,
     this.unitId,
     this.existingData,
   });
 
   @override
-  State<CreatePersonalizedUnitScreen> createState() =>
-      _CreatePersonalizedUnitScreenState();
+  State<CreatePersonalizedUnitScreen> createState() => _CreatePersonalizedUnitScreenState();
 }
 
-class _CreatePersonalizedUnitScreenState
-    extends State<CreatePersonalizedUnitScreen> {
+class _CreatePersonalizedUnitScreenState extends State<CreatePersonalizedUnitScreen> {
   final _formKey = GlobalKey<FormState>();
   final Database db = Database();
 
   late TextEditingController titleController;
   late TextEditingController orderController;
-
   bool isLoading = false;
+  bool get _isEditing => widget.unitId != null;
+  Color get _c => widget.groupColor;
 
   @override
   void initState() {
     super.initState();
-    titleController = TextEditingController(
-      text: widget.existingData?['title'] ?? '',
-    );
-    orderController = TextEditingController(
-      text: widget.existingData?['order']?.toString() ?? '',
-    );
+    titleController = TextEditingController(text: widget.existingData?['title'] ?? '');
+    orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
+    if (!_isEditing) _prefillNextOrder();
+  }
+
+  Future<void> _prefillNextOrder() async {
+    try {
+      final snap = await db.getPersonalizedUnits(widget.groupId, widget.contentId);
+      if (mounted && orderController.text.isEmpty) {
+        orderController.text = (snap.docs.length + 1).toString();
+      }
+    } catch (_) {}
   }
 
   @override
@@ -52,29 +61,21 @@ class _CreatePersonalizedUnitScreenState
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-
     setState(() => isLoading = true);
 
     try {
-      final unitId =
-          widget.unitId ?? 'unit_${DateTime.now().millisecondsSinceEpoch}';
+      final unitId = widget.unitId ?? 'unit_${DateTime.now().millisecondsSinceEpoch}';
 
-      if (widget.unitId != null) {
-        // Dirty check
+      if (_isEditing) {
         final origTitle = widget.existingData?['title'] as String? ?? '';
         final origOrder = widget.existingData?['order']?.toString() ?? '';
-        if (titleController.text.trim() == origTitle &&
-            orderController.text.trim() == origOrder) {
+        if (titleController.text.trim() == origTitle && orderController.text.trim() == origOrder) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No changes made'),
-              backgroundColor: Colors.grey,
-            ),
+            const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
           );
           return;
         }
-        // Update existing
         await db.updatePersonalizedUnit(
           groupId: widget.groupId,
           contentId: widget.contentId,
@@ -83,7 +84,6 @@ class _CreatePersonalizedUnitScreenState
           order: int.parse(orderController.text.trim()),
         );
       } else {
-        // Create new
         await db.createPersonalizedUnit(
           groupId: widget.groupId,
           contentId: widget.contentId,
@@ -96,20 +96,18 @@ class _CreatePersonalizedUnitScreenState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              widget.unitId != null
-                  ? '✅ Unit updated successfully!'
-                  : '✅ Unit created successfully!',
-            ),
-            backgroundColor: Colors.green,
+            content: Text(_isEditing ? 'Unit updated successfully!' : 'Unit created successfully!'),
+            backgroundColor: AppColors.success,
           ),
         );
         Navigator.pop(context);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
+        );
+      }
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -118,163 +116,62 @@ class _CreatePersonalizedUnitScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
-        title: Text(widget.unitId != null ? 'Edit Unit' : 'Create Unit'),
-        backgroundColor: widget.groupColor,
+        backgroundColor: _c,
         elevation: 0,
+        iconTheme: const IconThemeData(color: AppColors.onPrimary),
+        title: Text(_isEditing ? 'Edit Unit' : 'Create Unit', style: AppText.appBarTitle),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header section with group color accent
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      widget.groupColor.withOpacity(0.1),
-                      widget.groupColor.withOpacity(0.05),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: widget.groupColor.withOpacity(0.2),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: widget.groupColor.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.layers,
-                        color: widget.groupColor,
-                        size: 28,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.unitId != null ? 'Edit Unit' : 'New Unit',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: widget.groupColor,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Define the unit structure',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              CreateFormBanner(
+                color: _c,
+                icon: Icons.layers_rounded,
+                label: _isEditing ? 'Editing Unit' : 'New Unit',
+                description: 'Groups several lessons under one theme',
               ),
-              const SizedBox(height: 28),
-              // Title field
-              TextFormField(
+              const SizedBox(height: AppSpacing.lg),
+
+              const CreateFormLabel('Unit Title'),
+              const SizedBox(height: AppSpacing.sm),
+              CreateFormField(
                 controller: titleController,
-                decoration: InputDecoration(
-                  labelText: 'Unit Title',
-                  hintText: 'e.g., Introduction to Numbers',
-                  prefixIcon: Icon(Icons.title, color: widget.groupColor),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: widget.groupColor, width: 2),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-                validator: (value) =>
-                    value?.isEmpty ?? true ? 'Title is required' : null,
+                color: _c,
+                icon: Icons.title_rounded,
+                hint: 'e.g. Introduction to Numbers',
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
               ),
-              const SizedBox(height: 20),
-              // Order field
-              TextFormField(
+              const SizedBox(height: AppSpacing.lg),
+
+              const CreateFormLabel('Display Order'),
+              const SizedBox(height: AppSpacing.sm),
+              CreateFormField(
                 controller: orderController,
-                decoration: InputDecoration(
-                  labelText: 'Order',
-                  hintText: '1, 2, 3...',
-                  prefixIcon: Icon(Icons.sort, color: widget.groupColor),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: widget.groupColor, width: 2),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
+                color: _c,
+                icon: Icons.sort_rounded,
+                hint: '1, 2, 3…',
+                helperText: 'Units appear in numeric order',
                 keyboardType: TextInputType.number,
-                validator: (value) =>
-                    value?.isEmpty ?? true ? 'Order is required' : null,
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Order is required';
+                  if (int.tryParse(v) == null) return 'Enter a valid number';
+                  return null;
+                },
               ),
-              const SizedBox(height: 32),
-              // Submit button
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: isLoading ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: widget.groupColor,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 2,
-                  ),
-                  child: isLoading
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Text(
-                          widget.unitId != null ? 'Update Unit' : 'Create Unit',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                ),
+              const SizedBox(height: AppSpacing.xl),
+
+              CreateFormSubmitButton(
+                color: _c,
+                label: _isEditing ? 'UPDATE UNIT' : 'CREATE UNIT',
+                isLoading: isLoading,
+                onPressed: _submit,
               ),
-              const SizedBox(height: 16),
             ],
           ),
         ),

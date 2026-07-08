@@ -35,10 +35,27 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
   String _feedback = '';
   bool _isSaving = false;
 
+  // ── Guard de reporte ya enviado ─────────────────────────────────────────
+  // Un reporte por unitId es la regla: una vez enviado, no se puede volver
+  // a enviar. _reportAlreadySent se determina en _loadData() consultando
+  // si ya existe students/{studentId}/reports/{unitId}, y controla tanto
+  // la visibilidad del botón de envío como si el campo de feedback es
+  // editable.
+  bool _reportAlreadySent = false;
+  DateTime? _reportSentAt;
+
+  final TextEditingController _feedbackController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _feedbackController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -77,18 +94,26 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
         _answers = List<Map<String, dynamic>>.from(data['answers'] ?? []);
       }
 
-      // 3. Load existing feedback (if any)
-      final reportsSnap = await FirebaseFirestore.instance
+      // 3. Load existing report (if any) — this is the source of truth for
+      // whether a report was already sent for this specific unit.
+      final reportDoc = await FirebaseFirestore.instance
           .collection('students')
           .doc(widget.studentId)
           .collection('reports')
-          .where('unitId', isEqualTo: widget.unitId)
-          .limit(1)
+          .doc(widget.unitId)
           .get();
 
-      if (reportsSnap.docs.isNotEmpty) {
-        _feedback = reportsSnap.docs.first.data()['feedback'] as String? ?? '';
+      if (reportDoc.exists) {
+        final data = reportDoc.data() as Map<String, dynamic>;
+        _feedback = data['feedback'] as String? ?? '';
+        _reportAlreadySent = true;
+        final generatedAt = data['generatedAt'] as Timestamp?;
+        _reportSentAt = generatedAt?.toDate();
+      } else {
+        _reportAlreadySent = false;
       }
+
+      _feedbackController.text = _feedback;
     } catch (e) {
       debugPrint('Error loading quiz review: $e');
     } finally {
@@ -97,6 +122,11 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
   }
 
   Future<void> _sendReport() async {
+    // Segunda barrera además de la UI deshabilitada: nunca ejecutar el
+    // envío si ya existe un reporte, sin importar cómo se haya disparado
+    // la llamada.
+    if (_reportAlreadySent) return;
+
     if (_feedback.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please add feedback before sending report')),
@@ -108,33 +138,27 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
     try {
       final db = Database();
 
-      // only save the report
       await db.saveReportOnly(
-        studentId: widget.studentId, 
-        unitId: widget.unitId, 
-        unitTitle: widget.quizTitle, 
-        score: _score, 
-        totalQuestions: _totalQuestions, 
-        stars: _getStars(), 
-        feedback: _feedback
+        studentId: widget.studentId,
+        unitId: widget.unitId,
+        unitTitle: widget.quizTitle,
+        score: _score,
+        totalQuestions: _totalQuestions,
+        stars: _getStars(),
+        feedback: _feedback,
       );
 
       await NotificationService.sendReportNotification(
-        studentId: widget.studentId, 
-        studentName: widget.studentName, 
+        studentId: widget.studentId,
+        studentName: widget.studentName,
         unitTitle: widget.quizTitle,
       );
 
-      final checkReport = await FirebaseFirestore.instance
-          .collection('students')
-          .doc(widget.studentId)
-          .collection('reports')
-          .doc(widget.unitId)
-          .get();
-      
-      print('Report saved with feedback: ${checkReport.data()?['feedback']}');
-
       if (mounted) {
+        setState(() {
+          _reportAlreadySent = true;
+          _reportSentAt = DateTime.now();
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Report sent to parent!'), backgroundColor: Colors.green),
         );
@@ -147,7 +171,7 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
         );
       }
     } finally {
-      setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -156,6 +180,10 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
     if (percent >= 90) return 3;
     if (percent >= 70) return 2;
     return 1;
+  }
+
+  String _formatSentDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
   }
 
   @override
@@ -202,6 +230,34 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
                       ],
                     ),
                   ),
+
+                  // Banner de reporte ya enviado
+                  if (_reportAlreadySent) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _reportSentAt != null
+                                  ? 'Report already sent on ${_formatSentDate(_reportSentAt!)}'
+                                  : 'Report already sent for this quiz',
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 24),
                   const Text('Questions Review', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
@@ -260,14 +316,18 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
                   const Text('Teacher Feedback', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   TextField(
-                    controller: TextEditingController(text: _feedback),
+                    controller: _feedbackController,
                     onChanged: (v) => _feedback = v,
                     maxLines: 5,
+                    // Una vez enviado el reporte, el feedback queda de solo
+                    // lectura — ya no tiene efecto modificarlo porque no hay
+                    // reenvío posible.
+                    enabled: !_reportAlreadySent,
                     decoration: InputDecoration(
                       hintText: 'Write feedback for the parent...',
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: _reportAlreadySent ? Colors.grey.shade100 : Colors.white,
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -275,9 +335,19 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: _isSaving ? null : _sendReport,
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      child: _isSaving ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white)) : const Text('Send Report to Parent', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                      // Deshabilitado también mientras se guarda o si ya
+                      // se envió — bloqueo total, no solo visual.
+                      onPressed: (_isSaving || _reportAlreadySent) ? null : _sendReport,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _reportAlreadySent ? Colors.grey.shade400 : AppColors.primary,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: _isSaving
+                          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white))
+                          : Text(
+                              _reportAlreadySent ? 'Report Already Sent' : 'Send Report to Parent',
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
                     ),
                   ),
                 ],

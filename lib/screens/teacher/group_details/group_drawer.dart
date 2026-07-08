@@ -1,8 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/teacher/teacher_theme.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_confirm_dialog.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class GroupDetailsDrawer extends StatelessWidget {
   const GroupDetailsDrawer({super.key});
@@ -10,18 +10,18 @@ class GroupDetailsDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Drawer(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       child: Column(
         children: [
           const _Header(),
-          const Divider(),
+          const Divider(height: 1, color: AppColors.divider),
           Expanded(
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
                 ListTile(
-                  leading: const Icon(Icons.group, color: TeacherColors.primary),
-                  title: const Text('My Groups'),
+                  leading: const Icon(Icons.group, color: AppColors.primary),
+                  title: const Text('My Groups', style: AppText.listTitle),
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.pop(context);
@@ -46,38 +46,39 @@ class _Header extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
-      decoration: const BoxDecoration(
-        gradient: TeacherDecorations.primaryGradient,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const CircleAvatar(
-            radius: 35,
-            backgroundColor: Colors.white,
-            child: Icon(Icons.school, size: 40, color: TeacherColors.primary),
+      decoration: const BoxDecoration(gradient: AppDecorations.primaryGradient),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.lg,
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'Teacher Panel',
-            style: TextStyle(
-              color: TeacherColors.onPrimary,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CircleAvatar(
+                radius: 35,
+                backgroundColor: AppColors.onPrimary,
+                child: Icon(Icons.school, size: 40, color: AppColors.primary),
+              ),
+              const SizedBox(height: AppSpacing.md - 4),
+              const Text('Teacher Panel', style: AppText.appBarTitle),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                email ?? 'No email',
+                style: TextStyle(
+                  color: AppColors.onPrimary.withOpacity(0.8),
+                  fontSize: 14,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            email ?? 'No email',
-            style: TextStyle(
-              color: TeacherColors.onPrimary.withOpacity(0.8),
-              fontSize: 14,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -107,12 +108,12 @@ class _SignOutTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: TeacherColors.divider)),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: AppColors.divider)),
       ),
       child: ListTile(
-        leading: const Icon(Icons.logout, color: TeacherColors.danger),
-        title: const Text('Sign Out'),
+        leading: const Icon(Icons.logout, color: AppColors.danger),
+        title: const Text('Sign Out', style: AppText.listTitle),
         onTap: () => _signOut(context),
       ),
     );

@@ -165,7 +165,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     }
   }
 
-  // NEW: Check if student can retake
+  // Check if student can retake
   Future<bool> _canRetake() async {
     if (widget.isPreview) return false;
     if (widget.studentId == null) return false;
@@ -176,10 +176,20 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     final data = progressDoc.data() as Map<String, dynamic>?;
     final attemptsUsed = data?['attempts'] as int? ?? 1;
     final isCompleted = data?['isCompleted'] as bool? ?? false;
-    
+    final passed = data?['passed'] as bool? ?? false;
+    final reportGenerated = data?['reportGenerated'] as bool? ?? false;
+
+    // If report has been generated, student cannot retake
+    if (reportGenerated) return false;
+
     // If already passed, no need to retake
+    if (passed) return false;
+    
+    // If the quiz is marked as completed (regardless of pass/fail), 
+    // student cannot retake - it's done
     if (isCompleted) return false;
     
+    // Only allow retake if attempts remaining and not completed
     return attemptsUsed < _maxAttempts;
   }
 
@@ -198,12 +208,34 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
       return;
     }
 
-    // Check if student has attempts left
+    // Check if student can take this quiz
     final canRetake = await _canRetake();
     if (!canRetake && !widget.isPreview) {
+      // Get more details about why they can't retake
+      final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
+      String message = 'You cannot take this quiz.';
+      
+      if (progressDoc.exists) {
+        final data = progressDoc.data() as Map<String, dynamic>;
+        final isCompleted = data['isCompleted'] as bool? ?? false;
+        final passed = data['passed'] as bool? ?? false;
+        final attemptsUsed = data['attempts'] as int? ?? 0;
+        final reportGenerated = data['reportGenerated'] as bool? ?? false;
+        
+        if (reportGenerated) {
+          message = 'This quiz has already been reviewed and reported.';
+        } else if (passed) {
+          message = 'You have already passed this quiz.';
+        } else if (isCompleted) {
+          message = 'You have already completed this quiz.';
+        } else if (attemptsUsed >= _maxAttempts) {
+          message = 'You have used all $_maxAttempts attempts for this quiz.';
+        }
+      }
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('You have used all $_maxAttempts attempts for this quiz.'),
+          content: Text(message),
           backgroundColor: Colors.red,
         ),
       );
@@ -225,7 +257,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     
     int xpEarned = 0;
     
-    // Declare these variables outside the try block so they're accessible later
+    // Declare these variables outside the try block
     int currentAttemptCount = 0;
     int remainingAttempts = 0;
 
@@ -244,19 +276,28 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
           currentAttemptCount = data['attempts'] as int? ?? 0;
         }
         
-        // Calculate XP based on performance (no penalty for retakes)
+        // ============================================================
+        // XP CALCULATION
+        // ============================================================
         if (!wasCompleted && passed) {
+          // First time passing: award XP based on percentage correct
           xpEarned = (correctCount * maxXpReward / totalQ).round();
           if (xpEarned < 5 && correctCount > 0) {
             xpEarned = 5;
           }
+          debugPrint('First time passing: $correctCount/$totalQ = $scorePercent% → $xpEarned XP');
         } else if (wasCompleted && correctCount > previousScore) {
           // Improvement bonus
           final previousPercent = (previousScore / totalQ * 100).round();
           final newPercent = (correctCount / totalQ * 100).round();
           final improvement = newPercent - previousPercent;
           xpEarned = (improvement / 5).round().clamp(3, 10);
+          debugPrint('Improvement: ${previousScore}→${correctCount} ($improvement% improvement) → $xpEarned XP');
+        } else {
+          debugPrint('No XP earned - wasCompleted: $wasCompleted, passed: $passed, correctCount: $correctCount, previousScore: $previousScore');
         }
+        
+        debugPrint('Saving quiz completion with xpEarned: $xpEarned');
         
         await _db.saveQuizCompletion(
           studentId: widget.studentId!,
@@ -273,6 +314,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
           reportType: 'unit',
           studentName: widget.studentName,
           passed: passed,
+          isClosedAfterAttempts: true,
         );
 
         await _saveStudentAnswers();
@@ -287,15 +329,21 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     setState(() => _isSubmitting = false);
     if (!mounted) return;
 
-    // ✅ CALCULATE REMAINING ATTEMPTS HERE
+    // Calculate remaining attempts
     final newAttemptsUsed = currentAttemptCount + 1;
     remainingAttempts = _maxAttempts - newAttemptsUsed;
     
-    debugPrint('    Submit Quiz - Attempts Calculation:');
+    debugPrint('   Submit Quiz - Attempts Calculation:');
     debugPrint('   currentAttemptCount: $currentAttemptCount');
     debugPrint('   newAttemptsUsed: $newAttemptsUsed');
     debugPrint('   _maxAttempts: $_maxAttempts');
     debugPrint('   remainingAttempts: $remainingAttempts');
+    debugPrint('   Final xpEarned being passed to ActivityCompleteScreen: $xpEarned');
+
+    // Only show retake button if:
+    // 1. Quiz was NOT passed AND
+    // 2. There are remaining attempts
+    final bool showRetake = !passed && remainingAttempts > 0;
 
     Navigator.pushReplacement(
       context,
@@ -308,7 +356,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
           wrongAnswers: totalQ - correctCount,
           xpEarned: xpEarned,
           isGraded: true,
-          onRetake: passed ? null : _onRetakeQuiz,
+          onRetake: showRetake ? _onRetakeQuiz : null,  // Only show retake if not passed AND attempts remain
           attemptsRemaining: remainingAttempts > 0 ? remainingAttempts : 0,
           maxAttempts: _maxAttempts,
         ),
@@ -362,37 +410,37 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
   }
 
   // NEW: Build attempts remaining indicator for header
-  Widget _buildAttemptsRemaining() {
-    if (widget.isPreview || _isLoadingAttempts) {
-      return const SizedBox.shrink();
-    }
+  // Widget _buildAttemptsRemaining() {
+  //   if (widget.isPreview || _isLoadingAttempts) {
+  //     return const SizedBox.shrink();
+  //   }
     
-    final remaining = _maxAttempts - _attemptsUsed;
-    final color = remaining > 0 ? Colors.blue : Colors.red;
+  //   final remaining = _maxAttempts - _attemptsUsed;
+  //   final color = remaining > 0 ? Colors.blue : Colors.red;
     
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            remaining > 0 ? Icons.refresh_rounded : Icons.warning_amber_rounded,
-            size: 14,
-            color: color,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            'Attempts: $remaining/$_maxAttempts',
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
-          ),
-        ],
-      ),
-    );
-  }
+  //   return Container(
+  //     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+  //     decoration: BoxDecoration(
+  //       color: color.withOpacity(0.1),
+  //       borderRadius: BorderRadius.circular(12),
+  //     ),
+  //     child: Row(
+  //       mainAxisSize: MainAxisSize.min,
+  //       children: [
+  //         Icon(
+  //           remaining > 0 ? Icons.refresh_rounded : Icons.warning_amber_rounded,
+  //           size: 14,
+  //           color: color,
+  //         ),
+  //         const SizedBox(width: 4),
+  //         Text(
+  //           'Attempts: $remaining/$_maxAttempts',
+  //           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
 
   @override
   Widget build(BuildContext context) {

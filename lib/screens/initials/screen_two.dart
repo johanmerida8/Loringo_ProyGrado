@@ -1,22 +1,25 @@
+// screen_two.dart
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:just_audio/just_audio.dart';
-// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:lottie/lottie.dart';
+import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 // ── Data model for one conversation turn ────────────────────────────────────
 class _Turn {
   final String bubbleEn;        // original English bubble text
-  final String bubbleTranslated; // translated for display
   final List<Map<String, dynamic>> options; // {textEn, isCorrect}
 
   const _Turn({
     required this.bubbleEn,
-    required this.bubbleTranslated,
     required this.options,
   });
 }
@@ -50,11 +53,8 @@ class ScreenTwo extends StatefulWidget {
 }
 
 class _ScreenTwoState extends State<ScreenTwo> {
-  final AudioPlayer _player = AudioPlayer();
+  // final AudioPlayer _player = AudioPlayer();
   final FlutterTts _tts = FlutterTts();
-  late OnDeviceTranslator _translator;
-
-  String _userLang = 'English';
 
   // All turns loaded from Firestore
   List<_Turn> _turns = [];
@@ -79,37 +79,8 @@ class _ScreenTwoState extends State<ScreenTwo> {
   @override
   void initState() {
     super.initState();
-    _setUp();
-  }
-
-  Future<void> _setUp() async {
-    await _initTranslator();
-    await _initTts();
-    await _fetchTask();
-  }
-
-  Future<void> _initTranslator() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    String lang = 'Spanish';
-    if (uid != null) {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-      if (doc.exists) lang = doc['language'] ?? 'Spanish';
-    }
-    _userLang = lang;
-    _translator = OnDeviceTranslator(
-      sourceLanguage: TranslateLanguage.english,
-      targetLanguage: _langEnum(lang),
-    );
-  }
-
-  TranslateLanguage _langEnum(String lang) {
-    switch (lang.toLowerCase()) {
-      case 'spanish': return TranslateLanguage.spanish;
-      case 'french':  return TranslateLanguage.french;
-      case 'german':  return TranslateLanguage.german;
-      case 'italian': return TranslateLanguage.italian;
-      default:        return TranslateLanguage.spanish;
-    }
+    _initTts();
+    _fetchTask();
   }
 
   Future<void> _initTts() async {
@@ -120,8 +91,7 @@ class _ScreenTwoState extends State<ScreenTwo> {
 
   @override
   void dispose() {
-    _translator.close();
-    _player.dispose();
+    // _player.dispose();
     _tts.stop();
     super.dispose();
   }
@@ -141,35 +111,29 @@ class _ScreenTwoState extends State<ScreenTwo> {
       final raw = doc.data() as Map<String, dynamic>;
       final taskData = raw['data'] as Map<String, dynamic>? ?? raw;
 
-      // ── Support both old schema (single question + options) and new
-      //    multi-turn schema (turns list) ──────────────────────────────
       final rawTurns = taskData['turns'] as List<dynamic>?;
 
       if (rawTurns != null) {
-        // New multi-turn schema
         final built = <_Turn>[];
         for (final t in rawTurns) {
           final turn = t as Map<String, dynamic>;
           final bubbleEn = turn['bubble'] as String? ?? '';
-          final bubbleTranslated = await _translator.translateText(bubbleEn);
           final rawOpts = List<Map<String, dynamic>>.from(turn['options'] ?? []);
           final opts = rawOpts.map((o) => {
             'textEn': o['text'] ?? '',
             'isCorrect': o['isCorrect'] ?? false,
           }).toList();
-          built.add(_Turn(bubbleEn: bubbleEn, bubbleTranslated: bubbleTranslated, options: opts));
+          built.add(_Turn(bubbleEn: bubbleEn, options: opts));
         }
         _turns = built;
       } else {
-        // Legacy single-turn schema — wrap in one turn
         final questionEn = taskData['question'] as String? ?? '';
-        final bubbleTranslated = await _translator.translateText(questionEn);
         final rawOpts = List<Map<String, dynamic>>.from(taskData['options'] ?? []);
         final opts = rawOpts.map((o) => {
           'textEn': o['text'] ?? '',
           'isCorrect': o['isCorrect'] ?? false,
         }).toList();
-        _turns = [_Turn(bubbleEn: questionEn, bubbleTranslated: bubbleTranslated, options: opts)];
+        _turns = [_Turn(bubbleEn: questionEn, options: opts)];
       }
 
       setState(() => _isLoading = false);
@@ -183,7 +147,11 @@ class _ScreenTwoState extends State<ScreenTwo> {
     if (text.isNotEmpty) await _tts.speak(text);
   }
 
-  // Called when the student taps Check on the current turn
+  Future<void> _handleClose() async {
+    final shouldExit = await confirmExitTask(context);
+    if (shouldExit && context.mounted) Navigator.pop(context);
+  }
+
   void _checkCurrentTurn() {
     final turn = _turns[_currentTurn];
     final correct = turn.options.firstWhere(
@@ -193,81 +161,90 @@ class _ScreenTwoState extends State<ScreenTwo> {
 
     if (correct) _correctCount++; else _wrongCount++;
 
-    // Play sound + haptic
-    if (correct) HapticFeedback.mediumImpact(); else HapticFeedback.heavyImpact();
-    _player.setAsset(correct ? 'assets/sound/success-2.mp3' : 'assets/sound/fail-2.mp3')
-        .then((_) => _player.play());
+    TaskFeedback.fire(correct);
 
-    // Add to history
     _history.add({
       'bubbleEn': turn.bubbleEn,
-      'bubbleTranslated': turn.bubbleTranslated,
       'chosenReply': _selectedReply,
       'correct': correct,
     });
 
-    _showTurnFeedback(correct);
-  }
-
-  void _showTurnFeedback(bool correct) {
     final isLastTurn = _currentTurn == _turns.length - 1;
 
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      isDismissible: false,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.38,
-        maxChildSize: 0.55,
-        builder: (_, __) => Container(
-          padding: const EdgeInsets.all(20),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-          ),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  if (isLastTurn) {
-                    // Conversation complete — report overall result to ActivityPlayScreen.
-                    // Considered correct if more than half the turns were answered correctly.
-                    final overallCorrect = _correctCount > _wrongCount;
-                    widget.onTaskComplete(overallCorrect);
-                  } else {
-                    // Advance to next turn
-                    setState(() {
-                      _currentTurn++;
-                      _selectedReply = '';
-                    });
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: correct ? _green : Colors.orange,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Text(
-                  isLastTurn
-                      ? 'Finish'
-                      : 'Continue',
-                  style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold, letterSpacing: 1.1),
-                ),
-              ),
-            ),
-          ]),
-        ),
-      ),
+    TaskResultSheet.show(
+      context,
+      isCorrect: correct,
+      buttonLabel: isLastTurn ? 'Finish' : 'Continue',
+      // initialChildSize: 0.38,
+      // maxChildSize: 0.55,
+      onContinue: () {
+        if (isLastTurn) {
+          final overallCorrect = _correctCount > _wrongCount;
+          widget.onTaskComplete(overallCorrect);
+        } else {
+          setState(() {
+            _currentTurn++;
+            _selectedReply = '';
+          });
+        }
+      },
     );
   }
 
-  // ── Chat history (previously answered turns) ─────────────────────────────────
+  // void _showTurnFeedback(bool correct) {
+  //   final isLastTurn = _currentTurn == _turns.length - 1;
+
+  //   showModalBottomSheet(
+  //     context: context,
+  //     backgroundColor: Colors.transparent,
+  //     isScrollControlled: true,
+  //     isDismissible: false,
+  //     enableDrag: false,
+  //     builder: (_) => DraggableScrollableSheet(
+  //       initialChildSize: 0.38,
+  //       maxChildSize: 0.55,
+  //       builder: (_, __) => Container(
+  //         padding: const EdgeInsets.all(20),
+  //         decoration: const BoxDecoration(
+  //           color: Colors.white,
+  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
+  //         ),
+  //         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+  //           Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
+  //           const SizedBox(height: 12),
+  //           SizedBox(
+  //             width: double.infinity,
+  //             child: ElevatedButton(
+  //               onPressed: () {
+  //                 Navigator.pop(context);
+  //                 if (isLastTurn) {
+  //                   final overallCorrect = _correctCount > _wrongCount;
+  //                   widget.onTaskComplete(overallCorrect);
+  //                 } else {
+  //                   setState(() {
+  //                     _currentTurn++;
+  //                     _selectedReply = '';
+  //                   });
+  //                 }
+  //               },
+  //               style: ElevatedButton.styleFrom(
+  //                 backgroundColor: correct ? _green : Colors.orange,
+  //                 padding: const EdgeInsets.symmetric(vertical: 14),
+  //                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  //               ),
+  //               child: Text(
+  //                 isLastTurn ? 'Finish' : 'Continue',
+  //                 style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold, letterSpacing: 1.1),
+  //               ),
+  //             ),
+  //           ),
+  //         ]),
+  //       ),
+  //     ),
+  //   );
+  // }
+
   Widget _buildHistory() {
     if (_history.isEmpty) return const SizedBox.shrink();
     return Column(
@@ -277,10 +254,8 @@ class _ScreenTwoState extends State<ScreenTwo> {
         return Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Teacher bubble (past)
-            _buildBubble(entry['bubbleTranslated'] as String, entry['bubbleEn'] as String, past: true),
+            _buildBubble(entry['bubbleEn'] as String, past: true),
             const SizedBox(height: 8),
-            // Student reply bubble (right-aligned)
             Align(
               alignment: Alignment.centerRight,
               child: Container(
@@ -309,12 +284,10 @@ class _ScreenTwoState extends State<ScreenTwo> {
     );
   }
 
-  // ── Active chat bubble with TTS ──────────────────────────────────────────────
-  Widget _buildBubble(String translated, String english, {bool past = false}) {
+  Widget _buildBubble(String text, {bool past = false}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // Avatar
         Container(
           width: 36,
           height: 36,
@@ -339,21 +312,14 @@ class _ScreenTwoState extends State<ScreenTwo> {
               ),
               boxShadow: past ? [] : [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 6, offset: const Offset(0, 2))],
             ),
-            // Show translated above, English below (smaller)
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(translated, style: TextStyle(fontSize: past ? 13 : 16, color: past ? Colors.black54 : Colors.black87, height: 1.3)),
-              if (!past) ...[
-                const SizedBox(height: 4),
-                Text(english, style: const TextStyle(fontSize: 12, color: Colors.black38, fontStyle: FontStyle.italic)),
-              ],
-            ]),
+            child: Text(text, style: TextStyle(fontSize: past ? 13 : 16, color: past ? Colors.black54 : Colors.black87, height: 1.3)),
           ),
         ),
         if (!past) ...[
           const SizedBox(width: 6),
           IconButton(
             icon: const Icon(Icons.volume_up, color: _green, size: 22),
-            onPressed: () => _speak(english),
+            onPressed: () => _speak(text),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
           ),
@@ -362,7 +328,6 @@ class _ScreenTwoState extends State<ScreenTwo> {
     );
   }
 
-  // ── Reply option chip ────────────────────────────────────────────────────────
   Widget _buildReplyOption(String text) {
     final isSelected = _selectedReply == text;
     return GestureDetector(
@@ -414,93 +379,85 @@ class _ScreenTwoState extends State<ScreenTwo> {
       body: Container(
         decoration: grad,
         child: SafeArea(
-          child: Column(children: [
-            // ── Progress bar ─────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Row(children: [
-                IconButton(icon: const Icon(Icons.close, color: Colors.black87, size: 28), onPressed: () => Navigator.pop(context)),
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.all(Radius.circular(30)),
-                    child: LinearProgressIndicator(
-                      // Progress combines task progress and turn progress
-                      value: (widget.currentTaskNumber + (_currentTurn / _turns.length)) / widget.totalTasks,
-                      backgroundColor: Colors.blueGrey,
-                      valueColor: const AlwaysStoppedAnimation<Color>(_green),
-                      minHeight: 8,
-                    ),
-                  ),
-                ),
-                // Turn indicator pill
-                Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: _green.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-                    child: Text('${_currentTurn + 1}/${_turns.length}', style: const TextStyle(fontSize: 11, color: _green, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ]),
-            ),
-
-            // ── Scrollable chat area ─────────────────────────────────
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  // Past turns as greyed-out history
-                  _buildHistory(),
-
-                  // Current active bubble
-                  _buildBubble(currentTurnData.bubbleTranslated, currentTurnData.bubbleEn),
-                  const SizedBox(height: 20),
-
-                  // Divider + "Your reply" label
-                  Row(children: [
-                    Expanded(child: Divider(color: Colors.grey.shade300)),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Text(
-                        'Your reply',
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
+          child: ResponsiveActivityShell(
+            child: Column(children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                child: Row(children: [
+                  IconButton(icon: const Icon(Icons.close, color: Colors.black87, size: 28), onPressed: _handleClose),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.all(Radius.circular(30)),
+                      child: LinearProgressIndicator(
+                        value: (widget.currentTaskNumber + (_currentTurn / _turns.length)) / widget.totalTasks,
+                        backgroundColor: Colors.blueGrey,
+                        valueColor: const AlwaysStoppedAnimation<Color>(_green),
+                        minHeight: 8,
                       ),
                     ),
-                    Expanded(child: Divider(color: Colors.grey.shade300)),
-                  ]),
-                  const SizedBox(height: 12),
-
-                  // Reply options for current turn
-                  ...currentTurnData.options.map((opt) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _buildReplyOption(opt['textEn'] as String),
-                  )),
-
-                  const SizedBox(height: 8),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: _green.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+                      child: Text('${_currentTurn + 1}/${_turns.length}', style: const TextStyle(fontSize: 11, color: _green, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
                 ]),
               ),
-            ),
-
-            // ── Check button ─────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _selectedReply.isEmpty ? null : _checkCurrentTurn,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _green,
-                    padding: const EdgeInsets.symmetric(vertical: 17),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  child: Text(
-                    'Check',
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+            
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    _buildHistory(),
+                    _buildBubble(currentTurnData.bubbleEn),
+                    const SizedBox(height: 20),
+            
+                    Row(children: [
+                      Expanded(child: Divider(color: Colors.grey.shade300)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Text(
+                          'Your reply',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      Expanded(child: Divider(color: Colors.grey.shade300)),
+                    ]),
+                    const SizedBox(height: 12),
+            
+                    ...currentTurnData.options.map((opt) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _buildReplyOption(opt['textEn'] as String),
+                    )),
+            
+                    const SizedBox(height: 8),
+                  ]),
+                ),
+              ),
+            
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _selectedReply.isEmpty ? null : _checkCurrentTurn,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _green,
+                      padding: const EdgeInsets.symmetric(vertical: 17),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text(
+                      'Check',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ]),
+            ]),
+          ),
         ),
       ),
     );

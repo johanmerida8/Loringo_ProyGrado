@@ -4,47 +4,102 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/admin/admin_navigation_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_home_screen.dart';
-import 'package:loringo_app/screens/parent/parent_home_screen.dart';
+import 'package:loringo_app/screens/parent/parent_navigation_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
+import 'package:loringo_app/screens/student/student_main_screen.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
-// import 'package:loringo_app/services/notification/onesignal_service.dart';
-import 'package:loringo_app/services/notifications/one_signal_service.dart'; // Add this import
+import 'package:loringo_app/services/auth/student_auth_service.dart';
+import 'package:loringo_app/services/notifications/one_signal_service.dart';
 
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // Student sessions live entirely in SharedPreferences (access-code
+    // login, no FirebaseAuth.currentUser at all), so they must be
+    // checked BEFORE the FirebaseAuth stream below — otherwise a
+    // logged-in student always falls through to "no auth data" and gets
+    // sent to LoginOrRegister. This matters especially on web, where
+    // main.dart routes straight to AuthGate (skipping SplashScreen,
+    // which is the only place this check used to happen), so every hot
+    // reload was re-triggering exactly this bug.
+    return FutureBuilder<bool>(
+      future: StudentAuthService.isStudentLoggedIn(),
+      builder: (context, studentSnapshot) {
+        if (studentSnapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (studentSnapshot.data == true) {
+          return FutureBuilder<Map<String, dynamic>>(
+            future: StudentAuthService.getStudentData(),
+            builder: (context, studentDataSnapshot) {
+              if (studentDataSnapshot.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final data = studentDataSnapshot.data;
+              final studentId = data?['studentId'] as String?;
+              final studentName = data?['studentName'] as String?;
+              if (data != null &&
+                  studentId != null && studentId.isNotEmpty &&
+                  studentName != null && studentName.isNotEmpty) {
+                final avatar = data['studentAvatar'] as String?;
+                return StudentMainScreen(
+                  studentId: studentId,
+                  studentName: studentName,
+                  studentAvatar: (avatar?.isEmpty ?? true) ? null : avatar,
+                );
+              }
+              // Stored flag said "logged in" but data is incomplete/corrupt
+              // — fall through to normal auth instead of getting stuck.
+              return const _FirebaseAuthGate();
+            },
+          );
+        }
+
+        return const _FirebaseAuthGate();
+      },
+    );
+  }
+}
+
+/// The original AuthGate logic, unchanged — only reached once we've
+/// confirmed there's no active student session.
+class _FirebaseAuthGate extends StatelessWidget {
+  const _FirebaseAuthGate();
+
+  @override
+  Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, authSnapshot) {
-        // Loading state
         if (authSnapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
         
-        // Not logged in → show login screen
         if (!authSnapshot.hasData) {
           return const LoginOrRegister();
         }
 
         final uid = authSnapshot.data!.uid;
         
-        // Logged in → fetch user role and route
         return FutureBuilder<DocumentSnapshot>(
           future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
           key: ValueKey(uid),
           builder: (context, userSnapshot) {
-            // Still loading → show spinner
             if (userSnapshot.connectionState == ConnectionState.waiting) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
             }
 
-            // Check for error
             if (userSnapshot.hasError) {
               debugPrint('Error loading user document: ${userSnapshot.error}');
               return _buildErrorScreen(
@@ -53,7 +108,6 @@ class AuthGate extends StatelessWidget {
               );
             }
 
-            // Document doesn't exist
             if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
               debugPrint('User document not found for UID: $uid');
               return _buildErrorScreen(
@@ -67,20 +121,15 @@ class AuthGate extends StatelessWidget {
             
             debugPrint('User role: $role for UID: $uid');
 
-            // ✅ Initialize OneSignal for mobile users (all roles)
-            if (!kIsWeb) {
-              // Call without waiting to not block navigation
-              OneSignalNotificationService.initializeUser(uid).catchError((e) {
-                debugPrint('OneSignal init error: $e');
-              });
+            if (!kIsWeb && (role == 'parent' || role == 'teacher')) {
+              _initializeNotificationsForRole(uid, role!);
             }
 
-            // Route based on role
             switch (role) {
               case 'admin':
-                return const AdminNavigationScreen();
+                return AdminNavigationScreen();
               case 'teacher':
-                return const TeacherHomeScreen();
+                return TeacherHomeScreen();
               case 'parent':
                 return _ParentRouter(parentId: uid);
               default:
@@ -90,6 +139,12 @@ class AuthGate extends StatelessWidget {
         );
       },
     );
+  }
+
+  void _initializeNotificationsForRole(String uid, String role) {
+    OneSignalNotificationService.initializeUser(uid).catchError((e) {
+      debugPrint('OneSignal initialization error for $role: $e');
+    });
   }
 
   Widget _buildErrorScreen(BuildContext context, String message) {
@@ -111,7 +166,6 @@ class AuthGate extends StatelessWidget {
               onPressed: () async {
                 await FirebaseAuth.instance.signOut();
                 if (context.mounted) {
-                  // Force rebuild
                   Navigator.of(context).pushReplacement(
                     MaterialPageRoute(builder: (_) => const AuthGate()),
                   );
@@ -136,10 +190,13 @@ class _ParentRouter extends StatefulWidget {
   State<_ParentRouter> createState() => _ParentRouterState();
 }
 
-class _ParentRouterState extends State<_ParentRouter> {
+class _ParentRouterState extends State<_ParentRouter> with AutomaticKeepAliveClientMixin {
   bool? _hasChildren;
   bool _isLoading = true;
   String? _error;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -175,6 +232,8 @@ class _ParentRouterState extends State<_ParentRouter> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+    
     if (_isLoading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -213,6 +272,6 @@ class _ParentRouterState extends State<_ParentRouter> {
       return const ParentRegisterChildScreen();
     }
     
-    return const ParentHomeScreen();
+    return const ParentNavigationScreen();
   }
 }

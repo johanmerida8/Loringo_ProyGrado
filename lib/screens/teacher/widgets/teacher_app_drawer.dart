@@ -1,8 +1,9 @@
+// teacher_app_drawer.dart
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/teacher/teacher_theme.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_confirm_dialog.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class TeacherAppDrawer extends StatelessWidget {
   const TeacherAppDrawer({
@@ -17,11 +18,11 @@ class TeacherAppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Drawer(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       child: Column(
         children: [
           const _DrawerHeader(),
-          const Divider(),
+          const Divider(height: 1, color: AppColors.divider),
           const _NavSectionLabel(label: 'Navigation'),
           _DrawerNavTile(
             icon: Icons.group,
@@ -67,36 +68,44 @@ class _DrawerHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
-      decoration: const BoxDecoration(
-        gradient: TeacherDecorations.primaryGradient,
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 35,
-            backgroundColor: Colors.white,
-            child: Icon(Icons.school, size: 40, color: TeacherColors.primary),
+      decoration: const BoxDecoration(gradient: AppDecorations.primaryGradient),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.lg,
           ),
-          SizedBox(height: TeacherSpacing.md - 4),
-          Text(
-            'Teacher Panel',
-            style: TextStyle(
-              color: TeacherColors.onPrimary,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 35,
+                backgroundColor: AppColors.onPrimary,
+                child: Icon(Icons.school, size: 40, color: AppColors.primary),
+              ),
+              SizedBox(height: AppSpacing.md - 4),
+              Text(
+                'Teacher Panel',
+                style: TextStyle(
+                  color: AppColors.onPrimary,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              SizedBox(height: AppSpacing.xs),
+              Text(
+                'Classroom Management',
+                style: TextStyle(
+                  color: AppColors.onPrimary,
+                  fontSize: 14,
+                ),
+              ),
+            ],
           ),
-          SizedBox(height: TeacherSpacing.xs),
-          Text(
-            'Classroom Management',
-            style: TextStyle(
-              color: TeacherColors.onPrimary,
-              fontSize: 14,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -113,14 +122,14 @@ class _NavSectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
       child: Row(
         children: [
-          const Icon(Icons.dashboard, size: 18, color: TeacherColors.primary),
-          const SizedBox(width: TeacherSpacing.sm),
+          const Icon(Icons.dashboard, size: 18, color: AppColors.primary),
+          const SizedBox(width: AppSpacing.sm),
           Text(
             label,
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.bold,
-              color: TeacherColors.primary,
+              color: AppColors.primary,
               letterSpacing: 1,
             ),
           ),
@@ -146,10 +155,10 @@ class _DrawerNavTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: Icon(icon, color: TeacherColors.primary),
-      title: Text(title),
+      leading: Icon(icon, color: AppColors.primary),
+      title: Text(title, style: AppText.listTitle),
       trailing: selected
-          ? const Icon(Icons.check_circle, color: TeacherColors.primary)
+          ? const Icon(Icons.check_circle, color: AppColors.primary)
           : null,
       onTap: onTap,
     );
@@ -182,12 +191,12 @@ class _SignOutTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: TeacherColors.divider)),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: AppColors.divider)),
       ),
       child: ListTile(
-        leading: const Icon(Icons.logout, color: TeacherColors.danger),
-        title: const Text('Sign Out'),
+        leading: const Icon(Icons.logout, color: AppColors.danger),
+        title: const Text('Sign Out', style: AppText.listTitle),
         onTap: () => _handleSignOut(context),
       ),
     );

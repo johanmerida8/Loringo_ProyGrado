@@ -161,11 +161,12 @@ class _PersonalizedContentDetailsScreenState
                   context,
                   MaterialPageRoute(
                     builder: (_) => PersonalizedLessonListScreen(
-                      groupId:    widget.groupId,
-                      contentId:  widget.contentId,
-                      unitId:     doc.id,
-                      unitTitle:  title,
-                      groupColor: _c,
+                      groupId:       widget.groupId,
+                      contentId:     widget.contentId,
+                      unitId:        doc.id,
+                      unitTitle:     title,
+                      groupColor:    _c,
+                      ancestorTrail: [widget.contentTitle],
                     ),
                   ),
                 ),

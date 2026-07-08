@@ -1,4 +1,5 @@
 // admin_upload_image_screen.dart
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -26,6 +27,21 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
   int  _uploadedCount  = 0;
   int  _totalCount     = 0;
 
+  void _showErrorSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.danger,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   Future<void> _selectImages() async {
     try {
       final picked = await _imageService.pickMultipleImages();
@@ -42,10 +58,42 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
       if (mounted) _showPreviewSheet();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: AppColors.danger,
-            behavior: SnackBarBehavior.floating));
+        _showErrorSnackBar(context, 'Error: $e');
+      }
+    }
+  }
+
+  // Agrega más imágenes a la selección existente (no la reemplaza).
+  // Evita duplicados comparando por nombre de archivo original.
+  Future<void> _selectMoreImages() async {
+    try {
+      final picked = await _imageService.pickMultipleImages();
+      if (picked == null || picked.isEmpty) return;
+
+      final existingNames = _selectedFiles
+          .map((entry) => (entry['file'] as PlatformFile).name)
+          .toSet();
+
+      final newEntries = picked
+          .where((f) => !existingNames.contains(f.name))
+          .map((f) => {
+                'file':  f,
+                'name':  f.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
+                'isSvg': f.name.toLowerCase().endsWith('.svg'),
+              })
+          .toList();
+
+      setState(() {
+        _selectedFiles = [..._selectedFiles, ...newEntries];
+      });
+
+      if (mounted) {
+        Navigator.pop(context);
+        _showPreviewSheet();
+      }
+    } catch (e) {
+      if (mounted) {
+        _showErrorSnackBar(context, 'Error: $e');
       }
     }
   }
@@ -57,6 +105,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => _PreviewSheet(
         selectedFiles: _selectedFiles,
+        onSelectMore: _selectMoreImages,
         onRemove: (i) {
           setState(() => _selectedFiles.removeAt(i));
           Navigator.pop(context);
@@ -161,7 +210,10 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
       _totalCount    = _selectedFiles.length;
     });
 
-    int success = 0, rejected = 0, failed = 0;
+    int success = 0;
+    int rejectedContent = 0;
+    int failedTechnical  = 0;
+
     for (final entry in _selectedFiles) {
       final file      = entry['file'];
       final imageName = entry['name'] as String;
@@ -170,7 +222,11 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
         final result = await _imageService.uploadToCloudinary(
             file, categoryName: widget.categoryName);
         if (result['success'] != true) {
-          rejected++;
+          if (result['reason'] == 'REJECT_INAPPROPRIATE_IMAGE') {
+            rejectedContent++;
+          } else {
+            failedTechnical++;
+          }
         } else {
           await _db.saveImageMetadata(
             categoryId:         widget.categoryId,
@@ -182,7 +238,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
           success++;
         }
       } catch (_) {
-        failed++;
+        failedTechnical++;
       }
       if (mounted) setState(() => _uploadedCount++);
     }
@@ -193,26 +249,12 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
     });
     if (!mounted) return;
 
-    final allGood = rejected == 0 && failed == 0;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Row(children: [
-        Icon(allGood ? Icons.check_circle : Icons.warning_rounded,
-            color: AppColors.onPrimary, size: 18),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(
-            child: Text([
-          if (success > 0)  '$success uploaded',
-          if (rejected > 0) '$rejected rejected',
-          if (failed > 0)   '$failed failed',
-        ].join(' · '))),
-      ]),
-      backgroundColor: allGood ? AppColors.primary : Colors.orange,
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.md)),
-      duration: const Duration(seconds: 4),
-    ));
-    if (success > 0) Navigator.pop(context);
+    // El snackbar se muestra en la pantalla anterior (mismo patrón que teacher).
+    Navigator.pop(context, {
+      'success': success,
+      'rejectedContent': rejectedContent,
+      'failedTechnical': failedTechnical,
+    });
   }
 
   @override
@@ -257,42 +299,30 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
               onClear: () =>
                   setState(() => _selectedFiles = []),
             ),
+      // ✅ Un solo FAB con heroTag null — mismo patrón que teacher, evita
+      // colisión de Hero cuando coexisten dos FABs condicionales.
       floatingActionButton: _isUploading
           ? null
-          : Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                FloatingActionButton.extended(
-                  heroTag: 'select',
-                  onPressed: _selectImages,
-                  backgroundColor: AppColors.primary,
-                  elevation: 3,
-                  icon: const Icon(
-                      Icons.add_photo_alternate_rounded,
-                      color: AppColors.onPrimary),
-                  label: const Text('Select Images',
-                      style: TextStyle(
-                          color: AppColors.onPrimary,
-                          fontWeight: FontWeight.bold)),
+          : FloatingActionButton.extended(
+              heroTag: null,
+              onPressed: hasFiles ? _confirmAndUpload : _selectImages,
+              backgroundColor: hasFiles
+                  ? (isRecommended ? const Color(0xFF2196F3) : Colors.orange)
+                  : AppColors.primary,
+              elevation: 3,
+              icon: Icon(
+                hasFiles ? Icons.cloud_upload_rounded : Icons.add_photo_alternate_rounded,
+                color: AppColors.onPrimary,
+              ),
+              label: Text(
+                hasFiles
+                    ? 'Upload ${_selectedFiles.length}${isRecommended ? " ✅" : ""}'
+                    : 'Select Images',
+                style: const TextStyle(
+                  color: AppColors.onPrimary,
+                  fontWeight: FontWeight.bold,
                 ),
-                if (hasFiles) ...[
-                  const SizedBox(height: AppSpacing.md),
-                  FloatingActionButton.extended(
-                    heroTag: 'upload',
-                    onPressed: _confirmAndUpload,
-                    backgroundColor: isRecommended
-                        ? const Color(0xFF2196F3)
-                        : Colors.orange,
-                    elevation: 3,
-                    icon: const Icon(Icons.cloud_upload_rounded,
-                        color: AppColors.onPrimary),
-                    label: Text('Upload ${_selectedFiles.length}',
-                        style: const TextStyle(
-                            color: AppColors.onPrimary,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ],
+              ),
             ),
     );
   }
@@ -534,13 +564,14 @@ class _UploadingView extends StatelessWidget {
 class _PreviewSheet extends StatelessWidget {
   final List<Map<String, dynamic>> selectedFiles;
   final void Function(int) onRemove;
-  final VoidCallback onClearAll, onUpload;
+  final VoidCallback onClearAll, onUpload, onSelectMore;
 
   const _PreviewSheet({
     required this.selectedFiles,
     required this.onRemove,
     required this.onClearAll,
     required this.onUpload,
+    required this.onSelectMore,
   });
 
   @override
@@ -579,7 +610,8 @@ class _PreviewSheet extends StatelessWidget {
                         color: AppColors.primary,
                         size: 20)),
                 const SizedBox(width: AppSpacing.md),
-                Column(
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
@@ -591,16 +623,50 @@ class _PreviewSheet extends StatelessWidget {
                           style: TextStyle(
                               fontSize: 11,
                               color: AppColors.muted)),
-                    ]),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: onClearAll,
-                  icon: Icon(Icons.delete_sweep,
-                      size: 16, color: AppColors.danger),
-                  label: Text('Clear all',
-                      style: TextStyle(
-                          color: AppColors.danger,
-                          fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ]),
+              const SizedBox(height: AppSpacing.sm),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onSelectMore,
+                    icon: const Icon(Icons.add_photo_alternate_outlined,
+                        size: 16, color: AppColors.primary),
+                    label: const Text('Select More',
+                        style: TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AppColors.primary),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.xs + 2),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppRadii.sm))),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onClearAll,
+                    icon: Icon(Icons.delete_sweep,
+                        size: 16, color: AppColors.danger),
+                    label: Text('Clear all',
+                        style: TextStyle(
+                            color: AppColors.danger,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: AppColors.danger),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.xs + 2),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppRadii.sm))),
+                  ),
                 ),
               ]),
               const SizedBox(height: AppSpacing.md),

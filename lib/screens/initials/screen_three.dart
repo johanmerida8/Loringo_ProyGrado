@@ -1,12 +1,17 @@
+// screen_three.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
-import 'package:just_audio/just_audio.dart';
-// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:just_audio/just_audio.dart';
+import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:lottie/lottie.dart';
+import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 class ScreenThree extends StatefulWidget {
   final String contentId;
@@ -37,9 +42,9 @@ class ScreenThree extends StatefulWidget {
 }
 
 class _ScreenThreeState extends State<ScreenThree> {
-  final AudioPlayer player = AudioPlayer();
+  // final AudioPlayer player = AudioPlayer();
   final FlutterTts flutterTts = FlutterTts();
-  late OnDeviceTranslator translator;
+  late OnDeviceTranslator? translator; // ✅ Make it nullable
 
   static const Color greenPrimary = Color(0xFF4CAF50);
 
@@ -63,23 +68,45 @@ class _ScreenThreeState extends State<ScreenThree> {
   }
 
   Future<void> _initTranslator() async {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
-    String userLang = 'Spanish';
-    if (userId != null) {
-      final userDoc = await FirebaseFirestore.instance
-          .collection("users")
-          .doc(userId)
-          .get();
-      if (userDoc.exists) {
-        userLang = userDoc['language'] ?? 'Spanish';
+    try {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      String userLang = 'Spanish';
+      
+      if (userId != null) {
+        try {
+          final userDoc = await FirebaseFirestore.instance
+              .collection("users")
+              .doc(userId)
+              .get();
+          
+          if (userDoc.exists) {
+            final data = userDoc.data();
+            // ✅ Safe access with null check
+            userLang = (data?['language'] as String?) ?? 'Spanish';
+          }
+        } catch (e) {
+          debugPrint('Error fetching user language: $e');
+          userLang = 'Spanish';
+        }
       }
+      
+      _userLang = userLang;
+      
+      // ✅ Initialize translator safely
+      try {
+        translator = OnDeviceTranslator(
+          sourceLanguage: TranslateLanguage.english,
+          targetLanguage: _mapLanguageToEnum(userLang),
+        );
+      } catch (e) {
+        debugPrint('Error initializing translator: $e');
+        translator = null; // Set to null if initialization fails
+      }
+      
+    } catch (e) {
+      debugPrint('Error in _initTranslator: $e');
+      translator = null;
     }
-    _userLang = userLang;
-    // Translator is still needed for the UI language (button labels etc.)
-    translator = OnDeviceTranslator(
-      sourceLanguage: TranslateLanguage.english,
-      targetLanguage: _mapLanguageToEnum(userLang),
-    );
   }
 
   TranslateLanguage _mapLanguageToEnum(String lang) {
@@ -93,14 +120,19 @@ class _ScreenThreeState extends State<ScreenThree> {
   }
 
   Future<void> _initializeTts() async {
-    await flutterTts.setSpeechRate(0.5);
-    await flutterTts.setPitch(1.0);
+    try {
+      await flutterTts.setSpeechRate(0.5);
+      await flutterTts.setPitch(1.0);
+      await flutterTts.setLanguage('en-US');
+    } catch (e) {
+      debugPrint('Error initializing TTS: $e');
+    }
   }
 
   @override
   void dispose() {
-    translator.close();
-    player.dispose();
+    translator?.close(); // ✅ Safe close
+    // player.dispose();
     flutterTts.stop();
     super.dispose();
   }
@@ -120,27 +152,34 @@ class _ScreenThreeState extends State<ScreenThree> {
         final data = doc.data() as Map<String, dynamic>;
         final taskData = data['data'] as Map<String, dynamic>? ?? data;
 
-        subtitle   = taskData['subtitle'] ?? '';
+        subtitle = taskData['subtitle'] ?? '';
         questionEn = taskData['question'] ?? '';
-        answerEn   = List<String>.from(taskData['answer'] ?? []);
+        answerEn = List<String>.from(taskData['answer'] ?? []);
 
-        // Build shuffled word pool — English only, no translation needed
+        // Build shuffled word pool
         shuffledWords = answerEn
             .map((word) => {'en': word})
             .toList();
         shuffledWords.shuffle();
 
+        if (translator != null && _userLang != 'English') {
+        }
+
         setState(() {});
       }
     } catch (e) {
-      throw ("Error fetching task data: $e");
+      debugPrint('Error fetching task data: $e');
     }
   }
 
-  void _speak(String text) async {
+  Future<void> _speak(String text) async {
     if (text.isNotEmpty) {
-      await flutterTts.setLanguage('en-GB');
-      await flutterTts.speak(text);
+      try {
+        await flutterTts.setLanguage('en-GB');
+        await flutterTts.speak(text);
+      } catch (e) {
+        debugPrint('Error speaking: $e');
+      }
     }
   }
 
@@ -158,81 +197,115 @@ class _ScreenThreeState extends State<ScreenThree> {
     });
   }
 
+  Future<void> _handleClose() async {
+    final shouldExit = await confirmExitTask(context);
+    if (shouldExit && context.mounted) Navigator.pop(context);
+  }
+
   void _checkAnswer() {
-    final selected  = selectedWords.map((w) => w['en']).toList();
+    final selected = selectedWords.map((w) => w['en']).toList();
     final isCorrect = selected.join(' ') == answerEn.join(' ');
-    _playFeedback(isCorrect);
-  }
 
-  void _playFeedback(bool isCorrect) async {
-    isCorrect ? HapticFeedback.mediumImpact() : HapticFeedback.heavyImpact();
-    final soundAsset =
-        isCorrect ? 'assets/sound/success-2.mp3' : 'assets/sound/fail-2.mp3';
-    player.setAsset(soundAsset).then((_) => player.play());
-    _showResultBottomSheet(isCorrect ? 'success' : 'fail', isCorrect);
-  }
+    TaskFeedback.fire(isCorrect);
 
-  void _showResultBottomSheet(String animationType, bool isCorrect) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.4,
-        maxChildSize: 0.6,
-        builder: (_, controller) => Container(
-          padding: const EdgeInsets.all(16),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Lottie.asset(
-                animationType == 'success'
-                    ? 'assets/animation/correct.json'
-                    : 'assets/animation/fail.json',
-                height: 150,
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    widget.onTaskComplete!(isCorrect);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isCorrect ? greenPrimary : Colors.orange,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    elevation: 5,
-                  ),
-                  child: Text(
-                    // TeacherUITranslations.get('continueBtnText', _userLang),
-                    'Continue',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    TaskResultSheet.show(
+      context,
+      isCorrect: isCorrect,
+      onContinue: () {
+        if (isCorrect) {
+          widget.onTaskComplete?.call(true);
+        } else {
+          _resetWordsForRetry();
+        }
+      },
     );
   }
 
+  // void _playFeedback(bool isCorrect) async {
+  //   try {
+  //     isCorrect ? HapticFeedback.mediumImpact() : HapticFeedback.heavyImpact();
+
+  //     FeedbackSoundService.instance.playResult(isCorrect);
+  //   } catch (e) {
+  //     debugPrint('Error playing sound: $e');
+  //   }
+  //   _showResultBottomSheet(isCorrect ? 'success' : 'fail', isCorrect);
+  // }
+
+  /// Puts every word back in the pool and reshuffles it, so a retry starts
+  /// from a clean slate rather than re-showing the wrong arrangement.
+  void _resetWordsForRetry() {
+    setState(() {
+      selectedWords = [];
+      shuffledWords = answerEn.map((w) => {'en': w}).toList()..shuffle();
+    });
+  }
+
+  // void _showResultBottomSheet(String animationType, bool isCorrect) {
+  //   showModalBottomSheet(
+  //     context: context,
+  //     backgroundColor: Colors.transparent,
+  //     isScrollControlled: true,
+  //     // Locked: must use the button to proceed, no swipe/tap-out escape.
+  //     isDismissible: false,
+  //     enableDrag: false,
+  //     builder: (_) => DraggableScrollableSheet(
+  //       initialChildSize: 0.4,
+  //       maxChildSize: 0.6,
+  //       builder: (_, controller) => Container(
+  //         padding: const EdgeInsets.all(16),
+  //         decoration: const BoxDecoration(
+  //           color: Colors.white,
+  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
+  //         ),
+  //         child: Column(
+  //           mainAxisAlignment: MainAxisAlignment.center,
+  //           children: [
+  //             Lottie.asset(
+  //               animationType == 'success'
+  //                   ? 'assets/animation/correct.json'
+  //                   : 'assets/animation/fail.json',
+  //               height: 120,
+  //             ),
+  //             const SizedBox(height: 20),
+  //             SizedBox(
+  //               width: double.infinity,
+  //               child: ElevatedButton(
+  //                 onPressed: () {
+  //                   Navigator.pop(context);
+  //                   if (isCorrect) {
+  //                     widget.onTaskComplete?.call(true);
+  //                   } else {
+  //                     _resetWordsForRetry();
+  //                   }
+  //                 },
+  //                 style: ElevatedButton.styleFrom(
+  //                   backgroundColor: isCorrect ? greenPrimary : Colors.orange,
+  //                   padding: const EdgeInsets.symmetric(vertical: 16),
+  //                   shape: RoundedRectangleBorder(
+  //                       borderRadius: BorderRadius.circular(12)),
+  //                   elevation: 5,
+  //                 ),
+  //                 child: Text(
+  //                   isCorrect ? 'Continue' : 'Try Again',
+  //                   style: const TextStyle(
+  //                     color: Colors.white,
+  //                     fontSize: 18,
+  //                     fontWeight: FontWeight.bold,
+  //                     letterSpacing: 1.2,
+  //                   ),
+  //                 ),
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     ),
+  //   );
+  // }
+
   Widget _buildAnswerArea() {
-    // Calculate how many lines we need based on selected words
-    // Each line holds roughly 5-6 words, so we'll use a fixed number of lines (e.g., 3 lines)
     const int maxLines = 4;
     const double lineHeight = 56.0;
     const double sheetHeight = maxLines * lineHeight;
@@ -249,7 +322,7 @@ class _ScreenThreeState extends State<ScreenThree> {
       ),
       child: Stack(
         children: [
-          // ── Background ruled lines (always visible) ─────────────────────────
+          // ── Background ruled lines ──────────────────────────────────
           Column(
             children: List.generate(maxLines, (index) {
               return Expanded(
@@ -267,7 +340,7 @@ class _ScreenThreeState extends State<ScreenThree> {
             }),
           ),
 
-          // ── Word chips floating on top of lines ─────────────────────────────
+          // ── Word chips ──────────────────────────────────────────────
           SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Wrap(
@@ -336,164 +409,150 @@ class _ScreenThreeState extends State<ScreenThree> {
         child: SafeArea(
           child: shuffledWords.isEmpty && selectedWords.isEmpty
               ? const Center(child: CircularProgressIndicator())
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-
-                    // ── Progress header ─────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 16),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.close,
-                                color: Colors.black87, size: 28),
-                            onPressed: () => Navigator.pop(context),
-                          ),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius:
-                                  const BorderRadius.all(Radius.circular(30)),
-                              child: LinearProgressIndicator(
-                                value: (widget.currentTaskNumber + 1) /
-                                    widget.totalTasks,
-                                backgroundColor: Colors.blueGrey,
-                                valueColor:
-                                    const AlwaysStoppedAnimation<Color>(
-                                        greenPrimary),
-                                minHeight: 8,
+              : ResponsiveActivityShell(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ── Progress header ─────────────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.close, color: Colors.black87, size: 28),
+                              onPressed: _handleClose,
+                            ),
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: const BorderRadius.all(Radius.circular(30)),
+                                child: LinearProgressIndicator(
+                                  value: (widget.currentTaskNumber + 1) / widget.totalTasks,
+                                  backgroundColor: Colors.blueGrey,
+                                  valueColor: const AlwaysStoppedAnimation<Color>(greenPrimary),
+                                  minHeight: 8,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // ── Subtitle / instruction ──────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Text(
-                        subtitle,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black87,
+                          ],
                         ),
                       ),
-                    ),
-
-                    // ── Question with TTS button ────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              questionEn,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Colors.black54,
-                                fontStyle: FontStyle.italic,
+                
+                      // ── Subtitle / instruction ──────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Text(
+                          subtitle,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                
+                      // ── Question with TTS button ────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                questionEn,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  color: Colors.black54,
+                                  fontStyle: FontStyle.italic,
+                                ),
                               ),
                             ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.volume_up,
-                                color: greenPrimary, size: 28),
-                            onPressed: () => _speak(questionEn),
-                          ),
-                        ],
+                            IconButton(
+                              icon: const Icon(Icons.volume_up, color: greenPrimary, size: 28),
+                              onPressed: () => _speak(questionEn),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // ── Answer sheet ────────────────────────────────────────
-                    _buildAnswerArea(),
-
-                    const SizedBox(height: 20),
-
-                    // ── Word pool ───────────────────────────────────────────
-                    Expanded(
-                      child: Padding(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 20),
-                        child: SingleChildScrollView(
-                          child: Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: shuffledWords.map((word) {
-                              return GestureDetector(
-                                onTap: () => _selectWord(word),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    border: Border.all(
-                                        color: greenPrimary, width: 2),
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.grey
-                                            .withValues(alpha: 0.15),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2),
+                
+                      const SizedBox(height: 12),
+                
+                      // ── Answer sheet ────────────────────────────────────────
+                      _buildAnswerArea(),
+                
+                      const SizedBox(height: 20),
+                
+                      // ── Word pool ───────────────────────────────────────────
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: SingleChildScrollView(
+                            child: Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: shuffledWords.map((word) {
+                                return GestureDetector(
+                                  onTap: () => _selectWord(word),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      border: Border.all(color: greenPrimary, width: 2),
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.grey.withOpacity(0.15),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Text(
+                                      word['en']!,
+                                      style: const TextStyle(
+                                        color: Colors.black87,
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w600,
                                       ),
-                                    ],
-                                  ),
-                                  child: Text(
-                                    word['en']!,
-                                    style: const TextStyle(
-                                      color: Colors.black87,
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // ── Check button ────────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 20),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: selectedWords.length == answerEn.length
-                              ? _checkAnswer
-                              : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: greenPrimary,
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 18),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            elevation: 5,
-                          ),
-                          child: Text(
-                            // TeacherUITranslations.get('check', _userLang),
-                            'Check',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
-                              color: Colors.white,
+                                );
+                              }).toList(),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                
+                      // ── Check button ────────────────────────────────────────
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: selectedWords.length == answerEn.length
+                                ? _checkAnswer
+                                : null,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: greenPrimary,
+                              padding: const EdgeInsets.symmetric(vertical: 18),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              elevation: 5,
+                            ),
+                            child: const Text(
+                              'Check',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+              ),
         ),
       ),
     );

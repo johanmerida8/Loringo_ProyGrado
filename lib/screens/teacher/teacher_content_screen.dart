@@ -8,10 +8,7 @@ import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // ── TeacherContentScreen ──────────────────────────────────────────────────────
-// Lista de todos los contenidos del docente, agrupados por estado:
-//   Approved  → card verde  → tap abre el árbol de unidades
-//   Pending   → card naranja → solo editable
-//   Rejected  → card rojo   → editable con razón de rechazo visible
+// Lista de todos los contenidos del docente, sin estados de aprobación
 
 class TeacherContentScreen extends StatelessWidget {
   const TeacherContentScreen({super.key});
@@ -59,12 +56,10 @@ class _Body extends StatelessWidget {
           }
           final docs = snapshot.data?.docs ?? [];
 
-          if (docs.isEmpty) return _EmptyState(onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const CreatePersonalizedContentScreen())));
-
-          final approved = docs.where((d) => d['status'] == 'approved').toList();
-          final pending  = docs.where((d) => d['status'] == 'pending').toList();
-          final rejected = docs.where((d) => d['status'] == 'rejected').toList();
+          if (docs.isEmpty) {
+            return _EmptyState(onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const CreatePersonalizedContentScreen())));
+          }
 
           return CustomScrollView(
             slivers: [
@@ -74,11 +69,7 @@ class _Body extends StatelessWidget {
                   color: _green,
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                   child: Row(children: [
-                    _statBadge('${approved.length}', 'Approved', Colors.white, _green),
-                    const SizedBox(width: 10),
-                    _statBadge('${pending.length}', 'Pending', Colors.orange.shade200, Colors.orange.shade800),
-                    const SizedBox(width: 10),
-                    _statBadge('${rejected.length}', 'Rejected', Colors.red.shade200, Colors.red.shade800),
+                    _statBadge('${docs.length}', 'Total Content', Colors.white, _green),
                   ]),
                 ),
               ),
@@ -93,26 +84,17 @@ class _Body extends StatelessWidget {
                 ),
               ),
 
-              // ── Sections ──────────────────────────────────────────────
+              // ── Content list ──────────────────────────────────────────
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
                 sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    if (approved.isNotEmpty) ...[
-                      _SectionHeader(label: 'Approved', count: approved.length, color: Colors.green),
-                      ...approved.map((d) => _ContentCard(doc: d, teacherId: teacherId)),
-                      const SizedBox(height: 8),
-                    ],
-                    if (pending.isNotEmpty) ...[
-                      _SectionHeader(label: 'Pending Review', count: pending.length, color: Colors.orange),
-                      ...pending.map((d) => _ContentCard(doc: d, teacherId: teacherId)),
-                      const SizedBox(height: 8),
-                    ],
-                    if (rejected.isNotEmpty) ...[
-                      _SectionHeader(label: 'Rejected', count: rejected.length, color: Colors.red),
-                      ...rejected.map((d) => _ContentCard(doc: d, teacherId: teacherId)),
-                    ],
-                  ]),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final doc = docs[index];
+                      return _ContentCard(doc: doc, teacherId: teacherId);
+                    },
+                    childCount: docs.length,
+                  ),
                 ),
               ),
             ],
@@ -148,32 +130,26 @@ class _ContentCard extends StatelessWidget {
     final title      = data['title']    as String? ?? 'Untitled';
     final ageGroup   = data['ageGroup'] as String? ?? '';
     final desc       = data['description'] as String? ?? '';
-    final status     = data['status']   as String? ?? 'pending';
     final assignedTo = (data['assignedTo'] as List?)?.cast<String>() ?? [];
     final initial    = title.isNotEmpty ? title[0].toUpperCase() : '#';
 
-    final isApproved = status == 'approved';
-    final isPending  = status == 'pending';
-    final isRejected = status == 'rejected';
-
-    // Status accent colour (left border)
-    final Color accent = isApproved ? _green : isPending ? Colors.orange : Colors.red;
-
     return GestureDetector(
-      onTap: isApproved
-          ? () => Navigator.push(context, MaterialPageRoute(
-              builder: (_) => PersonalizedContentDetailsScreen(
-                  groupId: '', contentId: doc.id,
-                  contentTitle: title, groupColor: _green)))
-          : isRejected
-              ? () => _edit(context, data)
-              : null,
+      onTap: () => Navigator.push(context, 
+        MaterialPageRoute(
+          builder: (_) => PersonalizedContentDetailsScreen(
+            groupId: '', 
+            contentId: doc.id,
+            contentTitle: title, 
+            groupColor: _green
+          )
+        )
+      ),
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border(left: BorderSide(color: accent, width: 4)),
+          border: Border(left: BorderSide(color: _green, width: 4)),
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Padding(
@@ -186,11 +162,11 @@ class _ContentCard extends StatelessWidget {
               Container(
                 width: 42, height: 42,
                 decoration: BoxDecoration(
-                  color: accent.withOpacity(0.1),
+                  color: _green.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Center(child: Text(initial,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: accent))),
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: _green))),
               ),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -213,9 +189,8 @@ class _ContentCard extends StatelessWidget {
                   if (v == 'assign') _assign(context, assignedTo);
                 },
                 itemBuilder: (_) => [
-                  if (isApproved)
-                    const PopupMenuItem(value: 'assign',
-                        child: Row(children: [Icon(Icons.group_add, size: 16), SizedBox(width: 8), Text('Assign to Groups')])),
+                  const PopupMenuItem(value: 'assign',
+                      child: Row(children: [Icon(Icons.group_add, size: 16), SizedBox(width: 8), Text('Assign to Groups')])),
                   const PopupMenuItem(value: 'edit',
                       child: Row(children: [Icon(Icons.edit_outlined, size: 16, color: Colors.blue), SizedBox(width: 8), Text('Edit')])),
                   const PopupMenuItem(value: 'delete',
@@ -232,68 +207,28 @@ class _ContentCard extends StatelessWidget {
                   maxLines: 2, overflow: TextOverflow.ellipsis),
             ],
 
-            // ── Footer (group chip only) ─────────────────────────────────
-            if (isApproved) ...[
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: () => _assign(context, assignedTo),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: assignedTo.isNotEmpty ? _green.withOpacity(0.08) : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: assignedTo.isNotEmpty ? _green.withOpacity(0.3) : Colors.grey.shade300),
+            // ── Footer (group chip) ─────────────────────────────────────
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: () => _assign(context, assignedTo),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: assignedTo.isNotEmpty ? _green.withOpacity(0.08) : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: assignedTo.isNotEmpty ? _green.withOpacity(0.3) : Colors.grey.shade300),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.group, size: 13, color: assignedTo.isNotEmpty ? _green : Colors.grey.shade400),
+                  const SizedBox(width: 4),
+                  Text(
+                    assignedTo.isEmpty ? 'Assign groups' : '${assignedTo.length} group${assignedTo.length != 1 ? 's' : ''}',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                        color: assignedTo.isNotEmpty ? _green : Colors.grey.shade500),
                   ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.group, size: 13, color: assignedTo.isNotEmpty ? _green : Colors.grey.shade400),
-                    const SizedBox(width: 4),
-                    Text(
-                      assignedTo.isEmpty ? 'Assign groups' : '${assignedTo.length} group${assignedTo.length != 1 ? 's' : ''}',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                          color: assignedTo.isNotEmpty ? _green : Colors.grey.shade500),
-                    ),
-                  ]),
-                ),
-              ),
-            ],
-
-            // ── Rejected reason preview ───────────────────────────────────
-            if (isRejected) ...[
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.shade100),
-                ),
-                child: Row(children: [
-                  Icon(Icons.info_outline, size: 14, color: Colors.red.shade400),
-                  const SizedBox(width: 6),
-                  Expanded(child: Text('Tap to edit and resubmit',
-                      style: TextStyle(fontSize: 11, color: Colors.red.shade600))),
                 ]),
               ),
-            ],
-
-            // ── Pending info ──────────────────────────────────────────────
-            if (isPending) ...[
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.shade100),
-                ),
-                child: Row(children: [
-                  Icon(Icons.hourglass_top_rounded, size: 13, color: Colors.orange.shade600),
-                  const SizedBox(width: 6),
-                  Text('Awaiting admin approval',
-                      style: TextStyle(fontSize: 11, color: Colors.orange.shade700, fontWeight: FontWeight.w500)),
-                ]),
-              ),
-            ],
+            ),
           ]),
         ),
       ),
@@ -331,68 +266,6 @@ class _ContentCard extends StatelessWidget {
       );
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color bg;
-    final Color fg;
-    final IconData icon;
-    final String label;
-
-    switch (status) {
-      case 'approved':
-        bg = Colors.green.shade50; fg = Colors.green.shade700;
-        icon = Icons.check_circle_rounded; label = 'Approved'; break;
-      case 'pending':
-        bg = Colors.orange.shade50; fg = Colors.orange.shade700;
-        icon = Icons.hourglass_top_rounded; label = 'Pending'; break;
-      default:
-        bg = Colors.red.shade50; fg = Colors.red.shade700;
-        icon = Icons.cancel_rounded; label = 'Rejected';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 12, color: fg),
-        const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 11, color: fg, fontWeight: FontWeight.w600)),
-      ]),
-    );
-  }
-}
-
-// ── Section header ────────────────────────────────────────────────────────────
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.label, required this.count, required this.color});
-  final String label;
-  final int count;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10, top: 4),
-    child: Row(children: [
-      Container(width: 3, height: 16, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
-      const SizedBox(width: 8),
-      Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.grey.shade700)),
-      const SizedBox(width: 6),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-        child: Text('$count', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
-      ),
-    ]),
-  );
-}
-
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
@@ -409,7 +282,7 @@ class _EmptyState extends StatelessWidget {
         const Text('No Content Yet',
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
-        Text('Create your first content unit. Once approved\nby an admin, you can assign it to your groups.',
+        Text('Create your first content unit to get started.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.grey.shade500, height: 1.5)),
         const SizedBox(height: 28),

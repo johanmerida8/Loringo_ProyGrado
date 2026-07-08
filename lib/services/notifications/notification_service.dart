@@ -45,7 +45,7 @@ class NotificationService {
       // Send push notification via OneSignal
       await OneSignalNotificationService.sendNotification(
         userId: parentId,  // ← This is the external user ID
-        title: '📝 New Report Available',
+        title: 'New Report Available',
         message: '$studentName completed "$unitTitle" - Tap to view details',
       );
       

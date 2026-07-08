@@ -5,9 +5,13 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:loringo_app/firebase_options.dart';
+import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/initials/splash_screen.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:provider/provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,23 +31,35 @@ void main() async {
     final oneSignalAppId = dotenv.env['ONESIGNAL_APP_ID'];
     if (oneSignalAppId != null && oneSignalAppId.isNotEmpty) {
       await OneSignal.initialize(oneSignalAppId);
-      await OneSignal.Notifications.requestPermission(true);
       if (kDebugMode) {
         OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
-        print('✅ OneSignal initialized for mobile');
+        print('   OneSignal initialized for mobile');
       }
     } else {
       if (kDebugMode) {
-        print('⚠️ OneSignal App ID not found in .env file');
+        print('   OneSignal App ID not found in .env file');
       }
     }
   } else {
     if (kDebugMode) {
-      print('⚠️ OneSignal skipped on web platform');
+      print('   OneSignal skipped on web platform');
     }
   }
 
-  runApp(const MyApp());
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => BiometricProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
+      ],
+      child: const MyApp(),
+    )
+  );
+
+  // loads the success/fail sounds once so the first
+  // feedback sound a student hears in any task screen is instant instead
+  // of paying the setAsset load cost.
+  FeedbackSoundService.instance.preload();
 }
 
 class MyApp extends StatelessWidget {

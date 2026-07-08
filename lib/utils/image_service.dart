@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http/http.dart' as http;
+import 'package:loringo_app/utils/moderation_terms.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // ── Upload folder resolver ────────────────────────────────────────────────────
@@ -24,35 +26,26 @@ Future<String> getUploadFolder() async {
 }
 
 // ── ImageService ──────────────────────────────────────────────────────────────
+//
+// Shared by BOTH teacher and admin upload flows. Any change here applies to
+// both roles automatically — do not duplicate this logic in admin screens.
 
 class ImageService {
   final String cloudName   = 'dmflzlyzk';
-  final String uploadPreset = 'task_images';
+  final String uploadPreset = 'multimedia';
 
-  // ── Permission helper ─────────────────────────────────────────────────────
-  // Web: permissions are handled by the browser — no runtime request needed.
-  // Android 13+ (API 33): READ_MEDIA_IMAGES covers photo access.
-  // Android 12 and below: READ_EXTERNAL_STORAGE is the equivalent.
-  // iOS: NSPhotoLibraryUsageDescription in Info.plist + runtime request.
-  //
-  // Returns:
-  //   true  → permission granted, proceed with file picker
-  //   false → permission denied or permanently denied; caller should stop
+  // ── Permission helper ──────────────────────────────────────────────────
+  // Solicita permiso de fotos según plataforma; true = listo para picker
 
   Future<bool> _requestStoragePermission() async {
-    // Web has no permission API — browser handles it natively
     if (kIsWeb) return true;
 
-    // Determine the right permission for this Android version / platform
     final Permission permission;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      // Android 13+ uses READ_MEDIA_IMAGES; older uses READ_EXTERNAL_STORAGE.
-      // permission_handler selects the correct one automatically via photos.
       permission = Permission.photos;
     } else if (defaultTargetPlatform == TargetPlatform.iOS) {
       permission = Permission.photos;
     } else {
-      // Desktop (macOS, Linux, Windows) — no runtime permission needed
       return true;
     }
 
@@ -61,27 +54,23 @@ class ImageService {
     if (status.isGranted) return true;
 
     if (status.isPermanentlyDenied) {
-      // User has tapped "Never ask again" — send them to app settings
       await openAppSettings();
       return false;
     }
 
-    // First time or previously denied — show the system permission dialog
     final result = await permission.request();
     return result.isGranted;
   }
 
-  // ── File pickers ──────────────────────────────────────────────────────────
-  // Both methods request storage permission before opening the file picker.
-  // If permission is denied, they return null so the caller can handle it
-  // (show a message, do nothing) without crashing.
+  // ── File pickers ──────────────────────────────────────────────────────
+  // Retornan null si el permiso fue denegado
 
   Future<PlatformFile?> pickImage() async {
     if (!await _requestStoragePermission()) return null;
 
     final res = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['png', 'svg'],
+      allowedExtensions: ['png', 'svg', 'webp'],
       withData: true,
     );
     return res?.files.first;
@@ -92,47 +81,74 @@ class ImageService {
 
     final res = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['png', 'svg'],
+      allowedExtensions: ['png', 'svg', 'webp'],
       withData: true,
       allowMultiple: true,
     );
     return res?.files;
   }
 
-  // ── Google Vision SafeSearch moderation ───────────────────────────────────
-  // Only VERY_LIKELY blocks the upload — LIKELY is too aggressive for
-  // cartoon/illustration content (body parts, fruits, characters).
+  // ── Capa 1: filtro de nombre de archivo (rápido, no gasta llamada a la nube) ──
+  // Atrapa casos obvios sin costo de red; NO reemplaza el análisis visual.
+
+  bool checkImageNameForBlockedTerms(String fileName) {
+    final lowerName = fileName.toLowerCase();
+    final nameWithoutExt = lowerName.replaceAll(RegExp(r'\.[^.]*$'), '');
+    final words = nameWithoutExt.split(RegExp(r'[_\s\-\.]+'));
+
+    for (final word in words) {
+      if (kidsafeModerationBlockedTerms.contains(word)) {
+        // ignore: avoid_print
+        print('[MODERATION] "$fileName" REJECTED at Capa 1 (filename) — matched word "$word"');
+        return true;
+      }
+    }
+    for (final term in kidsafeModerationBlockedTerms) {
+      if (nameWithoutExt.contains(term)) {
+        // ignore: avoid_print
+        print('[MODERATION] "$fileName" REJECTED at Capa 1 (filename) — contains term "$term"');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ── Capa 2: Google Cloud Vision SafeSearch, vía Cloud Function propia ────
+  //
+  // La API key de Vision NUNCA vive en el cliente — la llamada real ocurre
+  // server-side en la función `moderateImage` (Firebase Functions), que
+  // guarda la key como secret de Secret Manager. El cliente solo manda la
+  // imagen en base64 y recibe {safe: true/false}.
+  //
+  // Solo VERY_LIKELY bloquea la subida del lado del servidor — LIKELY es
+  // demasiado agresivo para contenido animado/ilustrado (partes del cuerpo,
+  // frutas, personajes de caricatura), que es el dominio real de las
+  // imágenes de Loringo.
 
   Future<bool> checkImageWithGoogleVision(Uint8List imageBytes) async {
     try {
-      final apiKey = dotenv.env['GOOGLE_VISION_API_KEY'];
-      if (apiKey == null) throw Exception('Missing GOOGLE_VISION_API_KEY');
+      // ignore: avoid_print
+      print('[MODERATION] Calling moderateImage — ${imageBytes.length} bytes');
 
-      final response = await http.post(
-        Uri.parse('https://vision.googleapis.com/v1/images:annotate?key=$apiKey'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'requests': [{
-            'image': {'content': base64Encode(imageBytes)},
-            'features': [{'type': 'SAFE_SEARCH_DETECTION'}],
-          }],
-        }),
-      );
+      final callable = FirebaseFunctions.instance.httpsCallable('moderateImage');
+      final result = await callable.call({
+        'imageBase64': base64Encode(imageBytes),
+      });
 
-      if (response.statusCode != 200) {
-        throw Exception('Vision API HTTP ${response.statusCode}');
-      }
+      final data = result.data as Map;
+      // ignore: avoid_print
+      print('[MODERATION] moderateImage raw response: $data');
 
-      final visionResponse = (jsonDecode(response.body) as Map)['responses'][0];
-      final safeSearch = visionResponse['safeSearchAnnotation'] as Map? ?? {};
+      final isSafe = data['safe'] == true;
+      // ignore: avoid_print
+      print('[MODERATION] Capa 2 (Vision) decision: ${isSafe ? "SAFE ✅" : "REJECTED ❌ (reason: ${data['reason']})"}');
 
-      for (final key in ['adult', 'violence', 'racy']) {
-        final rating = safeSearch[key] as String? ?? 'UNKNOWN';
-        if (rating == 'VERY_LIKELY') return false;
-      }
-
-      return true;
-    } catch (_) {
+      return isSafe;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[MODERATION] moderateImage call FAILED (fail-closed → rejecting): $e');
+      // Fail closed: cualquier error (red, función no desplegada, etc.)
+      // rechaza la imagen en vez de dejarla pasar.
       return false;
     }
   }
@@ -148,6 +164,11 @@ class ImageService {
   }
 
   // ── Cloudinary upload ─────────────────────────────────────────────────────
+  //
+  // Moderación en dos capas antes de subir a Cloudinary:
+  //   1. Nombre de archivo (barato, atrapa lo obvio)
+  //   2. Google Vision SafeSearch server-side (real, analiza el contenido)
+  // SVG se salta la capa 2 porque es vectorial, no analizable por Vision.
 
   Future<Map<String, dynamic>> uploadToCloudinary(
     PlatformFile file, {
@@ -158,14 +179,24 @@ class ImageService {
     }
 
     final fileName = file.name.toLowerCase();
-    final isSvg = fileName.endsWith('.svg');
-    final isPng = fileName.endsWith('.png');
+    final isSvg  = fileName.endsWith('.svg');
+    final isPng  = fileName.endsWith('.png');
+    final isWebp = fileName.endsWith('.webp');
 
-    if (!isSvg && !isPng) {
+    if (!isSvg && !isPng && !isWebp) {
       return {
         'success': false,
-        'error': 'Only PNG and SVG formats are allowed',
+        'error': 'Only PNG, SVG, and WebP formats are allowed',
         'reason': 'UNSUPPORTED_FILE_FORMAT',
+      };
+    }
+
+    // Capa 1: nombre de archivo
+    if (checkImageNameForBlockedTerms(file.name)) {
+      return {
+        'success': false,
+        'error': 'Image name contains inappropriate content',
+        'reason': 'REJECT_INAPPROPRIATE_IMAGE',
       };
     }
 
@@ -178,14 +209,23 @@ class ImageService {
         fileBytes = file.bytes!;
       }
     }
+    // WebP no se comprime (igual que el original, solo comprimía PNG)
 
-    if (!await checkImageWithGoogleVision(fileBytes)) {
-      return {
-        'success': false,
-        'error': 'Image rejected by content moderation',
-        'reason': 'REJECT_INAPPROPRIATE_IMAGE',
-      };
+    // Capa 2: Google Vision SafeSearch server-side
+    if (!isSvg) {
+      if (!await checkImageWithGoogleVision(fileBytes)) {
+        // ignore: avoid_print
+        print('[MODERATION] "${file.name}" → FINAL: REJECTED (Capa 2 / Vision)');
+        return {
+          'success': false,
+          'error': 'Image rejected by content moderation',
+          'reason': 'REJECT_INAPPROPRIATE_IMAGE',
+        };
+      }
     }
+
+    // ignore: avoid_print
+    print('[MODERATION] "${file.name}" → FINAL: PASSED, uploading to Cloudinary...');
 
     final baseFolder  = await getUploadFolder();
     final finalFolder = categoryName != null ? '$baseFolder/$categoryName' : baseFolder;

@@ -21,7 +21,7 @@ class ImageSelectTask extends StatefulWidget {
   State<ImageSelectTask> createState() => _ImageSelectTaskState();
 }
 
-class _ImageSelectTaskState extends State<ImageSelectTask> implements TaskTypeEditor {
+class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   late List<Map<String, dynamic>> options;
   late List<TextEditingController> textControllers;
   late List<TextEditingController> imageControllers;

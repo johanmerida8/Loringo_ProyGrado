@@ -1,6 +1,10 @@
+// create_activity_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
+// import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class CreatePersonalizedActivityScreen extends StatefulWidget {
   final String groupId;
@@ -41,34 +45,25 @@ class _CreatePersonalizedActivityScreenState
   String difficulty = 'easy';
   List<Map<String, dynamic>> existingActivities = [];
 
+  bool get _isEditing => widget.activityId != null;
+  Color get _c => widget.groupColor;
+
   @override
   void initState() {
     super.initState();
-    titleController = TextEditingController(
-      text: widget.existingData?['title'] ?? '',
-    );
-    orderController = TextEditingController(
-      text: widget.existingData?['order']?.toString() ?? '',
-    );
-    xpBaseController = TextEditingController(
-      text: widget.existingData?['xpBase']?.toString() ?? '10',
-    );
+    titleController = TextEditingController(text: widget.existingData?['title'] ?? '');
+    orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
+    xpBaseController = TextEditingController(text: widget.existingData?['xpBase']?.toString() ?? '10');
     requiredActivityId = widget.existingData?['requiredActivityId'];
-    
-    // Set initial difficulty based on XP
-    final initialXp = int.tryParse(xpBaseController.text) ?? 25;
+
+    final initialXp = int.tryParse(xpBaseController.text) ?? 10;
     difficulty = _getDifficultyFromXP(initialXp);
-    
-    // Listen to XP changes to update difficulty
+
     xpBaseController.addListener(() {
       final xp = int.tryParse(xpBaseController.text);
-      if (xp != null) {
-        setState(() {
-          difficulty = _getDifficultyFromXP(xp);
-        });
-      }
+      if (xp != null) setState(() => difficulty = _getDifficultyFromXP(xp));
     });
-    
+
     _loadExistingActivities();
   }
 
@@ -88,17 +83,19 @@ class _CreatePersonalizedActivityScreenState
       setState(() {
         existingActivities = snapshot.docs
             .where((doc) => doc.id != widget.activityId)
-            .map(
-              (doc) => {
-                'id': doc.id,
-                'title': doc.data()['title'] ?? 'Untitled',
-                'order': doc.data()['order'] ?? 0,
-              },
-            )
+            .map((doc) => {
+                  'id': doc.id,
+                  'title': doc.data()['title'] ?? 'Untitled',
+                  'order': doc.data()['order'] ?? 0,
+                })
             .toList();
       });
+
+      if (!_isEditing && orderController.text.isEmpty) {
+        orderController.text = (snapshot.docs.length + 1).toString();
+      }
     } catch (e) {
-      print('Error loading activities: $e');
+      debugPrint('Error loading activities: $e');
     }
   }
 
@@ -111,37 +108,31 @@ class _CreatePersonalizedActivityScreenState
   }
 
   String _getDifficultyFromXP(int xp) {
-    if (xp >= 0 && xp <= 15) {
-      return 'easy';
-    } else if (xp >= 16 && xp <= 30) {
-      return 'medium';
-    } else if (xp >= 31 && xp <= 50) {
-      return 'hard';
-    }
+    if (xp >= 0 && xp <= 15) return 'easy';
+    if (xp >= 16 && xp <= 30) return 'medium';
+    if (xp >= 31 && xp <= 50) return 'hard';
     return 'easy';
   }
 
   Color _getDifficultyColor(String diff) {
     switch (diff) {
-      case 'easy':
-        return const Color(0xFF4CAF50); // Green
       case 'medium':
-        return const Color(0xFFFFA726); // Orange
+        return AppColors.warning;
       case 'hard':
-        return const Color(0xFFEF5350); // Red
+        return AppColors.danger;
       default:
-        return Colors.grey;
+        return AppColors.success;
     }
   }
 
   String _getDifficultyLabel(String diff) {
     switch (diff) {
       case 'easy':
-        return '🟢 Easy (0-15 XP)';
+        return '🟢 Easy (0–15 XP)';
       case 'medium':
-        return '🟡 Medium (16-30 XP)';
+        return '🟡 Medium (16–30 XP)';
       case 'hard':
-        return '🔴 Hard (31-50 XP)';
+        return '🔴 Hard (31–50 XP)';
       default:
         return 'Unknown';
     }
@@ -149,15 +140,12 @@ class _CreatePersonalizedActivityScreenState
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-
     setState(() => isLoading = true);
 
     try {
-      final activityId =
-          widget.activityId ??
-          'activity_${DateTime.now().millisecondsSinceEpoch}';
+      final activityId = widget.activityId ?? 'activity_${DateTime.now().millisecondsSinceEpoch}';
 
-      if (widget.activityId == null) {
+      if (!_isEditing) {
         await db.createPersonalizedActivity(
           groupId: widget.groupId,
           contentId: widget.contentId,
@@ -171,7 +159,6 @@ class _CreatePersonalizedActivityScreenState
           difficulty: difficulty,
         );
       } else {
-        // Dirty check (edit mode)
         final origTitle = widget.existingData?['title'] as String? ?? '';
         final origOrder = widget.existingData?['order']?.toString() ?? '';
         final origXp = widget.existingData?['xpBase']?.toString() ?? '10';
@@ -184,10 +171,7 @@ class _CreatePersonalizedActivityScreenState
         if (noChanges) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No changes made'),
-              backgroundColor: Colors.grey,
-            ),
+            const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
           );
           return;
         }
@@ -208,371 +192,159 @@ class _CreatePersonalizedActivityScreenState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              widget.activityId == null
-                  ? '✅ Activity created successfully!'
-                  : '✅ Activity updated successfully!',
-            ),
-            backgroundColor: Colors.green,
+            content: Text(_isEditing ? 'Activity updated successfully!' : 'Activity created successfully!'),
+            backgroundColor: AppColors.success,
           ),
         );
         Navigator.pop(context);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
+        );
+      }
     } finally {
-      setState(() => isLoading = false);
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-
+    final diffColor = _getDifficultyColor(difficulty);
     final safeValue = requiredActivityId != null &&
-            existingActivities.any((a) => a['id'] == requiredActivityId) 
+            existingActivities.any((a) => a['id'] == requiredActivityId)
         ? requiredActivityId
         : null;
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
-        title: Text(
-          widget.activityId != null ? 'Edit Activity' : 'Create Activity',
-        ),
-        backgroundColor: widget.groupColor,
+        backgroundColor: _c,
         elevation: 0,
+        iconTheme: const IconThemeData(color: AppColors.onPrimary),
+        title: Text(_isEditing ? 'Edit Activity' : 'Create Activity', style: AppText.appBarTitle),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header section with group color accent
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      widget.groupColor.withOpacity(0.1),
-                      widget.groupColor.withOpacity(0.05),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: widget.groupColor.withOpacity(0.2),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: widget.groupColor.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.movie,
-                        color: widget.groupColor,
-                        size: 28,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.activityId != null ? 'Editing Activity' : 'New Activity',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: widget.groupColor,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Groups multiple tasks together',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              CreateFormBanner(
+                color: _c,
+                icon: Icons.movie_creation_outlined,
+                label: _isEditing ? 'Editing Activity' : 'New Activity',
+                description: 'Groups multiple tasks together',
               ),
-              const SizedBox(height: 28),
-              // Title field
-              TextFormField(
+              const SizedBox(height: AppSpacing.lg),
+
+              const CreateFormLabel('Activity Title'),
+              const SizedBox(height: AppSpacing.sm),
+              CreateFormField(
                 controller: titleController,
-                decoration: InputDecoration(
-                  labelText: 'Activity Title',
-                  hintText: 'e.g., Listening Exercise',
-                  prefixIcon: Icon(Icons.title, color: widget.groupColor),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor.withOpacity(0.3),
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor,
-                      width: 2,
-                    ),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Please enter a title';
-                  }
-                  return null;
-                },
+                color: _c,
+                icon: Icons.title,
+                hint: 'e.g. Listening Exercise',
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter a title' : null,
               ),
-              const SizedBox(height: 20),
-              // Order field
-              TextFormField(
+              const SizedBox(height: AppSpacing.lg),
+
+              const CreateFormLabel('Display Order'),
+              const SizedBox(height: AppSpacing.sm),
+              CreateFormField(
                 controller: orderController,
-                decoration: InputDecoration(
-                  labelText: 'Display Order',
-                  hintText: '1, 2, 3...',
-                  prefixIcon: Icon(Icons.sort, color: widget.groupColor),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor.withOpacity(0.3),
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor,
-                      width: 2,
-                    ),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
+                color: _c,
+                icon: Icons.sort,
+                hint: '1, 2, 3…',
                 keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Please enter an order number';
-                  }
-                  if (int.tryParse(value.trim()) == null) {
-                    return 'Please enter a valid number';
-                  }
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Please enter an order number';
+                  if (int.tryParse(v.trim()) == null) return 'Please enter a valid number';
                   return null;
                 },
               ),
-              const SizedBox(height: 20),
-              // XP field
-              TextFormField(
+              const SizedBox(height: AppSpacing.lg),
+
+              const CreateFormLabel('Base XP Reward'),
+              const SizedBox(height: AppSpacing.sm),
+              CreateFormField(
                 controller: xpBaseController,
-                decoration: InputDecoration(
-                  labelText: 'Base XP Reward',
-                  hintText: 'e.g., 25',
-                  prefixIcon: Icon(Icons.stars, color: widget.groupColor),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor.withOpacity(0.3),
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor,
-                      width: 2,
-                    ),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  helperText: 'Points earned upon completion (0-50)',
-                ),
+                color: _c,
+                icon: Icons.stars,
+                hint: 'e.g. 25',
+                helperText: 'Points earned upon completion (0–50)',
                 keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Please enter base XP';
-                  }
-                  if (int.tryParse(value.trim()) == null) {
-                    return 'Please enter a valid number';
-                  }
-                  final xp = int.parse(value.trim());
-                  if (xp < 0 || xp > 50) {
-                    return 'XP must be between 0 and 50';
-                  }
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Please enter base XP';
+                  final xp = int.tryParse(v.trim());
+                  if (xp == null) return 'Please enter a valid number';
+                  if (xp < 0 || xp > 50) return 'XP must be between 0 and 50';
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
-              // Difficulty indicator
+              const SizedBox(height: AppSpacing.sm),
+
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(AppSpacing.md),
                 decoration: BoxDecoration(
-                  color: _getDifficultyColor(difficulty).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _getDifficultyColor(difficulty).withOpacity(0.3),
+                  color: diffColor.withOpacity(0.1),
+                  borderRadius: AppRadii.mdAll,
+                  border: Border.all(color: diffColor.withOpacity(0.3)),
+                ),
+                child: Row(children: [
+                  Icon(
+                    difficulty == 'easy'
+                        ? Icons.trending_down
+                        : difficulty == 'medium'
+                            ? Icons.trending_flat
+                            : Icons.trending_up,
+                    color: diffColor,
+                    size: 20,
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      difficulty == 'easy'
-                          ? Icons.trending_down
-                          : difficulty == 'medium'
-                              ? Icons.trending_flat
-                              : Icons.trending_up,
-                      color: _getDifficultyColor(difficulty),
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Difficulty Level',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _getDifficultyLabel(difficulty),
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: _getDifficultyColor(difficulty),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                  const SizedBox(width: AppSpacing.md),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Difficulty Level', style: AppText.caption),
+                      const SizedBox(height: 2),
+                      Text(_getDifficultyLabel(difficulty),
+                          style: TextStyle(fontSize: 14, color: diffColor, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ]),
               ),
-              const SizedBox(height: 20),
-              // Required activity dropdown
+              const SizedBox(height: AppSpacing.lg),
+
+              const CreateFormLabel('Prerequisites'),
+              const SizedBox(height: AppSpacing.sm),
               DropdownButtonFormField<String>(
                 value: safeValue,
-                isExpanded: true,          // ← prevents the internal Row from overflowing
-                decoration: InputDecoration(
-                  labelText: 'Prerequisites',
-                  hintText: 'Select activity to unlock this one',
-                  prefixIcon: Icon(Icons.lock, color: widget.groupColor),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor.withOpacity(0.3),
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: widget.groupColor,
-                      width: 2,
-                    ),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  helperText: 'Leave empty if this is the first activity',
-                  // Add right content padding to give the dropdown arrow room
-                  contentPadding: const EdgeInsets.only(
-                    left: 0,      // prefixIcon handles left spacing
-                    right: 12,    // explicit right padding so the arrow doesn't clip
-                    top: 16,
-                    bottom: 16,
-                  ),
+                isExpanded: true,
+                decoration: AppInput.decoration(
+                  accent: _c,
+                  hint: 'Select activity to unlock this one',
+                  icon: Icons.lock_outline,
+                  helper: 'Leave empty if this is the first activity',
                 ),
                 items: [
-                  const DropdownMenuItem<String>(
-                    value: null,
-                    child: Text('None (Always Unlocked)'),
-                  ),
-                  ...existingActivities.map((activity) {
-                    return DropdownMenuItem<String>(
-                      value: activity['id'],
-                      child: Text(
-                        '${activity['order']}. ${activity['title']}',
-                        overflow: TextOverflow.ellipsis,  // ← long titles won't overflow
-                      ),
-                    );
-                  }).toList(),
+                  const DropdownMenuItem<String>(value: null, child: Text('None (Always Unlocked)')),
+                  ...existingActivities.map((activity) => DropdownMenuItem<String>(
+                        value: activity['id'],
+                        child: Text('${activity['order']}. ${activity['title']}', overflow: TextOverflow.ellipsis),
+                      )),
                 ],
-                onChanged: (value) {
-                  setState(() {
-                    requiredActivityId = value;
-                  });
-                },
+                onChanged: (value) => setState(() => requiredActivityId = value),
               ),
-              const SizedBox(height: 32),
-              // Submit button
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: isLoading ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: widget.groupColor,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Text(
-                          widget.activityId != null
-                              ? 'UPDATE ACTIVITY'
-                              : 'CREATE ACTIVITY',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                ),
+              const SizedBox(height: AppSpacing.xl),
+
+              CreateFormSubmitButton(
+                color: _c,
+                label: _isEditing ? 'UPDATE ACTIVITY' : 'CREATE ACTIVITY',
+                isLoading: isLoading,
+                onPressed: _submit,
               ),
-              const SizedBox(height: 16),
             ],
           ),
         ),

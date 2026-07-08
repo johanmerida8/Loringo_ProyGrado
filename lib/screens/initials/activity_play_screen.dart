@@ -8,6 +8,7 @@ import 'package:loringo_app/screens/initials/screen_one.dart';
 import 'package:loringo_app/screens/initials/screen_five.dart';
 import 'package:loringo_app/screens/initials/screen_four.dart';
 import 'package:loringo_app/screens/initials/screen_six.dart';
+import 'package:loringo_app/screens/initials/screen_ten.dart';
 import 'package:loringo_app/screens/initials/screen_three.dart';
 import 'package:loringo_app/screens/initials/screen_two.dart';
 import 'package:loringo_app/screens/initials/screen_seven.dart';
@@ -279,6 +280,20 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
       
       case 'repeat_after_me':
         return ScreenNine(
+          key: ValueKey(taskDoc.id),
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
+          activityId: widget.activityId,
+          taskId: taskDoc.id,
+          onTaskComplete: nextTask,
+          currentTaskNumber: currentTaskIndex,
+          totalTasks: tasks.length,
+          collectionName: widget.collectionName,
+        );
+      
+      case 'listen_and_speak':
+        return ScreenTen( 
           key: ValueKey(taskDoc.id),
           contentId: widget.contentId,
           unitId: widget.unitId,

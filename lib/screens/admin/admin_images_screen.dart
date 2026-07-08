@@ -86,24 +86,11 @@ class AdminImagesScreen extends StatelessWidget {
                     ownerId: uid,
                     ownerRole: 'admin');
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Row(children: [
-                      const Icon(Icons.check_circle,
-                          color: AppColors.onPrimary, size: 18),
-                      const SizedBox(width: AppSpacing.sm),
-                      Text('Category "$sanitized" created'),
-                    ]),
-                    backgroundColor: AppColors.primary,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadii.md)),
-                  ));
+                  _showSuccessSnackBar(context, 'Category "$sanitized" created');
                 }
               } catch (e) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: AppColors.danger));
+                  _showErrorSnackBar(context, 'Error: $e');
                 }
               }
             },
@@ -111,6 +98,42 @@ class AdminImagesScreen extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── SnackBar helpers ──────────────────────────────────────────────────────
+
+  void _showSuccessSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(children: [
+          const Icon(Icons.check_circle, color: AppColors.onPrimary, size: 18),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(child: Text(message)),
+        ]),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.danger,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
@@ -179,18 +202,11 @@ class AdminImagesScreen extends StatelessWidget {
       }
       await db.deleteCategory(categoryId);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('"$categoryName" deleted'),
-            backgroundColor: Colors.orange,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadii.md))));
+        _showSuccessSnackBar(context, '"$categoryName" deleted');
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: AppColors.danger));
+        _showErrorSnackBar(context, 'Error: $e');
       }
     }
   }
@@ -448,7 +464,9 @@ class AdminImagesScreen extends StatelessWidget {
           );
         },
       ),
+      // ✅ heroTag único explícito — evita "multiple heroes share the same tag"
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'admin_categories_fab',
         onPressed: () => _showCreateDialog(context),
         backgroundColor: AppColors.primary,
         elevation: 3,

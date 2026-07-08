@@ -20,12 +20,10 @@ class RepeatAfterMeTask extends StatefulWidget {
   State<RepeatAfterMeTask> createState() => _RepeatAfterMeTaskState();
 }
 
-class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTypeEditor {
+class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   late TextEditingController phraseController;
   late TextEditingController hintController;
   
-  bool _expanded = true;
-
   @override
   void initState() {
     super.initState();
@@ -91,26 +89,31 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTy
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildHeader(c),
+        // ── Info Banner ────────────────────────────────────────────────
+        _buildInfoBanner(c),
         const SizedBox(height: AppSpacing.md),
         
-        // Phrase Field
+        // ── Phrase Field ──────────────────────────────────────────────
         _buildPhraseField(c),
         const SizedBox(height: AppSpacing.md),
         
-        // Hint Field (optional)
+        // ── Hint Field ────────────────────────────────────────────────
         _buildHintField(c),
+        
+        // ── Preview Section ───────────────────────────────────────────
+        // const SizedBox(height: AppSpacing.md),
+        // _buildPreviewSection(c),
       ],
     );
   }
 
-  Widget _buildHeader(Color c) {
+  Widget _buildInfoBanner(Color c) {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
         color: c.withOpacity(0.07),
         borderRadius: BorderRadius.circular(AppRadii.md),
-        border: Border.all(color: c.withOpacity(0.3)),
+        border: Border.all(color: c.withOpacity(0.2)),
       ),
       child: Row(
         children: [
@@ -118,7 +121,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTy
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Students listen to the phrase and repeat it out loud. They can mark "Can\'t speak now" to continue.',
+              'Students listen to the phrase and repeat it out loud. They must repeat it correctly to continue.',
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -137,25 +140,13 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTy
               'English Phrase',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.red.shade100,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'Required',
-                style: TextStyle(fontSize: 10, color: Colors.red),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: AppSpacing.xs),
         TextFormField(
           controller: phraseController,
           decoration: InputDecoration(
-            hintText: 'e.g. "I am American, but I speak Italian"',
+            hintText: 'Enter the phrase students should repeat',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
             filled: true,
             fillColor: Colors.white,
@@ -166,7 +157,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTy
         ),
         const SizedBox(height: 8),
         Text(
-          'Students will hear this phrase spoken aloud by Loringo.',
+          '💡 This phrase will be spoken aloud by the voice assistant. Students must repeat it correctly.',
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],
@@ -185,7 +176,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTy
         TextFormField(
           controller: hintController,
           decoration: InputDecoration(
-            hintText: 'e.g. "Listen carefully and repeat"',
+            hintText: 'e.g. "Focus on the pronunciation of \'th\' in \'three\'"',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
             filled: true,
             fillColor: Colors.white,
@@ -193,7 +184,173 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> implements TaskTy
           maxLines: 2,
           onChanged: (_) => widget.onChanged(),
         ),
+        const SizedBox(height: 8),
+        Text(
+          '💡 Optional instruction shown to students before the task. Use it to guide their pronunciation.',
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+        ),
       ],
     );
   }
+
+  // Widget _buildPreviewSection(Color c) {
+  //   final phrase = phraseController.text.trim().isNotEmpty 
+  //       ? phraseController.text.trim() 
+  //       : 'I am American, but I speak Italian';
+    
+  //   final hint = hintController.text.trim().isNotEmpty 
+  //       ? hintController.text.trim() 
+  //       : null;
+
+  //   return Container(
+  //     padding: const EdgeInsets.all(AppSpacing.md),
+  //     decoration: BoxDecoration(
+  //       color: Colors.grey.shade50,
+  //       borderRadius: BorderRadius.circular(AppRadii.md),
+  //       border: Border.all(color: Colors.grey.shade200),
+  //     ),
+  //     child: Column(
+  //       crossAxisAlignment: CrossAxisAlignment.start,
+  //       children: [
+  //         Row(
+  //           children: [
+  //             Icon(Icons.preview, color: c, size: 18),
+  //             const SizedBox(width: AppSpacing.xs),
+  //             Text(
+  //               'Preview (Student View)',
+  //               style: TextStyle(
+  //                 fontSize: 13,
+  //                 fontWeight: FontWeight.bold,
+  //                 color: c,
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //         const SizedBox(height: AppSpacing.sm),
+  //         Container(
+  //           padding: const EdgeInsets.all(AppSpacing.md),
+  //           decoration: BoxDecoration(
+  //             color: Colors.white,
+  //             borderRadius: BorderRadius.circular(AppRadii.md),
+  //             border: Border.all(color: Colors.grey.shade300),
+  //           ),
+  //           child: Column(
+  //             crossAxisAlignment: CrossAxisAlignment.start,
+  //             children: [
+  //               // Header
+  //               Row(
+  //                 children: [
+  //                   Icon(Icons.volume_up, color: c, size: 20),
+  //                   const SizedBox(width: 8),
+  //                   const Text(
+  //                     'Listen and Repeat',
+  //                     style: TextStyle(
+  //                       fontSize: 14,
+  //                       fontWeight: FontWeight.bold,
+  //                     ),
+  //                   ),
+  //                 ],
+  //               ),
+  //               const SizedBox(height: 12),
+                
+  //               // Phrase to repeat
+  //               Container(
+  //                 padding: const EdgeInsets.all(12),
+  //                 decoration: BoxDecoration(
+  //                   color: c.withOpacity(0.05),
+  //                   borderRadius: BorderRadius.circular(8),
+  //                   border: Border.all(color: c.withOpacity(0.2)),
+  //                 ),
+  //                 child: Column(
+  //                   children: [
+  //                     const Text(
+  //                       'Repeat this phrase:',
+  //                       style: TextStyle(
+  //                         fontSize: 12,
+  //                         color: Colors.grey,
+  //                       ),
+  //                     ),
+  //                     const SizedBox(height: 8),
+  //                     Text(
+  //                       phrase,
+  //                       style: TextStyle(
+  //                         fontSize: 18,
+  //                         fontWeight: FontWeight.w500,
+  //                         color: Colors.black87,
+  //                       ),
+  //                       textAlign: TextAlign.center,
+  //                     ),
+  //                   ],
+  //                 ),
+  //               ),
+                
+  //               if (hint != null) ...[
+  //                 const SizedBox(height: 12),
+  //                 Container(
+  //                   padding: const EdgeInsets.all(10),
+  //                   decoration: BoxDecoration(
+  //                     color: Colors.blue.shade50,
+  //                     borderRadius: BorderRadius.circular(8),
+  //                     border: Border.all(color: Colors.blue.shade200),
+  //                   ),
+  //                   child: Row(
+  //                     children: [
+  //                       Icon(Icons.lightbulb_outline, color: Colors.blue.shade700, size: 16),
+  //                       const SizedBox(width: 8),
+  //                       Expanded(
+  //                         child: Text(
+  //                           '💡 $hint',
+  //                           style: TextStyle(
+  //                             fontSize: 13,
+  //                             color: Colors.blue.shade700,
+  //                             height: 1.3,
+  //                           ),
+  //                         ),
+  //                       ),
+  //                     ],
+  //                   ),
+  //                 ),
+  //               ],
+                
+  //               const SizedBox(height: 16),
+                
+  //               // Action buttons - NO SKIP, just Record
+  //               Row(
+  //                 mainAxisAlignment: MainAxisAlignment.center,
+  //                 children: [
+  //                   ElevatedButton.icon(
+  //                     onPressed: null,
+  //                     icon: const Icon(Icons.mic, size: 18),
+  //                     label: const Text(
+  //                       'Tap to Record',
+  //                       style: TextStyle(fontSize: 14),
+  //                     ),
+  //                     style: ElevatedButton.styleFrom(
+  //                       backgroundColor: c,
+  //                       foregroundColor: Colors.white,
+  //                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+  //                       shape: RoundedRectangleBorder(
+  //                         borderRadius: BorderRadius.circular(12),
+  //                       ),
+  //                     ),
+  //                   ),
+  //                 ],
+  //               ),
+  //               const SizedBox(height: 8),
+  //               Center(
+  //                 child: Text(
+  //                   'Press record and repeat the phrase aloud',
+  //                   style: TextStyle(
+  //                     fontSize: 11,
+  //                     color: Colors.grey.shade500,
+  //                   ),
+  //                 ),
+  //               ),
+  //             ],
+  //           ),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
 }

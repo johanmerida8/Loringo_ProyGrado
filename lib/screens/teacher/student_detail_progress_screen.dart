@@ -7,12 +7,19 @@ class StudentDetailedProgressScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
   final String groupId;
+  // null = "All Units" — muestra todas las actividades/quizzes de todas las
+  // unidades. No-null = filtra a solo esa unidad, coherente con el filtro
+  // ya seleccionado en StudentProgressDashboard.
+  final String? unitId;
+  final String? unitTitle;
 
   const StudentDetailedProgressScreen({
     super.key,
     required this.studentId,
     required this.studentName,
     required this.groupId,
+    this.unitId,
+    this.unitTitle,
   });
 
   @override
@@ -40,7 +47,21 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('${widget.studentName} – Progress'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('${widget.studentName} – Progress'),
+            // Deja explícito qué alcance se está viendo, para que el
+            // profesor no confunda "todo" con "solo esta unidad".
+            Text(
+              widget.unitId != null
+                  ? (widget.unitTitle ?? 'Filtered unit')
+                  : 'All Units',
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+          ],
+        ),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         bottom: TabBar(
@@ -57,8 +78,12 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
       body: TabBarView(
         controller: _tabController,
         children: [
-          _ActivitiesTab(studentId: widget.studentId),
-          _QuizzesTab(studentId: widget.studentId, studentName: widget.studentName),
+          _ActivitiesTab(studentId: widget.studentId, unitId: widget.unitId),
+          _QuizzesTab(
+            studentId: widget.studentId,
+            studentName: widget.studentName,
+            unitId: widget.unitId,
+          ),
         ],
       ),
     );
@@ -70,8 +95,9 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
 // ──────────────────────────────────────────────────────────────────────────
 class _ActivitiesTab extends StatefulWidget {
   final String studentId;
+  final String? unitId;
 
-  const _ActivitiesTab({required this.studentId});
+  const _ActivitiesTab({required this.studentId, required this.unitId});
 
   @override
   State<_ActivitiesTab> createState() => _ActivitiesTabState();
@@ -154,11 +180,27 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
         final activityDocs = docs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
           final hasQuizId = data.containsKey('quizId') && data['quizId'] != null && data['quizId'].toString().isNotEmpty;
-          return !hasQuizId;
+          if (hasQuizId) return false;
+
+          // Filtro por unidad en cliente (evita índice compuesto en
+          // Firestore para isNotEqualTo + isEqualTo en campos distintos).
+          // null = All Units, sin filtro adicional.
+          if (widget.unitId != null) {
+            final docUnitId = data['unitId'] as String? ?? '';
+            if (docUnitId != widget.unitId) return false;
+          }
+
+          return true;
         }).toList();
 
         if (activityDocs.isEmpty) {
-          return const Center(child: Text('No activities completed yet'));
+          return Center(
+            child: Text(
+              widget.unitId != null
+                  ? 'No activities completed yet in this unit'
+                  : 'No activities completed yet',
+            ),
+          );
         }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -222,8 +264,13 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
 class _QuizzesTab extends StatefulWidget {
   final String studentId;
   final String studentName;
+  final String? unitId;
 
-  const _QuizzesTab({required this.studentId, required this.studentName});
+  const _QuizzesTab({
+    required this.studentId,
+    required this.studentName,
+    required this.unitId,
+  });
 
   @override
   State<_QuizzesTab> createState() => _QuizzesTabState();
@@ -280,11 +327,26 @@ class _QuizzesTabState extends State<_QuizzesTab> {
         final validDocs = docs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
           final quizId = data['quizId'] as String?;
-          return quizId != null && quizId.isNotEmpty;
+          if (quizId == null || quizId.isEmpty) return false;
+
+          // Mismo filtro en cliente por consistencia con el tab de
+          // Activities y para evitar índices compuestos.
+          if (widget.unitId != null) {
+            final docUnitId = data['unitId'] as String? ?? '';
+            if (docUnitId != widget.unitId) return false;
+          }
+
+          return true;
         }).toList();
 
         if (validDocs.isEmpty) {
-          return const Center(child: Text('No quizzes taken yet'));
+          return Center(
+            child: Text(
+              widget.unitId != null
+                  ? 'No quizzes taken yet in this unit'
+                  : 'No quizzes taken yet',
+            ),
+          );
         }
 
         return ListView.builder(

@@ -1,9 +1,9 @@
 // activity_list_screen.dart
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/create_activity_screen.dart';
-// import 'package:loringo_app/screens/teacher/hierarchy_widgets.dart';
 import 'package:loringo_app/screens/teacher/task_list_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
+import 'package:loringo_app/screens/teacher/widgets/hierarchy_breadcrumb.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -14,6 +14,7 @@ class PersonalizedActivityListScreen extends StatefulWidget {
   final String lessonId;
   final String lessonTitle;
   final Color  groupColor;
+  final List<String> ancestorTrail;
 
   const PersonalizedActivityListScreen({
     super.key,
@@ -23,6 +24,7 @@ class PersonalizedActivityListScreen extends StatefulWidget {
     required this.lessonId,
     required this.lessonTitle,
     required this.groupColor,
+    required this.ancestorTrail,
   });
 
   @override
@@ -101,6 +103,7 @@ class _PersonalizedActivityListScreenState
   @override
   Widget build(BuildContext context) {
     final c = widget.groupColor;
+    final breadcrumb = [...widget.ancestorTrail, widget.lessonTitle];
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
@@ -122,101 +125,109 @@ class _PersonalizedActivityListScreenState
           ],
         ),
       ),
-      body: StreamBuilder(
-        stream: db.getPersonalizedActivitiesStream(
-          widget.groupId, widget.contentId,
-          widget.unitId,  widget.lessonId,
-        ),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator(color: c));
-          }
-          final activities = snapshot.data?.docs ?? [];
-
-          if (activities.isEmpty) {
-            return HierarchyEmptyState(
-              icon:        Icons.task_outlined,
-              title:       'No Activities Yet',
-              subtitle:    'Tap + to create your first activity',
-              color:       c,
-              actionLabel: 'Create First Activity',
-              onAction: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CreatePersonalizedActivityScreen(
-                    groupId:   widget.groupId,
-                    contentId: widget.contentId,
-                    unitId:    widget.unitId,
-                    lessonId:  widget.lessonId,
-                    groupColor: c,
-                  ),
-                ),
+      body: Column(
+        children: [
+          HierarchyBreadcrumb(items: breadcrumb, color: c),
+          Expanded(
+            child: StreamBuilder(
+              stream: db.getPersonalizedActivitiesStream(
+                widget.groupId, widget.contentId,
+                widget.unitId,  widget.lessonId,
               ),
-            );
-          }
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator(color: c));
+                }
+                final activities = snapshot.data?.docs ?? [];
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            itemCount: activities.length,
-            itemBuilder: (context, i) {
-              final doc        = activities[i];
-              final data       = doc.data() as Map<String, dynamic>;
-              final title      = data['title']     ?? 'Untitled';
-              final order      = data['order']      ?? 0;
-              final xp         = data['xpBase']     ?? 0;
-              final difficulty = data['difficulty'] ?? 'easy';
-
-              Color diffColor = AppColors.primary;
-              if (difficulty == 'medium') diffColor = Colors.orange;
-              if (difficulty == 'hard')   diffColor = AppColors.danger;
-
-              return HierarchyListCard(
-                order: order,
-                title: title,
-                color: c,
-                badge: Row(children: [
-                  Icon(Icons.star_rounded, size: 14, color: Colors.amber[700]),
-                  const SizedBox(width: 3),
-                  Text('$xp XP',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500)),
-                  const SizedBox(width: AppSpacing.sm),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.sm - 2, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: diffColor.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                if (activities.isEmpty) {
+                  return HierarchyEmptyState(
+                    icon:        Icons.task_outlined,
+                    title:       'No Activities Yet',
+                    subtitle:    'Tap + to create your first activity',
+                    color:       c,
+                    actionLabel: 'Create First Activity',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => CreatePersonalizedActivityScreen(
+                          groupId:   widget.groupId,
+                          contentId: widget.contentId,
+                          unitId:    widget.unitId,
+                          lessonId:  widget.lessonId,
+                          groupColor: c,
+                        ),
+                      ),
                     ),
-                    child: Text(difficulty,
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: diffColor)),
-                  ),
-                ]),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PersonalizedTaskListScreen(
-                      groupId:       widget.groupId,
-                      contentId:     widget.contentId,
-                      unitId:        widget.unitId,
-                      lessonId:      widget.lessonId,
-                      activityId:    doc.id,
-                      activityTitle: title,
-                      groupColor:    c,
-                    ),
-                  ),
-                ),
-                onEdit:   () => _editActivity(doc.id, data),
-                onDelete: () => _deleteActivity(doc.id, title),
-              );
-            },
-          );
-        },
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  itemCount: activities.length,
+                  itemBuilder: (context, i) {
+                    final doc        = activities[i];
+                    final data       = doc.data() as Map<String, dynamic>;
+                    final title      = data['title']     ?? 'Untitled';
+                    final order      = data['order']      ?? 0;
+                    final xp         = data['xpBase']     ?? 0;
+                    final difficulty = data['difficulty'] ?? 'easy';
+
+                    Color diffColor = AppColors.primary;
+                    if (difficulty == 'medium') diffColor = Colors.orange;
+                    if (difficulty == 'hard')   diffColor = AppColors.danger;
+
+                    return HierarchyListCard(
+                      order: order,
+                      title: title,
+                      color: c,
+                      badge: Row(children: [
+                        Icon(Icons.star_rounded, size: 14, color: Colors.amber[700]),
+                        const SizedBox(width: 3),
+                        Text('$xp XP',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500)),
+                        const SizedBox(width: AppSpacing.sm),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm - 2, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: diffColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(AppRadii.sm),
+                          ),
+                          child: Text(difficulty,
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: diffColor)),
+                        ),
+                      ]),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PersonalizedTaskListScreen(
+                            groupId:       widget.groupId,
+                            contentId:     widget.contentId,
+                            unitId:        widget.unitId,
+                            lessonId:      widget.lessonId,
+                            activityId:    doc.id,
+                            activityTitle: title,
+                            groupColor:    c,
+                            ancestorTrail: breadcrumb,
+                          ),
+                        ),
+                      ),
+                      onEdit:   () => _editActivity(doc.id, data),
+                      onDelete: () => _deleteActivity(doc.id, title),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(

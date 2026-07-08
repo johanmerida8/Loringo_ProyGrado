@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/models/teacher/student_progress.dart';
 import 'package:loringo_app/screens/teacher/report_preview_screen.dart';
 import 'package:loringo_app/screens/teacher/student_detail_progress_screen.dart';
+import 'package:loringo_app/screens/teacher/student_report_history_screen.dart';
+// import 'package:loringo_app/screens/teacher/student_reports_history_screen.dart';
 
 // ───────────────────────────── Dashboard Screen ───────────────────────────
 
@@ -566,6 +568,11 @@ class _StudentProgressDashboardState
           stats: _stats[index],
           rank: index + 1,
           groupId: widget.groupId,
+          // El filtro de unidad actual determina si "Report" muestra un
+          // solo reporte (unidad específica) o el histórico completo
+          // (All Units, selectedUnitId == null).
+          selectedUnitId: _selectedUnit?.unitId,
+          selectedUnitTitle: _selectedUnit?.unitTitle,
         );
       },
     );
@@ -609,11 +616,17 @@ class _StudentProgressCard extends StatelessWidget {
   final StudentStats stats;
   final int rank;
   final String groupId;
+  // null = "All Units" seleccionado → el botón Report abre el histórico.
+  // no-null = unidad específica → el botón Report abre solo ese reporte.
+  final String? selectedUnitId;
+  final String? selectedUnitTitle;
 
   const _StudentProgressCard({
     required this.stats,
     required this.rank,
     required this.groupId,
+    required this.selectedUnitId,
+    required this.selectedUnitTitle,
   });
 
   Color get _scoreColor => stats.overallScoreColor;
@@ -650,24 +663,45 @@ class _StudentProgressCard extends StatelessWidget {
           .get();
       final studentData = studentDoc.data() ?? {};
 
-      final reportsSnap = await FirebaseFirestore.instance
-          .collection('students')
-          .doc(stats.studentId)
-          .collection('reports')
-          .orderBy('generatedAt', descending: true)
-          .limit(1)
-          .get();
-
-      if (reportsSnap.docs.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('No report found for this student')),
+      // ── "All Units": abre el histórico completo de reportes ──────────
+      if (selectedUnitId == null) {
+        if (!context.mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => StudentReportsHistoryScreen(
+              studentId: stats.studentId,
+              studentName: stats.name,
+              studentData: studentData,
+            ),
+          ),
         );
         return;
       }
 
-      final report = reportsSnap.docs.first.data();
+      // ── Unidad específica: busca el reporte de ESA unidad únicamente ──
+      // reports/{unitId} usa unitId como ID fijo del documento, así que
+      // esto es una lectura directa, no una query — solo puede existir
+      // un reporte por unidad.
+      final reportDoc = await FirebaseFirestore.instance
+          .collection('students')
+          .doc(stats.studentId)
+          .collection('reports')
+          .doc(selectedUnitId)
+          .get();
 
+      if (!reportDoc.exists) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('No report sent yet for this unit')),
+        );
+        return;
+      }
+
+      final report = reportDoc.data()!;
+
+      if (!context.mounted) return;
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -679,6 +713,7 @@ class _StudentProgressCard extends StatelessWidget {
         ),
       );
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading report: $e')),
       );
@@ -835,6 +870,12 @@ class _StudentProgressCard extends StatelessWidget {
                             studentId: stats.studentId,
                             studentName: stats.name,
                             groupId: groupId,
+                            // Mismo filtro que ya está activo en el
+                            // dashboard (All Units → null, o la unidad
+                            // seleccionada) — Details respeta ese alcance
+                            // en vez de mostrar siempre todo.
+                            unitId: selectedUnitId,
+                            unitTitle: selectedUnitTitle,
                           ),
                         ),
                       );
@@ -853,9 +894,13 @@ class _StudentProgressCard extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _exportStudentReport(context),
-                    icon: const Icon(Icons.picture_as_pdf_rounded,
+                    icon: Icon(
+                        selectedUnitId == null
+                            ? Icons.history_rounded
+                            : Icons.picture_as_pdf_rounded,
                         size: 18),
-                    label: const Text('Report'),
+                    label: Text(
+                        selectedUnitId == null ? 'Reports' : 'Report'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red,
                       side: const BorderSide(color: Colors.red),

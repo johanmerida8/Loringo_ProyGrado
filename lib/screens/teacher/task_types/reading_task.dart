@@ -1,7 +1,16 @@
+// reading_task.dart - Teacher writes page text and can preview it with TTS
+// (same en-GB / rate / pitch config used on the student-facing screen, so
+// what the teacher hears here matches what students hear). No voice
+// recording, no Cloudinary audio upload, no AudioService dependency, no
+// speech-to-text dictation — text entry is manual typing only.
+
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-// import 'task_type_interface.dart';
+import 'package:loringo_app/services/tts/tts_phonetic_service.dart';
+
+// ─── ReadingQuestion ──────────────────────────────────────────────────────────
 
 class ReadingQuestion {
   TextEditingController questionCtrl;
@@ -15,8 +24,8 @@ class ReadingQuestion {
   })  : questionCtrl = TextEditingController(text: question),
         options = options ??
             List.generate(3, (_) => {'text': '', 'isCorrect': false}),
-        optionCtrls = optionCtrls ??
-            List.generate(3, (_) => TextEditingController());
+        optionCtrls =
+            optionCtrls ?? List.generate(3, (_) => TextEditingController());
 
   void dispose() {
     questionCtrl.dispose();
@@ -24,11 +33,52 @@ class ReadingQuestion {
   }
 }
 
+// ─── PagePreviewState ─────────────────────────────────────────────────────────
+// Tracks whether this page's text is currently being previewed via TTS, and
+// the character range flutter_tts reports as currently being spoken (used to
+// highlight the word being read live, word-by-word).
+
+class PagePreviewState {
+  final String pageId;
+  bool isPlaying;
+  int highlightStart;
+  int highlightEnd;
+
+  PagePreviewState({
+    required this.pageId,
+    this.isPlaying = false,
+    this.highlightStart = -1,
+    this.highlightEnd = -1,
+  });
+
+  PagePreviewState copyWith({
+    bool? isPlaying,
+    int? highlightStart,
+    int? highlightEnd,
+  }) {
+    return PagePreviewState(
+      pageId: pageId,
+      isPlaying: isPlaying ?? this.isPlaying,
+      highlightStart: highlightStart ?? this.highlightStart,
+      highlightEnd: highlightEnd ?? this.highlightEnd,
+    );
+  }
+}
+
+// ─── ReadingTask ──────────────────────────────────────────────────────────────
+
 class ReadingTask extends StatefulWidget {
   final Color groupColor;
   final Map<String, dynamic>? existingData;
   final TaskEditorController controller;
   final VoidCallback onChanged;
+  final int maxPages;
+  // Some older tasks stored the story title in a top-level 'question' field
+  // on the task document, outside of 'data' (which is all loadData() sees).
+  // If the parent screen has access to that document, it can pass the
+  // legacy value here so it survives into the new 'data.title' field
+  // instead of silently disappearing on first edit.
+  final String? legacyTitle;
 
   const ReadingTask({
     super.key,
@@ -36,74 +86,198 @@ class ReadingTask extends StatefulWidget {
     this.existingData,
     required this.controller,
     required this.onChanged,
+    this.maxPages = 10,
+    this.legacyTitle,
   });
 
   @override
   State<ReadingTask> createState() => _ReadingTaskState();
 }
 
-class _ReadingTaskState extends State<ReadingTask> implements TaskTypeEditor {
-  static const int _warnWordsPerPage = 300;
-  
-  late List<TextEditingController> pageControllers;
-  late List<ReadingQuestion> questions;
-  late int currentPageIndex;
+class _ReadingTaskState extends State<ReadingTask>
+    with TaskTypeEditorMixin
+    implements TaskTypeEditor {
+  static const int _warnWords = 300;
+
+  late TextEditingController _titleController;
+  late List<TextEditingController> _pageControllers;
+  late List<ReadingQuestion> _questions;
+  late List<PagePreviewState> _previewStates;
+
+  int _currentPageIndex = 0;
+
+  final FlutterTts _tts = FlutterTts();
+  bool _isTtsReady = false;
+
+  // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
-    pageControllers = [TextEditingController()];
-    questions = List.generate(2, (_) => ReadingQuestion());
-    currentPageIndex = 0;
+    _titleController = TextEditingController();
+    _pageControllers = [TextEditingController()];
+    _questions = [ReadingQuestion(), ReadingQuestion()];
+    _previewStates = [PagePreviewState(pageId: 'page_0')];
+
     if (widget.existingData != null) {
       loadData(widget.existingData!);
+      // Backfill from the parent-supplied legacy title only if loadData
+      // didn't already find something in data.title/data.question.
+      if (_titleController.text.trim().isEmpty &&
+          widget.legacyTitle != null &&
+          widget.legacyTitle!.trim().isNotEmpty) {
+        _titleController.text = widget.legacyTitle!;
+      }
     }
-
     widget.controller.registerEditor(this);
+
+    _initTts();
   }
 
-  // TaskTypeEditor implementation
+  Future<void> _initTts() async {
+    // en-GB: authentic British English, not US — matches student-facing
+    // playback voice so what the teacher previews here is what students hear.
+    await _tts.setLanguage('en-GB');
+    await _tts.setSpeechRate(0.45);
+    await _tts.setPitch(1.1);
+
+    // Load phonetic corrections (e.g. "Mia" -> "Mee-ah") once, shared with
+    // the student-facing screen so previews here match actual playback.
+    await TtsPhoneticService.instance.load();
+
+    _tts.setProgressHandler((text, start, end, word) {
+      if (_highlightDisabledForCurrentPreview) return;
+      final idx = _previewPageIndex ?? _currentPageIndex;
+      if (idx >= _previewStates.length || !mounted) return;
+      setState(() {
+        _previewStates[idx] = _previewStates[idx].copyWith(
+          highlightStart: start,
+          highlightEnd: end,
+        );
+      });
+    });
+
+    _tts.setCompletionHandler(() {
+      final idx = _previewPageIndex ?? _currentPageIndex;
+      if (idx >= _previewStates.length || !mounted) return;
+      setState(() {
+        _previewStates[idx] = _previewStates[idx].copyWith(
+          isPlaying: false,
+          highlightStart: -1,
+          highlightEnd: -1,
+        );
+        _previewPageIndex = null;
+      });
+    });
+
+    _tts.setCancelHandler(() {
+      final idx = _previewPageIndex ?? _currentPageIndex;
+      if (idx >= _previewStates.length || !mounted) return;
+      setState(() {
+        _previewStates[idx] = _previewStates[idx].copyWith(
+          isPlaying: false,
+          highlightStart: -1,
+          highlightEnd: -1,
+        );
+        _previewPageIndex = null;
+      });
+    });
+
+    _tts.setErrorHandler((dynamic msg) {
+      debugPrint('[TTS] error: $msg');
+      final idx = _previewPageIndex ?? _currentPageIndex;
+      if (idx < _previewStates.length && mounted) {
+        setState(() {
+          _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: false);
+          _previewPageIndex = null;
+        });
+      }
+    });
+
+    if (mounted) setState(() => _isTtsReady = true);
+  }
+
+  int? _previewPageIndex;
+  bool _highlightDisabledForCurrentPreview = false;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    for (final c in _pageControllers) c.dispose();
+    for (final q in _questions) q.dispose();
+    _tts.stop();
+    super.dispose();
+  }
+
+  // ─── TaskTypeEditor ───────────────────────────────────────────────────────
+
   @override
   String get typeId => 'reading';
-  
+
   @override
   String get displayName => 'Reading Comprehension';
-  
+
   @override
   String get defaultQuestion => 'Reading Comprehension';
 
   @override
   void loadData(Map<String, dynamic> data) {
+    // 'title' is the canonical field for the story's title, living inside
+    // data (which this editor fully owns). Falls back to the legacy
+    // top-level 'question' field for tasks created before this field
+    // existed, so older content doesn't silently lose its title.
+    _titleController.text =
+        data['title'] as String? ?? data['question'] as String? ?? '';
+
     final pages = data['pages'] as List<dynamic>?;
     if (pages != null && pages.isNotEmpty) {
-      for (final c in pageControllers) c.dispose();
-      pageControllers.clear();
-      for (final pageText in pages) {
-        pageControllers.add(TextEditingController(text: pageText as String? ?? ''));
-      }
+      for (final c in _pageControllers) c.dispose();
+      _pageControllers = pages
+          .map((p) => TextEditingController(text: (p as String?) ?? ''))
+          .toList();
+
+      _previewStates = List.generate(
+        _pageControllers.length,
+        (i) => PagePreviewState(pageId: 'page_$i'),
+      );
     }
-    
+
     final rawQs = data['questions'] as List<dynamic>?;
     if (rawQs != null && rawQs.isNotEmpty) {
-      for (final q in questions) q.dispose();
-      questions.clear();
-      for (final rq in rawQs) {
+      for (final q in _questions) q.dispose();
+      _questions = rawQs.map((rq) {
         final q = rq as Map<String, dynamic>;
         final rawOpts = List<Map<String, dynamic>>.from(q['options'] ?? []);
-        questions.add(ReadingQuestion(
+        return ReadingQuestion(
           question: q['text'] as String? ?? '',
-          options: rawOpts.map((o) => {'text': o['text'] ?? '', 'isCorrect': o['isCorrect'] ?? false}).toList(),
-          optionCtrls: rawOpts.map((o) => TextEditingController(text: o['text'] ?? '')).toList(),
-        ));
-      }
+          options: rawOpts
+              .map((o) => {
+                    'text': o['text'] ?? '',
+                    'isCorrect': o['isCorrect'] ?? false,
+                  })
+              .toList(),
+          optionCtrls: rawOpts
+              .map((o) => TextEditingController(text: o['text'] as String? ?? ''))
+              .toList(),
+        );
+      }).toList();
     }
+
+    // 'useVoiceRecording' and 'audioData' are intentionally no longer read —
+    // any pre-existing tasks that had voice recordings simply fall back to
+    // TTS playback on the student side, since that data is no longer
+    // written or consumed here.
   }
 
   @override
   Map<String, dynamic> collectData() {
     return {
-      'pages': pageControllers.map((c) => c.text.trim()).where((t) => t.isNotEmpty).toList(),
-      'questions': questions.map((rq) {
+      'title': _titleController.text.trim(),
+      'pages': _pageControllers
+          .map((c) => c.text.trim())
+          .where((t) => t.isNotEmpty)
+          .toList(),
+      'questions': _questions.map((rq) {
         for (int i = 0; i < rq.options.length; i++) {
           rq.options[i]['text'] = rq.optionCtrls[i].text.trim();
         }
@@ -117,415 +291,740 @@ class _ReadingTaskState extends State<ReadingTask> implements TaskTypeEditor {
 
   @override
   String? validate() {
-    final pages = pageControllers.map((c) => c.text.trim()).where((t) => t.isNotEmpty).toList();
-    if (pages.isEmpty) return 'Reading passage cannot be empty';
-    if (questions.isEmpty) return 'Add at least one comprehension question';
-    
-    for (int i = 0; i < questions.length; i++) {
-      final rq = questions[i];
+    if (_titleController.text.trim().isEmpty) {
+      return 'Add a title for this story';
+    }
+
+    final pages = _pageControllers
+        .map((c) => c.text.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+
+    if (pages.isEmpty) return 'Add at least one page of content';
+    if (_questions.isEmpty) return 'Add at least one comprehension question';
+
+    for (int i = 0; i < _questions.length; i++) {
+      final rq = _questions[i];
       if (rq.questionCtrl.text.trim().isEmpty) {
         return 'Question ${i + 1}: text cannot be empty';
       }
       if (!rq.options.any((o) => o['isCorrect'] == true)) {
         return 'Question ${i + 1}: mark at least one correct answer';
       }
-      if (rq.optionCtrls.where((c) => c.text.isNotEmpty).length < 3) {
-        return 'Question ${i + 1}: provide at least 3 options';
+      if (rq.optionCtrls.where((c) => c.text.trim().isNotEmpty).length < 2) {
+        return 'Question ${i + 1}: provide at least 2 answer options';
       }
     }
+
     return null;
   }
 
-  int _wordCount(String text) => text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+  // ─── TTS Preview (hear how this page will sound to students) ─────────────
 
-  void _addPage() {
-    if (pageControllers.length < 5) {
+  bool get _isAnyPagePlaying => _previewPageIndex != null;
+
+  Future<void> _playPreview(int idx) async {
+    final text = _pageControllers[idx].text.trim();
+    if (text.isEmpty) return;
+
+    // If another page is currently playing, stop it first so state doesn't
+    // get out of sync (the handlers key off _previewPageIndex).
+    if (_previewPageIndex != null && _previewPageIndex != idx) {
+      await _tts.stop();
       setState(() {
-        pageControllers.add(TextEditingController());
-        currentPageIndex = pageControllers.length - 1;
-        widget.onChanged();
+        _previewStates[_previewPageIndex!] =
+            _previewStates[_previewPageIndex!].copyWith(
+          isPlaying: false,
+          highlightStart: -1,
+          highlightEnd: -1,
+        );
       });
     }
+
+    if (!_isTtsReady) {
+      if (mounted) {
+        _showSnack('Text-to-speech is still loading, try again in a moment',
+            isError: true);
+      }
+      return;
+    }
+
+    final spokenText = TtsPhoneticService.instance.applyFixes(text);
+    // If a phonetic fix changed the text, the character offsets
+    // setProgressHandler reports will refer to spokenText, not the original
+    // displayed text — they'd no longer line up for highlighting. Rather
+    // than show a misaligned highlight, we disable it for this playback
+    // (_highlightDisabledForCurrentPreview) and just play audio normally.
+    _highlightDisabledForCurrentPreview = spokenText != text;
+
+    setState(() {
+      _previewPageIndex = idx;
+      _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: true);
+    });
+
+    try {
+      await _tts.speak(spokenText);
+    } catch (e) {
+      debugPrint('[TTS] speak error: $e');
+      if (mounted) {
+        setState(() {
+          _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: false);
+          _previewPageIndex = null;
+        });
+        _showSnack('Could not play preview: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> _stopPreview(int idx) async {
+    if (!_previewStates[idx].isPlaying) return;
+    await _tts.stop();
+    // setCancelHandler will flip isPlaying back to false and clear
+    // _previewPageIndex, so no need to setState manually here.
+  }
+
+  // ─── Page management ──────────────────────────────────────────────────────
+
+  void _addPage() {
+    if (_pageControllers.length >= widget.maxPages) return;
+    final newIdx = _pageControllers.length;
+    setState(() {
+      _pageControllers.add(TextEditingController());
+      _previewStates.add(PagePreviewState(pageId: 'page_$newIdx'));
+      _currentPageIndex = newIdx;
+    });
+    widget.onChanged();
   }
 
   void _removePage() {
-    if (pageControllers.length > 1) {
-      setState(() {
-        pageControllers[currentPageIndex].dispose();
-        pageControllers.removeAt(currentPageIndex);
-        if (currentPageIndex >= pageControllers.length) {
-          currentPageIndex = pageControllers.length - 1;
-        }
-        widget.onChanged();
-      });
-    }
+    if (_pageControllers.length <= 1) return;
+    final idx = _currentPageIndex;
+    if (_previewStates[idx].isPlaying) return;
+    setState(() {
+      _pageControllers[idx].dispose();
+      _pageControllers.removeAt(idx);
+      _previewStates.removeAt(idx);
+      if (_currentPageIndex >= _pageControllers.length) {
+        _currentPageIndex = _pageControllers.length - 1;
+      }
+    });
+    widget.onChanged();
   }
+
+  // ─── Question management ──────────────────────────────────────────────────
 
   void _addQuestion() {
-    if (questions.length < 5) {
-      setState(() {
-        questions.add(ReadingQuestion());
-        widget.onChanged();
-      });
-    }
+    if (_questions.length >= 5) return;
+    setState(() => _questions.add(ReadingQuestion()));
+    widget.onChanged();
   }
 
-  void _removeQuestion(int index) {
-    if (questions.length > 1) {
-      setState(() {
-        questions[index].dispose();
-        questions.removeAt(index);
-        widget.onChanged();
-      });
-    }
+  void _removeQuestion(int idx) {
+    if (_questions.length <= 1) return;
+    setState(() {
+      _questions[idx].dispose();
+      _questions.removeAt(idx);
+    });
+    widget.onChanged();
   }
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  int _wordCount(String text) =>
+      text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
+
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? AppColors.danger : AppColors.success,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
-  void dispose() {
-    for (final c in pageControllers) c.dispose();
-    for (final q in questions) q.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget buildEditor(BuildContext context) {
-    return build(context);
-  }
+  Widget buildEditor(BuildContext context) => build(context);
 
   @override
   Widget build(BuildContext context) {
-    return _buildEditor();
-  }
-
-  Widget _buildEditor() {
-    final c = widget.groupColor;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildHeader(c),
-        const SizedBox(height: AppSpacing.lg),
-        _buildPagesSection(c),
-        const SizedBox(height: AppSpacing.lg),
-        _buildQuestionsSection(c),
+        _buildTitleField(),
+        const SizedBox(height: AppSpacing.md),
+        _buildPagesSection(),
+        const SizedBox(height: AppSpacing.md),
+        _buildQuestionsSection(),
       ],
     );
   }
 
-  Widget _buildHeader(Color c) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: c.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        border: Border.all(color: c.withOpacity(0.3)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.menu_book_rounded, color: c, size: 18),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Text(
-              'Write a short passage split across pages. Aim for 200–300 words per page.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+  // ─── Title field ────────────────────────────────────────────────────────
+
+  Widget _buildTitleField() {
+    final c = widget.groupColor;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Story title',
+            style: TextStyle(
+                fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey[800])),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _titleController,
+          onChanged: (_) => widget.onChanged(),
+          style: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
+          decoration: InputDecoration(
+            hintText: 'e.g. "A Sunny Morning Visit"',
+            hintStyle: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.normal),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              borderSide: BorderSide(color: AppColors.divider),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              borderSide: BorderSide(color: AppColors.divider),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              borderSide: BorderSide(color: c, width: 1.5),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildPagesSection(Color c) {
-    final currentCtrl = pageControllers[currentPageIndex];
-    final words = _wordCount(currentCtrl.text);
-    final isOverLimit = words > _warnWordsPerPage;
-    final totalPages = pageControllers.length;
+  // ─── Pages section ────────────────────────────────────────────────────────
+
+  Widget _buildPagesSection() {
+    final c = widget.groupColor;
+    final ctrl = _pageControllers[_currentPageIndex];
+    final words = _wordCount(ctrl.text);
+    final isOver = words > _warnWords;
+    final total = _pageControllers.length;
+    final preview = _previewStates[_currentPageIndex];
+    final hasText = ctrl.text.trim().isNotEmpty;
+
+    final isOtherPagePlaying =
+        _previewPageIndex != null && _previewPageIndex != _currentPageIndex;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Header
         Row(
           children: [
-            const Text('Pages', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-            const SizedBox(width: AppSpacing.sm),
-            _statusChip('$totalPages/5', c),
+            Text('Pages',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800])),
+            const SizedBox(width: 6),
+            _chip('$total / ${widget.maxPages}', c),
             const Spacer(),
-            if (totalPages < 5)
+            if (total < widget.maxPages)
               TextButton.icon(
                 onPressed: _addPage,
-                icon: Icon(Icons.add, size: 16, color: c),
-                label: Text('Add Page', style: TextStyle(fontSize: 12, color: c, fontWeight: FontWeight.w600)),
-                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs)),
+                icon: Icon(Icons.add, size: 14, color: c),
+                label: Text('Add page',
+                    style: TextStyle(
+                        fontSize: 12, color: c, fontWeight: FontWeight.w600)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
               ),
           ],
         ),
-        const SizedBox(height: AppSpacing.sm),
-        if (totalPages > 1)
+
+        // Page tabs
+        if (total > 1) ...[
+          const SizedBox(height: 8),
           SizedBox(
-            height: 36,
+            height: 30,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: totalPages,
+              itemCount: total,
               itemBuilder: (_, i) {
-                final isActive = i == currentPageIndex;
-                final pw = _wordCount(pageControllers[i].text);
-                final tooLong = pw > _warnWordsPerPage;
+                final isActive = i == _currentPageIndex;
+                final isPlayingThis = _previewStates[i].isPlaying;
+
                 return GestureDetector(
-                  onTap: () => setState(() => currentPageIndex = i),
-                  child: Container(
-                    margin: const EdgeInsets.only(right: AppSpacing.xs),
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                  onTap: () => setState(() => _currentPageIndex = i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
                       color: isActive ? c : Colors.white,
-                      borderRadius: BorderRadius.circular(AppRadii.pill),
-                      border: Border.all(color: tooLong ? Colors.orange : (isActive ? c : AppColors.divider), width: isActive ? 0 : 1.5),
-                      boxShadow: isActive ? [BoxShadow(color: c.withOpacity(0.25), blurRadius: 6)] : null,
-                    ),
-                    child: Text(
-                      'Page ${i + 1}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: isActive ? AppColors.onPrimary : (tooLong ? Colors.orange : Colors.grey[700]),
+                      borderRadius: BorderRadius.circular(15),
+                      border: Border.all(
+                        color: isPlayingThis
+                            ? Colors.blue
+                            : (isActive ? c : AppColors.divider),
                       ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isPlayingThis) ...[
+                          Icon(Icons.volume_up_rounded,
+                              size: 10,
+                              color: isActive ? Colors.white : Colors.blue),
+                          const SizedBox(width: 3),
+                        ],
+                        Text('P${i + 1}',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: isActive
+                                    ? Colors.white
+                                    : Colors.grey[600])),
+                      ],
                     ),
                   ),
                 );
               },
             ),
           ),
-        const SizedBox(height: AppSpacing.sm),
+        ],
+
+        const SizedBox(height: 8),
+
+        // Page card
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(AppRadii.md),
-            border: Border.all(color: isOverLimit ? Colors.orange : c.withOpacity(0.25), width: 1.5),
+            border: Border.all(
+              color: preview.isPlaying
+                  ? Colors.blue.withOpacity(0.5)
+                  : isOtherPagePlaying
+                      ? Colors.blue.withOpacity(0.2)
+                      : (isOver
+                          ? Colors.orange.withOpacity(0.4)
+                          : c.withOpacity(0.25)),
+              width: preview.isPlaying ? 2 : 1.5,
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: isOverLimit ? Colors.orange.withOpacity(0.06) : c.withOpacity(0.05),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md - 1)),
-                  border: Border(bottom: BorderSide(color: isOverLimit ? Colors.orange.withOpacity(0.2) : c.withOpacity(0.1))),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.article_rounded, size: 16, color: isOverLimit ? Colors.orange : c),
-                    const SizedBox(width: AppSpacing.sm),
-                    Text('Page ${currentPageIndex + 1} of $totalPages', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isOverLimit ? Colors.orange : c)),
-                    const Spacer(),
-                    _statusChip('$words / $_warnWordsPerPage words', isOverLimit ? Colors.orange : c),
-                    if (totalPages > 1) ...[
-                      const SizedBox(width: AppSpacing.sm),
-                      GestureDetector(
-                        onTap: _removePage,
-                        child: Container(
-                          padding: const EdgeInsets.all(AppSpacing.xs),
-                          decoration: BoxDecoration(color: AppColors.danger.withOpacity(0.08), shape: BoxShape.circle),
-                          child: Icon(Icons.close, size: 14, color: AppColors.danger),
+              // Card header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 10, 0),
+                child: Row(children: [
+                  if (preview.isPlaying)
+                    Icon(Icons.volume_up_rounded, size: 14, color: Colors.blue)
+                  else
+                    Icon(Icons.article_outlined,
+                        size: 14, color: isOver ? Colors.orange : c),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      preview.isPlaying
+                          ? 'Playing...'
+                          : 'Page ${_currentPageIndex + 1} of $total',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: preview.isPlaying
+                              ? Colors.blue
+                              : (isOver ? Colors.orange : c)),
+                    ),
+                  ),
+                  Text('$words / $_warnWords',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: isOver ? Colors.orange : Colors.grey[400])),
+                  if (total > 1 && !preview.isPlaying) ...[
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: _removePage,
+                      child:
+                          Icon(Icons.close, size: 15, color: Colors.grey[400]),
+                    ),
+                  ],
+                ]),
+              ),
+
+              // Text field with live word highlight while TTS plays
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: preview.isPlaying
+                    ? _buildHighlightedText(ctrl.text, preview)
+                    : TextFormField(
+                        controller: ctrl,
+                        maxLines: 8,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.65,
+                          color: Colors.black87,
+                        ),
+                        onChanged: (_) => widget.onChanged(),
+                        decoration: InputDecoration(
+                          hintText:
+                              'Write the reading passage for page ${_currentPageIndex + 1}...',
+                          hintStyle: TextStyle(
+                              color: Colors.grey[400], fontSize: 13),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
                         ),
                       ),
-                    ],
-                  ],
-                ),
               ),
-              TextFormField(
-                controller: currentCtrl,
-                maxLines: 10,
-                onChanged: (_) => widget.onChanged(),
-                decoration: InputDecoration(
-                  hintText: 'Write page ${currentPageIndex + 1} content here…',
-                  hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.all(AppSpacing.md),
-                ),
-                style: const TextStyle(fontSize: 15, height: 1.6),
-                validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+
+              Divider(height: 1, thickness: 0.5, color: Colors.grey[200]),
+
+              // Preview row
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: _buildPreviewRow(preview, hasText, isOtherPagePlaying),
               ),
             ],
           ),
         ),
+
+        if (isOtherPagePlaying) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(Icons.info_outline, size: 13, color: Colors.blue[700]),
+            const SizedBox(width: 4),
+            Text(
+              'Playing preview for page ${(_previewPageIndex! + 1)}.',
+              style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+            ),
+          ]),
+        ],
       ],
     );
   }
 
-  Widget _buildQuestionsSection(Color c) {
+  // ─── Highlighted text while TTS preview is playing ────────────────────────
+
+  Widget _buildHighlightedText(String text, PagePreviewState preview) {
+    final hasRange = preview.highlightStart >= 0 &&
+        preview.highlightEnd > preview.highlightStart &&
+        preview.highlightEnd <= text.length;
+
+    if (!hasRange) {
+      return SelectableText(
+        text,
+        style: const TextStyle(fontSize: 14, height: 1.65, color: Colors.black87),
+      );
+    }
+
+    final before = text.substring(0, preview.highlightStart);
+    final current = text.substring(preview.highlightStart, preview.highlightEnd);
+    final after = text.substring(preview.highlightEnd);
+
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(fontSize: 14, height: 1.65, color: Colors.black87),
+        children: [
+          TextSpan(text: before),
+          TextSpan(
+            text: current,
+            style: TextStyle(
+              backgroundColor: Colors.blue.withOpacity(0.25),
+              fontWeight: FontWeight.w700,
+              color: Colors.blue.shade900,
+            ),
+          ),
+          TextSpan(text: after),
+        ],
+      ),
+    );
+  }
+
+  // ─── Preview row (TTS) ─────────────────────────────────────────────────────
+
+  Widget _buildPreviewRow(
+      PagePreviewState preview, bool hasText, bool isOtherPagePlaying) {
+    final c = widget.groupColor;
+
+    return Row(children: [
+      Icon(Icons.headphones_rounded,
+          size: 14, color: preview.isPlaying ? Colors.blue : Colors.grey[400]),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(
+          preview.isPlaying
+              ? 'Playing...'
+              : (hasText
+                  ? 'Hear how this sounds to students'
+                  : 'Write some text first'),
+          style: TextStyle(
+            fontSize: 12,
+            color: preview.isPlaying ? Colors.blue[700] : Colors.grey[500],
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+      if (preview.isPlaying)
+        _actionBtn(
+          label: 'Stop',
+          icon: Icons.stop_rounded,
+          color: Colors.red,
+          onTap: () => _stopPreview(_currentPageIndex),
+        )
+      else if (hasText && !isOtherPagePlaying)
+        _actionBtn(
+          label: 'Hear TTS',
+          icon: Icons.volume_up_rounded,
+          color: c,
+          onTap: () => _playPreview(_currentPageIndex),
+        ),
+    ]);
+  }
+
+  Widget _actionBtn({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration:
+            BoxDecoration(color: color, borderRadius: BorderRadius.circular(7)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 13, color: Colors.white),
+          const SizedBox(width: 4),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
+  }
+
+  // ─── Questions section ────────────────────────────────────────────────────
+
+  Widget _buildQuestionsSection() {
+    final c = widget.groupColor;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Text('Questions', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-            const SizedBox(width: AppSpacing.sm),
-            _statusChip('${questions.length}/5', c),
-            const Spacer(),
-            if (questions.length < 5)
-              TextButton.icon(
-                onPressed: _addQuestion,
-                icon: Icon(Icons.add, size: 16, color: c),
-                label: Text('Add Question', style: TextStyle(fontSize: 12, color: c, fontWeight: FontWeight.w600)),
-                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs)),
+        Row(children: [
+          Text('Questions',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800])),
+          const SizedBox(width: 6),
+          _chip('${_questions.length} / 5', c),
+          const Spacer(),
+          if (_questions.length < 5)
+            TextButton.icon(
+              onPressed: _addQuestion,
+              icon: Icon(Icons.add, size: 14, color: c),
+              label: Text('Add question',
+                  style: TextStyle(
+                      fontSize: 12, color: c, fontWeight: FontWeight.w600)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        ...List.generate(questions.length, (qi) => _buildQuestionCard(qi, c)),
+            ),
+        ]),
+        const SizedBox(height: 8),
+        ...List.generate(_questions.length, (i) => _buildQuestionCard(i, c)),
       ],
     );
   }
 
   Widget _buildQuestionCard(int index, Color c) {
-    final rq = questions[index];
+    final rq = _questions[index];
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppRadii.md),
         border: Border.all(color: AppColors.divider),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: c.withOpacity(0.05),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md - 1)),
-              border: Border(bottom: BorderSide(color: c.withOpacity(0.1))),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 26, height: 26,
-                  decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-                  child: Center(child: Text('${index + 1}', style: const TextStyle(color: AppColors.onPrimary, fontSize: 12, fontWeight: FontWeight.bold))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 10, 8),
+            child: Row(children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+                child: Center(
+                  child: Text('${index + 1}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
                 ),
-                const SizedBox(width: AppSpacing.sm),
-                Text('Question ${index + 1}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: c)),
-                const Spacer(),
-                if (questions.length > 1)
-                  GestureDetector(
-                    onTap: () => _removeQuestion(index),
-                    child: Container(
-                      padding: const EdgeInsets.all(AppSpacing.xs),
-                      decoration: BoxDecoration(color: AppColors.danger.withOpacity(0.08), shape: BoxShape.circle),
-                      child: Icon(Icons.close, size: 14, color: AppColors.danger),
-                    ),
-                  ),
-              ],
+              ),
+              const SizedBox(width: 8),
+              Text('Question ${index + 1}',
+                  style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600, color: c)),
+              const Spacer(),
+              if (_questions.length > 1)
+                GestureDetector(
+                  onTap: () => _removeQuestion(index),
+                  child: Icon(Icons.close, size: 15, color: Colors.grey[400]),
+                ),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+            child: TextFormField(
+              controller: rq.questionCtrl,
+              style: const TextStyle(fontSize: 13, color: Colors.black87),
+              decoration: InputDecoration(
+                hintText: 'e.g. What does the character do first?',
+                hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey[300]!)),
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey[300]!)),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c, width: 1.5)),
+                filled: true,
+                fillColor: Colors.grey[50],
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                isDense: true,
+              ),
+              onChanged: (_) => widget.onChanged(),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextFormField(
-                  controller: rq.questionCtrl,
-                  decoration: InputDecoration(
-                    hintText: 'e.g. "What does Tom do first?"',
-                    hintStyle: TextStyle(color: Colors.grey[400], fontSize: 13),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppRadii.md),
-                      borderSide: BorderSide(color: c, width: 2),
+                Row(children: [
+                  Text('OPTIONS',
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey[400],
+                          letterSpacing: 0.6)),
+                  const Spacer(),
+                  if (rq.options.length < 4)
+                    GestureDetector(
+                      onTap: () => setState(() {
+                        rq.options.add({'text': '', 'isCorrect': false});
+                        rq.optionCtrls.add(TextEditingController());
+                        widget.onChanged();
+                      }),
+                      child: Text('+ Add option',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: c,
+                              fontWeight: FontWeight.w600)),
                     ),
-                    filled: true,
-                    fillColor: Colors.grey[50],
-                    contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                  ),
-                  onChanged: (_) => widget.onChanged(),
-                  validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Row(
-                  children: [
-                    Text('Options', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600])),
-                    const Spacer(),
-                    if (rq.options.length < 4)
+                ]),
+                const SizedBox(height: 6),
+                ...List.generate(rq.options.length, (oi) {
+                  final isCorrect = rq.options[oi]['isCorrect'] == true;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    decoration: BoxDecoration(
+                      color: isCorrect ? Colors.green.shade50 : Colors.grey[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: isCorrect
+                              ? Colors.green.shade300
+                              : Colors.grey[300]!),
+                    ),
+                    child: Row(children: [
+                      const SizedBox(width: 8),
                       GestureDetector(
                         onTap: () => setState(() {
-                          rq.options.add({'text': '', 'isCorrect': false});
-                          rq.optionCtrls.add(TextEditingController());
+                          rq.options[oi]['isCorrect'] = !isCorrect;
                           widget.onChanged();
                         }),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-                          decoration: BoxDecoration(color: c.withOpacity(0.08), borderRadius: BorderRadius.circular(AppRadii.sm)),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.add, size: 13, color: c),
-                              const SizedBox(width: 3),
-                              Text('Add', style: TextStyle(fontSize: 11, color: c, fontWeight: FontWeight.w600)),
-                            ],
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isCorrect ? Colors.green : Colors.white,
+                            border: Border.all(
+                                color: isCorrect
+                                    ? Colors.green
+                                    : Colors.grey[400]!,
+                                width: 1.5),
                           ),
+                          child: isCorrect
+                              ? const Icon(Icons.check,
+                                  size: 12, color: Colors.white)
+                              : Center(
+                                  child: Text(
+                                    String.fromCharCode(65 + oi),
+                                    style: TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.grey[500]),
+                                  ),
+                                ),
                         ),
                       ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                ...List.generate(rq.options.length, (oi) {
-                  final isCorrect = rq.options[oi]['isCorrect'] as bool;
-                  final label = String.fromCharCode(65 + oi);
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      color: isCorrect ? Colors.green.shade50 : Colors.grey[50],
-                      borderRadius: BorderRadius.circular(AppRadii.sm),
-                      border: Border.all(color: isCorrect ? AppColors.primary : AppColors.divider, width: isCorrect ? 2 : 1),
-                    ),
-                    child: Row(
-                      children: [
+                      Expanded(
+                        child: TextField(
+                          controller: rq.optionCtrls[oi],
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: isCorrect
+                                  ? Colors.green.shade800
+                                  : Colors.black87),
+                          decoration: InputDecoration(
+                            hintText: isCorrect ? 'Correct answer' : 'Wrong answer',
+                            hintStyle:
+                                TextStyle(color: Colors.grey[400], fontSize: 12),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 8),
+                            isDense: true,
+                          ),
+                          onChanged: (_) => widget.onChanged(),
+                        ),
+                      ),
+                      if (rq.options.length > 2)
                         GestureDetector(
                           onTap: () => setState(() {
-                            rq.options[oi]['isCorrect'] = !isCorrect;
+                            rq.options.removeAt(oi);
+                            rq.optionCtrls[oi].dispose();
+                            rq.optionCtrls.removeAt(oi);
                             widget.onChanged();
                           }),
-                          child: Container(
-                            width: 26, height: 26,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isCorrect ? AppColors.primary : Colors.white,
-                              border: Border.all(color: isCorrect ? AppColors.primary : Colors.grey[400]!, width: 2),
-                            ),
-                            child: Center(
-                              child: isCorrect
-                                  ? const Icon(Icons.check, size: 14, color: AppColors.onPrimary)
-                                  : Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey[500])),
-                            ),
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Icon(Icons.remove_circle_outline,
+                                size: 14, color: Colors.grey[400]),
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: TextField(
-                            controller: rq.optionCtrls[oi],
-                            decoration: InputDecoration(
-                              hintText: isCorrect ? 'Correct answer…' : 'Wrong answer…',
-                              hintStyle: TextStyle(color: Colors.grey[400], fontSize: 12),
-                              border: InputBorder.none,
-                              isDense: true,
-                            ),
-                            style: TextStyle(fontSize: 13, color: isCorrect ? Colors.green.shade800 : Colors.black87),
-                            onChanged: (_) => widget.onChanged(),
-                          ),
-                        ),
-                        if (rq.options.length > 3)
-                          GestureDetector(
-                            onTap: () => setState(() {
-                              rq.options.removeAt(oi);
-                              rq.optionCtrls[oi].dispose();
-                              rq.optionCtrls.removeAt(oi);
-                              widget.onChanged();
-                            }),
-                            child: Icon(Icons.remove_circle_outline, size: 16, color: Colors.red[300]),
-                          ),
-                      ],
-                    ),
+                    ]),
                   );
                 }),
               ],
@@ -536,14 +1035,15 @@ class _ReadingTaskState extends State<ReadingTask> implements TaskTypeEditor {
     );
   }
 
-  Widget _statusChip(String label, Color color) {
+  Widget _chip(String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(AppRadii.sm),
-      ),
-      child: Text(label, style: TextStyle(fontSize: 11, color: color)),
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10)),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 10, color: color, fontWeight: FontWeight.w600)),
     );
   }
 }

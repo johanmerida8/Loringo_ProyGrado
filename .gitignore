@@ -51,11 +51,3 @@ lib/firebase_options.dart
 # Ignore all tests
 /test/*.dart
 !/test/widget_test.dart
-
-# Supabase
-/supabase/
-supabase/
-supabase/**/*
-*.supabase
-*.toml
-.temp/

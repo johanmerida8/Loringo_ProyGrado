@@ -3,10 +3,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:loringo_app/components/app_drawer.dart';
+// import 'package:loringo_app/components/app_drawer.dart';
+import 'package:loringo_app/components/responsive_scaffold.dart';
 import 'package:loringo_app/screens/teacher/group_details/invite_student_modal.dart';
 import 'package:loringo_app/screens/teacher/student_progress_dashboard.dart';
-import 'package:loringo_app/screens/teacher/teacher_level_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_activity_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class TeacherGroupDetailsScreen extends StatefulWidget {
@@ -40,16 +41,16 @@ class _TeacherGroupDetailsScreenState
 
   // Settings state
   final _settingsNameController = TextEditingController();
+  final _settingsClassroomController = TextEditingController();
   int   _settingsYear   = DateTime.now().year;
-  int   _settingsPeriod = 1;
   Color _settingsColor  = AppColors.primary;
   bool  _savingSettings = false;
 
   // Originals for change detection
-  String _originalName   = '';
-  int    _originalYear   = DateTime.now().year;
-  int    _originalPeriod = 1;
-  Color  _originalColor  = AppColors.primary;
+  String _originalName      = '';
+  String _originalClassroom = '';
+  int    _originalYear      = DateTime.now().year;
+  Color  _originalColor     = AppColors.primary;
 
   List<Map<String, dynamic>>? _contentItems;
 
@@ -77,6 +78,7 @@ class _TeacherGroupDetailsScreenState
   @override
   void dispose() {
     _settingsNameController.dispose();
+    _settingsClassroomController.dispose();
     cachedProgressDashboard = null;
     super.dispose();
   }
@@ -94,25 +96,36 @@ class _TeacherGroupDetailsScreenState
     try {
       parsed = Color(int.parse('FF$colorHex', radix: 16));
     } catch (_) {}
-    final name   = data['name']          as String? ?? '';
-    final year   = (data['academicYear'] as int?)   ?? DateTime.now().year;
-    final period = (data['period']       as int?)   ?? 1;
+    final name = data['name'] as String? ?? '';
+    final year = (data['academicYear'] as int?) ?? DateTime.now().year;
+    // 'classroom' is the current field. Falls back to a readable label
+    // derived from the old int-based 'period' field (1 or 2) for groups
+    // created before this change, so existing groups don't suddenly show
+    // a blank classroom the first time a teacher opens Settings.
+    final classroom = (data['classroom'] as String?) ??
+        _legacyPeriodLabel(data['period']);
     setState(() {
       _settingsNameController.text = name;
+      _settingsClassroomController.text = classroom;
       _settingsYear   = year;
-      _settingsPeriod = period;
       _settingsColor  = parsed;
-      _originalName   = name;
-      _originalYear   = year;
-      _originalPeriod = period;
-      _originalColor  = parsed;
+      _originalName      = name;
+      _originalClassroom = classroom;
+      _originalYear      = year;
+      _originalColor     = parsed;
     });
+  }
+
+  static String _legacyPeriodLabel(dynamic period) {
+    if (period == 1) return 'Period 1';
+    if (period == 2) return 'Period 2';
+    return '';
   }
 
   bool get _settingsHaveChanged =>
       _settingsNameController.text.trim() != _originalName ||
+      _settingsClassroomController.text.trim() != _originalClassroom ||
       _settingsYear   != _originalYear ||
-      _settingsPeriod != _originalPeriod ||
       _settingsColor.value != _originalColor.value;
 
   Future<void> _saveGroupSettings() async {
@@ -135,16 +148,20 @@ class _TeacherGroupDetailsScreenState
           .update({
         'name':         name,
         'academicYear': _settingsYear,
-        'period':       _settingsPeriod,
+        'classroom':    _settingsClassroomController.text.trim(),
         'color':        colorHex,
+        // 'period' is intentionally left alone rather than deleted here —
+        // if you want to fully retire it from existing documents, that
+        // should be a deliberate one-off migration, not a side effect of
+        // editing unrelated settings.
       });
       if (mounted) {
         setState(() {
-          _groupName      = name;
-          _originalName   = name;
-          _originalYear   = _settingsYear;
-          _originalPeriod = _settingsPeriod;
-          _originalColor  = _settingsColor;
+          _groupName         = name;
+          _originalName      = name;
+          _originalClassroom = _settingsClassroomController.text.trim();
+          _originalYear      = _settingsYear;
+          _originalColor     = _settingsColor;
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Changes saved'),
@@ -334,7 +351,7 @@ class _TeacherGroupDetailsScreenState
   Widget _buildContentTab() {
     return Stack(
       children: [
-        TeacherLevelScreen(
+        TeacherActivityScreen(
           groupId:        widget.groupId,
           groupName:      widget.groupName,
           embedded:       true,
@@ -351,7 +368,7 @@ class _TeacherGroupDetailsScreenState
             elevation: 3,
             child: InkWell(
               borderRadius: BorderRadius.circular(AppRadii.pill),
-              onTap: () => _pushWithTransition(TeacherLevelScreen(
+              onTap: () => _pushWithTransition(TeacherActivityScreen(
                 groupId:        widget.groupId,
                 groupName:      widget.groupName,
                 embedded:       false,
@@ -593,23 +610,14 @@ class _TeacherGroupDetailsScreenState
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // Period
-          _SettingsLabel('Period', Icons.timeline_outlined),
+          // Classroom (free text identifier — replaces the old fixed
+          // Period 1/2 date-range selector)
+          _SettingsLabel('Classroom', Icons.meeting_room_outlined),
           const SizedBox(height: AppSpacing.sm),
-          Row(
-            children: [
-              _PeriodOption(
-                period: 1, label: 'Period 1', subtitle: 'Jan – Jun',
-                isSelected: _settingsPeriod == 1,
-                onTap: () => setState(() => _settingsPeriod = 1),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              _PeriodOption(
-                period: 2, label: 'Period 2', subtitle: 'Jul – Dec',
-                isSelected: _settingsPeriod == 2,
-                onTap: () => setState(() => _settingsPeriod = 2),
-              ),
-            ],
+          TextFormField(
+            controller: _settingsClassroomController,
+            textCapitalization: TextCapitalization.words,
+            decoration: _settingsInputDecoration('e.g. Aula 3, Room B'),
           ),
           const SizedBox(height: AppSpacing.lg),
 
@@ -781,80 +789,56 @@ class _TeacherGroupDetailsScreenState
       _buildStatisticsTab(),
       _buildSettingsTab(),
     ];
-
-    // Tab labels for the inline header
     const tabLabels = ['Content', 'Members', 'Statistics', 'Settings'];
+    const tabIcons = [
+      Icons.article_rounded,
+      Icons.people_rounded,
+      Icons.bar_chart_rounded,
+      Icons.settings_rounded,
+    ];
 
-    return Scaffold(
-      backgroundColor: AppColors.scaffoldBackground,
-      // ── No AppBar — header lives inside the body like teacher_home_screen ──
-      drawer: AppDrawer(
-        title: _groupName,
-        subtitle: _userName.isNotEmpty ? _userName : null,
-        navItems: [
+    return ResponsiveScaffold(
+      headerIcon: Icons.school,
+      drawerTitle: _groupName,
+      drawerSubtitle: _userName.isNotEmpty ? _userName : null,
+      hideBottomNavOnWide: true,
+      navItemsBuilder: (context, isWide) => [
+        ListTile(
+          leading: const Icon(Icons.group, color: AppColors.primary),
+          title: const Text('My Groups'),
+          onTap: () {
+            if (!isWide) Navigator.pop(context);
+            Navigator.pop(context);
+          },
+        ),
+        const Divider(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+          child: Row(children: [
+            Icon(Icons.dashboard, size: 16, color: AppColors.primary),
+            const SizedBox(width: 6),
+            Text('GROUP', style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.bold,
+                color: AppColors.primary, letterSpacing: 1)),
+          ]),
+        ),
+        for (var i = 0; i < tabLabels.length; i++)
           ListTile(
-            leading: const Icon(Icons.group, color: AppColors.primary),
-            title: const Text('My Groups'),
+            leading: Icon(tabIcons[i], color: AppColors.primary),
+            title: Text(tabLabels[i]),
+            selected: _currentIndex == i,
+            selectedTileColor: AppColors.primarySoft(0.08),
+            trailing: _currentIndex == i
+                ? const Icon(Icons.check_circle, color: AppColors.primary)
+                : null,
             onTap: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
+              setState(() => _currentIndex = i);
+              if (!isWide && Navigator.canPop(context)) Navigator.pop(context);
             },
           ),
-        ],
-      ),
-      body: Builder(
-        builder: (ctx) => SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Inline header (matches teacher_home_screen.dart) ──────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-                child: Row(
-                  children: [
-                    // Hamburger
-                    GestureDetector(
-                      onTap: () => Scaffold.of(ctx).openDrawer(),
-                      child: Container(
-                        padding: const EdgeInsets.all(AppSpacing.sm),
-                        decoration: BoxDecoration(
-                          color: AppColors.primarySoft(0.1),
-                          borderRadius: BorderRadius.circular(AppRadii.md),
-                        ),
-                        child: const Icon(Icons.menu_rounded,
-                            color: AppColors.primary, size: 22),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(_groupName, style: AppText.h1),
-                          // Subtle current tab label beneath group name
-                          Text(
-                            tabLabels[_currentIndex],
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                  ],
-                ),
-              ),
-
-              // ── Tab content (fills remaining space) ──────────────────────
-              Expanded(child: screens[_currentIndex]),
-            ],
-          ),
-        ),
-      ),
+      ],
+      // Bottom nav is still built (for narrow/mobile); ResponsiveScaffold
+      // hides it automatically once isWide is true.
       bottomNavigationBar: Container(
         margin: const EdgeInsets.all(AppSpacing.md),
         height: 75,
@@ -873,10 +857,56 @@ class _TeacherGroupDetailsScreenState
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _buildNavItem(icon: Icons.article_rounded,   label: 'Content',    index: 0),
-            _buildNavItem(icon: Icons.people_rounded,    label: 'Members',    index: 1),
+            _buildNavItem(icon: Icons.article_rounded, label: 'Content', index: 0),
+            _buildNavItem(icon: Icons.people_rounded, label: 'Members', index: 1),
             _buildNavItem(icon: Icons.bar_chart_rounded, label: 'Statistics', index: 2),
-            _buildNavItem(icon: Icons.settings_rounded,  label: 'Settings',   index: 3),
+            _buildNavItem(icon: Icons.settings_rounded, label: 'Settings', index: 3),
+          ],
+        ),
+      ),
+      bodyBuilder: (context, isWide) => Builder(
+        builder: (ctx) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+              child: Row(
+                children: [
+                  if (!isWide)
+                    GestureDetector(
+                      onTap: () => Scaffold.of(ctx).openDrawer(),
+                      child: Container(
+                        padding: const EdgeInsets.all(AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySoft(0.1),
+                          borderRadius: BorderRadius.circular(AppRadii.md),
+                        ),
+                        child: const Icon(Icons.menu_rounded,
+                            color: AppColors.primary, size: 22),
+                      ),
+                    ),
+                  if (!isWide) const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_groupName, style: AppText.h1),
+                        Text(
+                          tabLabels[_currentIndex],
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: screens[_currentIndex]),
           ],
         ),
       ),
@@ -940,61 +970,6 @@ class _EmptyMembers extends StatelessWidget {
               const SizedBox(height: AppSpacing.sm),
               Text('Tap + to invite students', style: AppText.caption),
             ],
-          ),
-        ),
-      );
-}
-
-// ── Period option ─────────────────────────────────────────────────────────────
-
-class _PeriodOption extends StatelessWidget {
-  final int    period;
-  final String label;
-  final String subtitle;
-  final bool   isSelected;
-  final VoidCallback onTap;
-
-  const _PeriodOption({
-    required this.period,
-    required this.label,
-    required this.subtitle,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-        child: GestureDetector(
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(
-                vertical: AppSpacing.md - 2, horizontal: AppSpacing.md),
-            decoration: BoxDecoration(
-              color: isSelected ? AppColors.primary : Colors.grey[100],
-              borderRadius: BorderRadius.circular(AppRadii.md),
-              border: Border.all(
-                color: isSelected ? AppColors.primary : AppColors.divider,
-                width: isSelected ? 2 : 1,
-              ),
-            ),
-            child: Column(
-              children: [
-                Text(label,
-                    style: TextStyle(
-                      color: isSelected ? AppColors.onPrimary : Colors.grey[800],
-                      fontWeight: FontWeight.bold, fontSize: 15,
-                    )),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    style: TextStyle(
-                      color: isSelected
-                          ? Colors.white.withOpacity(0.82)
-                          : Colors.grey[600],
-                      fontSize: 12,
-                    )),
-              ],
-            ),
           ),
         ),
       );

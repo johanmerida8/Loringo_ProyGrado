@@ -3,15 +3,25 @@
 // Reads the current user's Firestore role and routes the header tap to:
 //   teacher → TeacherProfileScreen
 //   admin   → AdminProfileScreen
-//   parent  → ParentProfileScreen  (via its existing call-site in parent_home_screen)
+//   parent  → ParentProfileScreen
+//   student → StudentSettingsTab (same full screen used on mobile's
+//             bottom-nav Settings tab — avatar picker + logout together,
+//             consistent between mobile and web instead of a cramped
+//             dialog)
 //   other   → legacy ProfileScreen (fallback)
+//
+// Note on the student branch: students authenticate via access code, not
+// FirebaseAuth, so they have no `role` document to look up at all — that
+// branch is checked first and is the one genuine exception to "resolve
+// everything from the role field".
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/admin/admin_profile_screen.dart';
-import 'package:loringo_app/screens/teacher/teacher_profile_screen.dart' hide AdminProfileScreen;
-import 'package:loringo_app/screens/initials/profile_screen.dart' hide TeacherProfileScreen, AdminProfileScreen;
+import 'package:loringo_app/screens/parent/parent_profile_screen.dart';
+import 'package:loringo_app/screens/student/student_settings_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_profile_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class AppDrawer extends StatelessWidget {
@@ -22,6 +32,15 @@ class AppDrawer extends StatelessWidget {
     this.subtitle,
     this.navItems = const [],
     this.wrapInDrawer = true,
+    this.isStudent = false,
+    this.studentId,
+    this.studentName,
+    this.studentAvatar,
+    this.onAvatarUpdated,
+    this.parentName,
+    this.parentEmail,
+    this.onParentLogout,
+    this.onParentDeleteAccount,
   });
 
   final IconData headerIcon;
@@ -30,9 +49,46 @@ class AppDrawer extends StatelessWidget {
   final List<Widget> navItems;
   final bool wrapInDrawer;
 
+  // Student-specific: students have no FirebaseAuth uid/role at all, so
+  // this is the one case that can't be resolved by reading `role` below
+  // — it has to be told explicitly.
+  final bool isStudent;
+  final String? studentId;
+  final String? studentName;
+  final String? studentAvatar;
+  final void Function(String newAvatar)? onAvatarUpdated;
+
+  // Parent-specific data — NOT a flag for "is this a parent" (that's
+  // resolved from the `role` field like teacher/admin are). These are
+  // only here so that when the switch below finds role == 'parent', it
+  // can build ParentProfileScreen with data ParentNavigationScreen
+  // already has in memory, instead of this widget re-fetching it.
+  final String? parentName;
+  final String? parentEmail;
+  final VoidCallback? onParentLogout;
+  final VoidCallback? onParentDeleteAccount;
+
   // ── Navigate to the role-appropriate profile screen ───────────────────────
 
   Future<void> _openProfile(BuildContext context) async {
+    if (isStudent && studentId != null) {
+      final result = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => StudentSettingsTab(
+            studentId: studentId!,
+            studentName: studentName ?? '',
+            studentAvatar: studentAvatar ?? '',
+            showBackButton: true,
+          ),
+        ),
+      );
+      if (result != null && onAvatarUpdated != null) {
+        onAvatarUpdated!(result);
+      }
+      return;
+    }
+
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
 
@@ -55,12 +111,29 @@ class AppDrawer extends StatelessWidget {
         Navigator.push(context,
             MaterialPageRoute(builder: (_) => const AdminProfileScreen()));
         break;
+      case 'parent':
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ParentProfileScreen(
+              parentName: parentName ?? '',
+              parentEmail: parentEmail ?? '',
+              parentId: uid,
+              onLogout: onParentLogout ?? () {},
+              onDeleteAccount: onParentDeleteAccount ?? () {},
+            ),
+          ),
+        );
+        break;
     }
   }
 
   // ── Header ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader(BuildContext context) {
+    final hasStudentAvatar =
+        isStudent && studentAvatar != null && studentAvatar!.isNotEmpty;
+
     return GestureDetector(
       onTap: () => _openProfile(context),
       child: Container(
@@ -82,7 +155,18 @@ class AppDrawer extends StatelessWidget {
                 CircleAvatar(
                   radius: 35,
                   backgroundColor: Colors.white,
-                  child: Icon(headerIcon, size: 40, color: AppColors.primary),
+                  child: hasStudentAvatar
+                      ? ClipOval(
+                          child: Image.asset(
+                            studentAvatar!,
+                            width: 70,
+                            height: 70,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Icon(
+                                headerIcon, size: 40, color: AppColors.primary),
+                          ),
+                        )
+                      : Icon(headerIcon, size: 40, color: AppColors.primary),
                 ),
                 Container(
                   padding: const EdgeInsets.all(3),
@@ -110,7 +194,8 @@ class AppDrawer extends StatelessWidget {
                   overflow: TextOverflow.ellipsis),
             ],
             const SizedBox(height: 6),
-            Text('Tap to view profile',
+            Text(
+                isStudent ? 'Tap to view settings' : 'Tap to view profile',
                 style: TextStyle(
                     color: Colors.white.withOpacity(0.65), fontSize: 11)),
           ],

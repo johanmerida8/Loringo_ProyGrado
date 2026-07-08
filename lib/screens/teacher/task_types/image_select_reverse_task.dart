@@ -22,7 +22,7 @@ class ImageSelectReverseTask extends StatefulWidget {
   State<ImageSelectReverseTask> createState() => _ImageSelectReverseTaskState();
 }
 
-class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> implements TaskTypeEditor {
+class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   Map<String, dynamic>? pickedImage;
   late TextEditingController imageUrlController;
   late List<Map<String, dynamic>> options;

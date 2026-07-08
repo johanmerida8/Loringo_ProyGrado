@@ -21,7 +21,7 @@ class ArrangeTask extends StatefulWidget {
   State<ArrangeTask> createState() => _ArrangeTaskState();
 }
 
-class _ArrangeTaskState extends State<ArrangeTask> implements TaskTypeEditor {
+class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   late TextEditingController sentenceController;
 
   @override

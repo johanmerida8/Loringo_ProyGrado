@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:loringo_app/components/avatar_selector.dart';
-import 'package:loringo_app/screens/parent/parent_home_screen.dart';
+import 'package:loringo_app/screens/parent/parent_navigation_screen.dart';
 import 'dart:math';
 
 /// Parent Register Child Screen
@@ -66,10 +66,8 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
         'parentId': parentUserId,
         'names': childNameController.text.trim(),
         'accessCode': accessCode,
-        'avatar': selectedAvatar ?? 'assets/avatars/panda.png',
+        'avatar': selectedAvatar ?? 'assets/avatars/parrot.png',
         'state': 1,
-        'groupId': null,      // No group initially
-        'groupName': null,    // No group name initially
         'xp': 0,
         'createdAt': FieldValue.serverTimestamp(),
       };
@@ -101,7 +99,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       Clipboard.setData(ClipboardData(text: generatedAccessCode!));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ Code copied to clipboard'),
+          content: Text('Code copied to clipboard'),
           backgroundColor: Color(0xFFA2CA71),
           duration: Duration(seconds: 2),
         ),
@@ -114,7 +112,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
     // Replace current screen with ParentHomeScreen
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const ParentHomeScreen()),
+      MaterialPageRoute(builder: (context) => const ParentNavigationScreen()),
     );
   }
 

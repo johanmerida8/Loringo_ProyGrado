@@ -1,7 +1,6 @@
 import 'package:cloudinary_flutter/cloudinary_context.dart';
 import 'package:cloudinary_url_gen/cloudinary.dart';
 import 'package:firebase_core/firebase_core.dart';
-// import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -9,10 +8,10 @@ import 'package:loringo_app/firebase_options.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
 import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/initials/splash_screen.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,13 +46,6 @@ void main() async {
     }
   }
 
-  // initialize supabase
-  await Supabase.initialize(
-    url: dotenv.env['SUPABASE_URL']!,
-    // ignore: deprecated_member_use
-    anonKey: dotenv.env['SUPABASE_ANON_KEY'],
-  );
-
   runApp(
     MultiProvider(
       providers: [
@@ -63,6 +55,11 @@ void main() async {
       child: const MyApp(),
     )
   );
+
+  // loads the success/fail sounds once so the first
+  // feedback sound a student hears in any task screen is instant instead
+  // of paying the setAsset load cost.
+  FeedbackSoundService.instance.preload();
 }
 
 class MyApp extends StatelessWidget {

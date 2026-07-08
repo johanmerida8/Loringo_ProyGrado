@@ -3,7 +3,8 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/components/app_drawer.dart';
+// import 'package:loringo_app/components/app_drawer.dart';
+import 'package:loringo_app/components/responsive_scaffold.dart';
 import 'package:loringo_app/screens/teacher/group_navigation_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_content_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
@@ -93,7 +94,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           'color':        newGroupData['color'],
           'groupCode':    newGroupData['groupCode'],
           'academicYear': newGroupData['academicYear'],
-          'period':       newGroupData['period'],
+          'classroom':    newGroupData['classroom'],
           'teacherId':    teacherId,
           'createdAt':    FieldValue.serverTimestamp(),
         });
@@ -120,88 +121,96 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
     final teacherId = FirebaseAuth.instance.currentUser?.uid;
 
     return SecuredScreen(
-      child: Scaffold(
-        backgroundColor: AppColors.scaffoldBackground,
-        drawer: AppDrawer(
-          title: 'Teacher Panel',
-          subtitle: _userName.isNotEmpty ? _userName : null,
-          navItems: [
-            ListTile(
-              leading: const Icon(Icons.group, color: AppColors.primary),
-              title: const Text('My Groups'),
-              onTap: () => Navigator.pop(context),
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.folder_rounded, color: AppColors.primary),
-              title: const Text('Content'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TeacherContentScreen()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_rounded, color: AppColors.primary),
-              title: const Text('Media Library'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TeacherImageScreen()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.quiz_rounded, color: AppColors.primary),
-              title: const Text('Quizzes'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TeacherQuizzesScreen()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.emoji_events_rounded, color: AppColors.primary),
-              title: const Text('League & Ranking'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TeacherLeagueScreen()));
-              },
-            ),
-          ],
+      child: ResponsiveScaffold(
+        headerIcon: Icons.school,
+        drawerTitle: 'Teacher Panel',
+        drawerSubtitle: _userName.isNotEmpty ? _userName : null,
+        navItemsBuilder: (context, isWide) => [
+          ListTile(
+            leading: const Icon(Icons.group, color: AppColors.primary),
+            title: const Text('My Groups'),
+            selected: true,
+            selectedTileColor: AppColors.primarySoft(0.08),
+            onTap: () {
+              if (!isWide) Navigator.pop(context);
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.folder_rounded, color: AppColors.primary),
+            title: const Text('Content'),
+            onTap: () {
+              if (!isWide) Navigator.pop(context);
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const TeacherContentScreen()));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_rounded, color: AppColors.primary),
+            title: const Text('Media Library'),
+            onTap: () {
+              if (!isWide) Navigator.pop(context);
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const TeacherImageScreen()));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.quiz_rounded, color: AppColors.primary),
+            title: const Text('Quizzes'),
+            onTap: () {
+              if (!isWide) Navigator.pop(context);
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const TeacherQuizzesScreen()));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.emoji_events_rounded, color: AppColors.primary),
+            title: const Text('League & Ranking'),
+            onTap: () {
+              if (!isWide) Navigator.pop(context);
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const TeacherLeagueScreen()));
+            },
+          ),
+        ],
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _showCreateGroupModal,
+          backgroundColor: AppColors.primary,
+          elevation: 3,
+          icon: const Icon(Icons.add, color: AppColors.onPrimary),
+          label: const Text(
+            'Create Group',
+            style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
+          ),
         ),
-        body: Builder(
+        bodyBuilder: (context, isWide) => Builder(
           builder: (ctx) => CustomScrollView(
             slivers: [
-              // ── Inline header (no AppBar) ──────────────────────────────
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.md, 56, AppSpacing.md, AppSpacing.sm),
+                  padding: EdgeInsets.fromLTRB(
+                     AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
                   child: Row(
                     children: [
-                      // Hamburger
-                      GestureDetector(
-                        onTap: () => Scaffold.of(ctx).openDrawer(),
-                        child: Container(
-                          padding: const EdgeInsets.all(AppSpacing.sm),
-                          decoration: BoxDecoration(
-                            color: AppColors.primarySoft(0.1),
-                            borderRadius:
-                                BorderRadius.circular(AppRadii.md),
+                      if (!isWide)
+                        GestureDetector(
+                          onTap: () => Scaffold.of(ctx).openDrawer(),
+                          child: Container(
+                            padding: const EdgeInsets.all(AppSpacing.sm),
+                            decoration: BoxDecoration(
+                              color: AppColors.primarySoft(0.1),
+                              borderRadius: BorderRadius.circular(AppRadii.md),
+                            ),
+                            child: const Icon(Icons.menu_rounded,
+                                color: AppColors.primary, size: 22),
                           ),
-                          child: const Icon(Icons.menu_rounded,
-                              color: AppColors.primary, size: 22),
                         ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
+                      if (!isWide) const SizedBox(width: AppSpacing.md),
                       const Text('My Groups', style: AppText.h1),
                     ],
                   ),
                 ),
               ),
-      
-              // ── Group list via StreamBuilder ───────────────────────────
               StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance
                     .collection('teacherGroups')
@@ -210,79 +219,81 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const SliverFillRemaining(
-                      child: Center(
-                        child: CircularProgressIndicator(
-                            color: AppColors.primary),
-                      ),
+                      child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
                     );
                   }
-      
                   if (snapshot.hasError) {
-                    return SliverFillRemaining(
-                      child: _ErrorState(onRetry: () => setState(() {})),
-                    );
+                    return SliverFillRemaining(child: _ErrorState(onRetry: () => setState(() {})));
                   }
-      
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const SliverFillRemaining(
-                      child: _EmptyGroupsState(),
-                    );
+                    return const SliverFillRemaining(child: _EmptyGroupsState());
                   }
-      
                   final groups = snapshot.data!.docs
                     ..sort((a, b) {
-                      final aTime =
-                          (a.data() as Map)['createdAt'] as Timestamp?;
-                      final bTime =
-                          (b.data() as Map)['createdAt'] as Timestamp?;
+                      final aTime = (a.data() as Map)['createdAt'] as Timestamp?;
+                      final bTime = (b.data() as Map)['createdAt'] as Timestamp?;
                       if (aTime == null && bTime == null) return 0;
                       if (aTime == null) return 1;
                       if (bTime == null) return -1;
                       return bTime.compareTo(aTime);
                     });
-      
+
                   return SliverPadding(
                     padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.md, AppSpacing.sm,
-                        AppSpacing.md, 100),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final doc  = groups[index];
-                          final data = doc.data() as Map<String, dynamic>;
-                          return _GroupCard(
-                            groupId:      doc.id,
-                            name:         data['name'] ?? 'Untitled',
-                            colorHex:     data['color'] ?? '#4CAF50',
-                            groupCode:    data['groupCode'] ?? '',
-                            academicYear: (data['academicYear'] as int?) ??
-                                DateTime.now().year,
-                            period:       (data['period'] as int?) ?? 1,
-                          );
-                        },
-                        childCount: groups.length,
-                      ),
-                    ),
+                        AppSpacing.md, AppSpacing.sm, AppSpacing.md, 100),
+                    sliver: isWide
+                        ? SliverGrid(
+                            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 420,
+                              mainAxisSpacing: AppSpacing.md,
+                              crossAxisSpacing: AppSpacing.md,
+                              mainAxisExtent: 150,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) => _buildGroupCard(groups[index]),
+                              childCount: groups.length,
+                            ),
+                          )
+                        : SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) => Padding(
+                                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                                child: _buildGroupCard(groups[index]),
+                              ),
+                              childCount: groups.length,
+                            ),
+                          ),
                   );
                 },
               ),
             ],
           ),
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _showCreateGroupModal,
-          backgroundColor: AppColors.primary,
-          elevation: 3,
-          icon: const Icon(Icons.add, color: AppColors.onPrimary),
-          label: const Text(
-            'Create Group',
-            style: TextStyle(
-                color: AppColors.onPrimary, fontWeight: FontWeight.bold),
-          ),
-        ),
       ),
     );
   }
+
+  Widget _buildGroupCard(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return _GroupCard(
+      groupId: doc.id,
+      name: data['name'] ?? 'Untitled',
+      colorHex: data['color'] ?? '#4CAF50',
+      groupCode: data['groupCode'] ?? '',
+      academicYear: (data['academicYear'] as int?) ?? DateTime.now().year,
+      classroom: (data['classroom'] as String?) ?? _legacyPeriodLabel(data['period']),
+    );
+  }
+}
+
+// Produces a readable fallback label from the old int-based 'period' field
+// (1 or 2) for groups created before 'classroom' existed. Returns an empty
+// string if there's nothing to fall back to, so the UI can decide how to
+// display "no classroom set" rather than showing a confusing "Period null".
+String _legacyPeriodLabel(dynamic period) {
+  if (period == 1) return 'Period 1';
+  if (period == 2) return 'Period 2';
+  return '';
 }
 
 // ── Group card ────────────────────────────────────────────────────────────────
@@ -293,7 +304,7 @@ class _GroupCard extends StatelessWidget {
   final String colorHex;
   final String groupCode;
   final int    academicYear;
-  final int    period;
+  final String classroom;
 
   const _GroupCard({
     required this.groupId,
@@ -301,7 +312,7 @@ class _GroupCard extends StatelessWidget {
     required this.colorHex,
     required this.groupCode,
     required this.academicYear,
-    required this.period,
+    required this.classroom,
   });
 
   Color get _cardColor {
@@ -335,7 +346,7 @@ class _GroupCard extends StatelessWidget {
             ),
           ),
           child: Container(
-            margin: const EdgeInsets.only(bottom: AppSpacing.md),
+            // margin: const EdgeInsets.only(bottom: AppSpacing.md),
             padding: const EdgeInsets.all(AppSpacing.md + 4),
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -360,19 +371,26 @@ class _GroupCard extends StatelessWidget {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: AppColors.onPrimary,
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
+                              height: 1.15,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '$academicYear · Period $period '
-                            '(${period == 1 ? 'Feb – Jun' : 'Aug – Nov'})',
+                            classroom.isNotEmpty
+                                ? '$academicYear · $classroom'
+                                : '$academicYear',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.82),
                               fontSize: 12,
@@ -518,9 +536,9 @@ class CreateGroupModal extends StatefulWidget {
 class _CreateGroupModalState extends State<CreateGroupModal> {
   final _formKey        = GlobalKey<FormState>();
   final nameController  = TextEditingController();
+  final classroomController = TextEditingController();
   Color selectedColor   = AppColors.primary;
   int   selectedYear    = DateTime.now().year;
-  int   selectedPeriod  = 1;
 
   List<int> get _years {
     final current = DateTime.now().year;
@@ -553,7 +571,7 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
         'color':        colorHex,
         'groupCode':    _generateGroupCode(),
         'academicYear': selectedYear,
-        'period':       selectedPeriod,
+        'classroom':    classroomController.text.trim(),
       });
     }
   }
@@ -561,6 +579,7 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
   @override
   void dispose() {
     nameController.dispose();
+    classroomController.dispose();
     super.dispose();
   }
 
@@ -632,19 +651,14 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
               ),
               const SizedBox(height: AppSpacing.lg),
 
-              // Period
-              _ModalLabel('Period', Icons.timeline_outlined),
+              // Classroom (free text identifier — replaces the old fixed
+              // Period 1/2 date-range selector)
+              _ModalLabel('Classroom', Icons.meeting_room_outlined),
               const SizedBox(height: AppSpacing.sm),
-              Row(
-                children: [
-                  _PeriodOption(period: 1, label: 'Period 1', subtitle: 'Feb – Jun',
-                      isSelected: selectedPeriod == 1,
-                      onTap: () => setState(() => selectedPeriod = 1)),
-                  const SizedBox(width: AppSpacing.md),
-                  _PeriodOption(period: 2, label: 'Period 2', subtitle: 'Aug – Nov',
-                      isSelected: selectedPeriod == 2,
-                      onTap: () => setState(() => selectedPeriod = 2)),
-                ],
+              TextFormField(
+                controller: classroomController,
+                textCapitalization: TextCapitalization.words,
+                decoration: _inputDecoration('e.g. Aula 3, Room B'),
               ),
               const SizedBox(height: AppSpacing.lg),
 
@@ -792,59 +806,6 @@ class _ChipRow<T> extends StatelessWidget {
               ),
             );
           }).toList(),
-        ),
-      );
-}
-
-class _PeriodOption extends StatelessWidget {
-  final int    period;
-  final String label;
-  final String subtitle;
-  final bool   isSelected;
-  final VoidCallback onTap;
-
-  const _PeriodOption({
-    required this.period,
-    required this.label,
-    required this.subtitle,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-        child: GestureDetector(
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(
-                vertical: AppSpacing.md - 2, horizontal: AppSpacing.md),
-            decoration: BoxDecoration(
-              color: isSelected ? AppColors.primary : Colors.grey[100],
-              borderRadius: BorderRadius.circular(AppRadii.md),
-              border: Border.all(
-                color: isSelected ? AppColors.primary : AppColors.divider,
-                width: isSelected ? 2 : 1,
-              ),
-            ),
-            child: Column(
-              children: [
-                Text(label,
-                    style: TextStyle(
-                      color: isSelected ? AppColors.onPrimary : Colors.grey[800],
-                      fontWeight: FontWeight.bold, fontSize: 15,
-                    )),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    style: TextStyle(
-                      color: isSelected
-                          ? Colors.white.withOpacity(0.82)
-                          : Colors.grey[600],
-                      fontSize: 12,
-                    )),
-              ],
-            ),
-          ),
         ),
       );
 }

@@ -21,7 +21,7 @@ class FillBlankTask extends StatefulWidget {
   State<FillBlankTask> createState() => _FillBlankTaskState();
 }
 
-class _FillBlankTaskState extends State<FillBlankTask> implements TaskTypeEditor {
+class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   List<Map<String, dynamic>> questionSegments = [];
   List<Map<String, dynamic>> options = [];
   List<TextEditingController> optionControllers = [];

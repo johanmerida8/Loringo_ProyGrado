@@ -1,18 +1,23 @@
+// screen_six.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:just_audio/just_audio.dart';
-// import 'package:loringo_app/services/translation/teacher_ui_translations.dart';
+// import 'package:just_audio/just_audio.dart';
+import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:lottie/lottie.dart';
+import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 // ── Data model for one match pair ─────────────────────────────────────────────
 class _MatchPair {
   final int id;
   final String english;
-  final String translated; // used only in text mode
-  final String image;      // used only in image mode
+  final String translated;
+  final String image;
 
   const _MatchPair({
     required this.id,
@@ -51,13 +56,13 @@ class ScreenSix extends StatefulWidget {
 }
 
 class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMixin {
-  final AudioPlayer _player = AudioPlayer();
+  // final AudioPlayer _player = AudioPlayer();
   final FlutterTts _tts = FlutterTts();
 
   static const Color _green = Color(0xFF4CAF50);
 
   String _userLang = 'Spanish';
-  String _mode = 'text'; // 'text' or 'image'
+  String _mode = 'text';
 
   List<_MatchPair> _pairs = [];
   List<_MatchPair> _leftCol = [];
@@ -70,6 +75,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
   int? _wrongRightId;
 
   bool _isLoading = true;
+  String? _errorMessage;
   late AnimationController _shakeCtrl;
 
   @override
@@ -82,7 +88,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
   @override
   void dispose() {
     _shakeCtrl.dispose();
-    _player.dispose();
+    // _player.dispose();
     _tts.stop();
     super.dispose();
   }
@@ -93,61 +99,161 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
   }
 
   Future<void> _initTts() async {
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.5);
-    await _tts.setPitch(1.0);
+    try {
+      await _tts.setLanguage('en-GB');
+      await _tts.setSpeechRate(0.5);
+      await _tts.setPitch(1.0);
+    } catch (e) {
+      debugPrint('TTS init error: $e');
+    }
+  }
+
+  Future<void> _handleClose() async {
+    final shouldExit = await confirmExitTask(context);
+    if (shouldExit && context.mounted) Navigator.pop(context);
   }
 
   Future<void> _fetchTask() async {
     try {
+      // Get user language
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) {
-        final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-        if (userDoc.exists) _userLang = userDoc['language'] ?? 'Spanish';
+        try {
+          final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+          if (userDoc.exists) {
+            _userLang = (userDoc.data()?['language'] as String?) ?? 'Spanish';
+          }
+        } catch (e) {
+          debugPrint('Error fetching user language: $e');
+        }
       }
 
+      // Fetch the task document
       final doc = await FirebaseFirestore.instance
-          .collection(widget.collectionName).doc(widget.contentId)
-          .collection('units').doc(widget.unitId)
-          .collection('lessons').doc(widget.lessonId)
-          .collection('activities').doc(widget.activityId)
-          .collection('tasks').doc(widget.taskId)
+          .collection(widget.collectionName)
+          .doc(widget.contentId)
+          .collection('units')
+          .doc(widget.unitId)
+          .collection('lessons')
+          .doc(widget.lessonId)
+          .collection('activities')
+          .doc(widget.activityId)
+          .collection('tasks')
+          .doc(widget.taskId)
           .get();
 
-      if (!doc.exists) return;
+      if (!doc.exists) {
+        setState(() {
+          _errorMessage = 'Task not found';
+          _isLoading = false;
+        });
+        return;
+      }
 
       final raw = doc.data() as Map<String, dynamic>;
-      final taskData = raw['data'] as Map<String, dynamic>? ?? raw;
-
+      
+      // ✅ Debug: Print what we got
+      debugPrint('ScreenSix raw data: $raw');
+      
+      // ✅ Try to get data from both possible locations
+      Map<String, dynamic> taskData;
+      if (raw.containsKey('data') && raw['data'] is Map<String, dynamic>) {
+        taskData = raw['data'] as Map<String, dynamic>;
+      } else {
+        taskData = raw;
+      }
+      
+      debugPrint('ScreenSix taskData: $taskData');
+      
+      // ✅ Get mode
       _mode = taskData['mode'] as String? ?? 'text';
+      
+      // ✅ Get pairs - try multiple possible locations
+      List<Map<String, dynamic>> rawPairs = [];
+      
+      // Try 1: Direct 'pairs' field
+      if (taskData.containsKey('pairs') && taskData['pairs'] is List) {
+        rawPairs = List<Map<String, dynamic>>.from(taskData['pairs']);
+      } 
+      // Try 2: If pairs are at root level as individual fields
+      else {
+        // Check if we have individual pair entries
+        final keys = taskData.keys.where((k) => k.startsWith('pair_') || k.startsWith('pair'));
+        if (keys.isNotEmpty) {
+          for (final key in keys) {
+            final pair = taskData[key];
+            if (pair is Map<String, dynamic>) {
+              rawPairs.add(pair);
+            }
+          }
+        }
+      }
+      
+      debugPrint('ScreenSix rawPairs count: ${rawPairs.length}');
+      
+      if (rawPairs.isEmpty) {
+        setState(() {
+          _errorMessage = 'No pairs found in this task';
+          _isLoading = false;
+        });
+        return;
+      }
 
-      final rawPairs = List<Map<String, dynamic>>.from(taskData['pairs'] ?? []);
-      final pairs = rawPairs.asMap().entries.map((e) => _MatchPair(
-        id: e.key,
-        english: e.value['english'] as String? ?? '',
-        translated: e.value['translated'] as String? ?? '',
-        image: e.value['image'] as String? ?? '',
-      )).toList();
+      // Convert to _MatchPair objects
+      final pairs = rawPairs.asMap().entries.map((e) {
+        final data = e.value;
+        return _MatchPair(
+          id: e.key,
+          english: data['english'] as String? ?? data['en'] as String? ?? '',
+          translated: data['translated'] as String? ?? data['es'] as String? ?? '',
+          image: data['image'] as String? ?? '',
+        );
+      }).toList();
 
-      final leftCol = List<_MatchPair>.from(pairs)..shuffle();
-      final rightCol = List<_MatchPair>.from(pairs)..shuffle();
+      // Filter out pairs with empty english
+      final validPairs = pairs.where((p) => p.english.isNotEmpty).toList();
+      
+      if (validPairs.isEmpty) {
+        setState(() {
+          _errorMessage = 'No valid pairs found';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Shuffle columns separately for the matching game
+      final leftCol = List<_MatchPair>.from(validPairs)..shuffle();
+      final rightCol = List<_MatchPair>.from(validPairs)..shuffle();
 
       setState(() {
-        _pairs = pairs;
+        _pairs = validPairs;
         _leftCol = leftCol;
         _rightCol = rightCol;
         _isLoading = false;
+        _errorMessage = null;
       });
-    } catch (e) {
+      
+      debugPrint('ScreenSix loaded ${validPairs.length} pairs');
+
+    } catch (e, stackTrace) {
       debugPrint('ScreenSix ERROR: $e');
-      setState(() => _isLoading = false);
+      debugPrint('StackTrace: $stackTrace');
+      setState(() {
+        _errorMessage = 'Error loading task: $e';
+        _isLoading = false;
+      });
     }
   }
 
   void _onTapLeft(int pairId) {
     if (_matchedIds.contains(pairId) || _wrongLeftId != null) return;
     setState(() => _selectedLeftId = pairId);
-    _tts.speak(_pairs.firstWhere((p) => p.id == pairId).english);
+    try {
+      final pair = _pairs.firstWhere((p) => p.id == pairId);
+      _tts.speak(pair.english);
+    } catch (e) {
+      debugPrint('TTS error: $e');
+    }
     _tryMatch();
   }
 
@@ -164,19 +270,25 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     final rightId = _selectedRightId!;
 
     if (leftId == rightId) {
-      HapticFeedback.mediumImpact();
-      _player.setAsset('assets/sound/success-2.mp3').then((_) => _player.play());
+      TaskFeedback.fire(true);
       setState(() {
         _matchedIds.add(leftId);
         _selectedLeftId = null;
         _selectedRightId = null;
       });
       if (_matchedIds.length == _pairs.length) {
-        Future.delayed(const Duration(milliseconds: 600), () => _showResultSheet(true));
+        Future.delayed(const Duration(milliseconds: 600), () {
+          TaskResultSheet.show(
+            context,
+            isCorrect: true,
+            // initialChildSize: 0.4,
+            // maxChildSize: 0.55,
+            onContinue: () => widget.onTaskComplete(true),
+          );
+        });
       }
     } else {
-      HapticFeedback.heavyImpact();
-      _player.setAsset('assets/sound/fail-2.mp3').then((_) => _player.play());
+      TaskFeedback.fire(false);
       _shakeCtrl.forward(from: 0);
       setState(() {
         _wrongLeftId = leftId;
@@ -195,52 +307,56 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     }
   }
 
-  void _showResultSheet(bool correct) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      isDismissible: false,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.4,
-        maxChildSize: 0.55,
-        builder: (_, __) => Container(
-          padding: const EdgeInsets.all(24),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-          ),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Lottie.asset(
-              correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json',
-              height: 120,
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  widget.onTaskComplete(correct);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: correct ? _green : Colors.orange,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Text(
-                  // TeacherUITranslations.get('continueBtnText', _userLang),
-                  'Continue',
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-                ),
-              ),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
+  // void _playSound(bool correct) {
+  //   FeedbackSoundService.instance.playResult(correct);
+  // }
+
+  // void _showResultSheet(bool correct) {
+  //   showModalBottomSheet(
+  //     context: context,
+  //     backgroundColor: Colors.transparent,
+  //     isScrollControlled: true,
+  //     isDismissible: false,
+  //     enableDrag: false,
+  //     builder: (_) => DraggableScrollableSheet(
+  //       initialChildSize: 0.4,
+  //       maxChildSize: 0.55,
+  //       builder: (_, __) => Container(
+  //         padding: const EdgeInsets.all(24),
+  //         decoration: const BoxDecoration(
+  //           color: Colors.white,
+  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
+  //         ),
+  //         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+  //           Lottie.asset(
+  //             correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json',
+  //             height: 120,
+  //           ),
+  //           const SizedBox(height: 16),
+  //           SizedBox(
+  //             width: double.infinity,
+  //             child: ElevatedButton(
+  //               onPressed: () {
+  //                 Navigator.pop(context);
+  //                 widget.onTaskComplete(correct);
+  //               },
+  //               style: ElevatedButton.styleFrom(
+  //                 backgroundColor: correct ? _green : Colors.orange,
+  //                 padding: const EdgeInsets.symmetric(vertical: 16),
+  //                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  //               ),
+  //               child: Text(
+  //                 correct ? 'Continue' : 'Try Again',
+  //                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+  //               ),
+  //             ),
+  //           ),
+  //         ]),
+  //       ),
+  //     ),
+  //   );
+  // }
 
   // ── Tile color helper ─────────────────────────────────────────────────────
   ({Color bg, Color border, Color text}) _tileColors(int pairId, bool isLeft) {
@@ -356,7 +472,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     );
   }
 
-  // Image mode right tile – uses fixed height + contain to avoid cropping
+  // Image mode right tile
   Widget _buildImageTile(_MatchPair pair, bool isMatched) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
@@ -368,7 +484,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
             child: pair.image.isNotEmpty
                 ? Image.network(
                     pair.image,
-                    fit: BoxFit.contain, // Prevents cropping
+                    fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => Container(
                       color: Colors.grey.shade100,
                       child: const Center(child: Icon(Icons.broken_image, size: 32, color: Colors.grey)),
@@ -394,10 +510,69 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
+        ),
+      );
     }
+
+    if (_errorMessage != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(
+                _errorMessage!,
+                style: const TextStyle(fontSize: 16, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _green,
+                ),
+                child: const Text('Go Back', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_pairs.isEmpty) {
-      return const Scaffold(body: Center(child: Text('No pairs found')));
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange),
+              const SizedBox(height: 16),
+              const Text(
+                'No pairs found',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This task has no matching pairs configured',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _green,
+                ),
+                child: const Text('Go Back', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
@@ -415,107 +590,109 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // Header with progress
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                child: Row(children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.black87, size: 28),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.all(Radius.circular(30)),
-                      child: LinearProgressIndicator(
-                        value: progressValue,
-                        backgroundColor: Colors.blueGrey,
-                        valueColor: const AlwaysStoppedAnimation<Color>(_green),
-                        minHeight: 8,
+          child: ResponsiveActivityShell(
+            child: Column(
+              children: [
+                // Header with progress
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  child: Row(children: [
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.black87, size: 28),
+                      onPressed: _handleClose,
+                    ),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.all(Radius.circular(30)),
+                        child: LinearProgressIndicator(
+                          value: progressValue,
+                          backgroundColor: Colors.blueGrey,
+                          valueColor: const AlwaysStoppedAnimation<Color>(_green),
+                          minHeight: 8,
+                        ),
                       ),
                     ),
-                  ),
-                ]),
-              ),
-
-              // Title and counter
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Match the pairs',
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _green.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _green.withOpacity(0.3)),
-                      ),
-                      child: Text(
-                        '$matchedCount / $totalPairs',
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _green),
-                      ),
-                    ),
-                  ],
+                  ]),
                 ),
-              ),
-              const SizedBox(height: 8),
-
-              // Column headers
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Row(children: [
-                  Expanded(
-                    child: Center(
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.flag, size: 14, color: _green),
-                        const SizedBox(width: 4),
-                        Text('English', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
-                      ]),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Center(
-                      child: isImageMode
-                          ? Row(mainAxisSize: MainAxisSize.min, children: [
-                              Icon(Icons.image_outlined, size: 14, color: Colors.purple.shade400),
-                              const SizedBox(width: 4),
-                              Text('Image', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
-                            ])
-                          : Row(mainAxisSize: MainAxisSize.min, children: [
-                              Icon(Icons.flag, size: 14, color: Colors.orange),
-                              const SizedBox(width: 4),
-                              Text(_userLang, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
-                            ]),
-                    ),
-                  ),
-                ]),
-              ),
-              const SizedBox(height: 8),
-
-              // Two‑column scrollable area
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+            
+                // Title and counter
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(child: SingleChildScrollView(child: Column(children: _leftCol.map(_buildLeftTile).toList()))),
-                      const SizedBox(width: 16),
-                      Expanded(child: SingleChildScrollView(child: Column(children: _rightCol.map(_buildRightTile).toList()))),
+                      Text(
+                        'Match the pairs',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _green.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _green.withOpacity(0.3)),
+                        ),
+                        child: Text(
+                          '$matchedCount / $totalPairs',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _green),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-              ),
-
-              const SizedBox(height: 20),
-            ],
+                const SizedBox(height: 8),
+            
+                // Column headers
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(children: [
+                    Expanded(
+                      child: Center(
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.flag, size: 14, color: _green),
+                          const SizedBox(width: 4),
+                          Text('English', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                        ]),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Center(
+                        child: isImageMode
+                            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.image_outlined, size: 14, color: Colors.purple.shade400),
+                                const SizedBox(width: 4),
+                                Text('Image', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                              ])
+                            : Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.flag, size: 14, color: Colors.orange),
+                                const SizedBox(width: 4),
+                                Text(_userLang, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                              ]),
+                      ),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 8),
+            
+                // Two‑column scrollable area
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: SingleChildScrollView(child: Column(children: _leftCol.map(_buildLeftTile).toList()))),
+                        const SizedBox(width: 16),
+                        Expanded(child: SingleChildScrollView(child: Column(children: _rightCol.map(_buildRightTile).toList()))),
+                      ],
+                    ),
+                  ),
+                ),
+            
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),

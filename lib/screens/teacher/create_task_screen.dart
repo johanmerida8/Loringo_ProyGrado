@@ -1,5 +1,9 @@
+// create_task_screen.dart
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/task_types/listen_and_speak_task.dart';
 import 'package:loringo_app/screens/teacher/task_types/repeat_after_me_task.dart';
+import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
+import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
@@ -35,101 +39,106 @@ class CreatePersonalizedTaskScreen extends StatefulWidget {
   });
 
   @override
-  State<CreatePersonalizedTaskScreen> createState() => _CreatePersonalizedTaskScreenState();
+  State<CreatePersonalizedTaskScreen> createState() =>
+      _CreatePersonalizedTaskScreenState();
 }
 
-class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScreen> {
+class _CreatePersonalizedTaskScreenState
+    extends State<CreatePersonalizedTaskScreen> {
   final Database db = Database();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  
+
   late TextEditingController orderController;
   late TextEditingController questionController;
-  
+
   String selectedType = 'image_select';
   bool isLoading = false;
-  
-  // Controllers for each task type
+  bool get _isEditing => widget.taskId != null;
+  Color get _c => widget.groupColor;
+
   late Map<String, TaskEditorController> taskControllers;
   late TaskEditorController currentController;
 
   @override
   void initState() {
     super.initState();
-    orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
-    questionController = TextEditingController(text: widget.existingData?['question'] as String? ?? '');
-    
-    // Initialize controllers for each task type with display names
+    orderController = TextEditingController(
+        text: widget.existingData?['order']?.toString() ?? '');
+    questionController = TextEditingController(
+        text: widget.existingData?['question'] as String? ?? '');
+
     taskControllers = {
       'image_select': TaskEditorController(
-        typeId: 'image_select',
-        defaultDisplayName: 'Image Select',
-      ),
+          typeId: 'image_select', defaultDisplayName: 'Image Select'),
       'image_select_reverse': TaskEditorController(
-        typeId: 'image_select_reverse', 
-        defaultDisplayName: 'Image Select Reverse',
-      ),
+          typeId: 'image_select_reverse',
+          defaultDisplayName: 'Image Select Reverse'),
       'complete_the_chat': TaskEditorController(
-        typeId: 'complete_the_chat',
-        defaultDisplayName: 'Complete the Chat',
-      ),
+          typeId: 'complete_the_chat', defaultDisplayName: 'Complete the Chat'),
       'fill_blank': TaskEditorController(
-        typeId: 'fill_blank',
-        defaultDisplayName: 'Fill in the Blank',
-      ),
+          typeId: 'fill_blank', defaultDisplayName: 'Fill in the Blank'),
       'arrange': TaskEditorController(
-        typeId: 'arrange',
-        defaultDisplayName: 'Sentence Arrange',
-      ),
-      'match': TaskEditorController(
-        typeId: 'match',
-        defaultDisplayName: 'Match',
-      ),
+          typeId: 'arrange', defaultDisplayName: 'Sentence Arrange'),
+      'match': TaskEditorController(typeId: 'match', defaultDisplayName: 'Match'),
       'reading': TaskEditorController(
-        typeId: 'reading',
-        defaultDisplayName: 'Reading Comprehension',
-      ),
+          typeId: 'reading', defaultDisplayName: 'Reading Comprehension'),
       'sentence_builder': TaskEditorController(
-        typeId: 'sentence_builder',
-        defaultDisplayName: 'Sentence Builder',
-      ),
+          typeId: 'sentence_builder', defaultDisplayName: 'Sentence Builder'),
       'repeat_after_me': TaskEditorController(
-        typeId: 'repeat_after_me',
-        defaultDisplayName: 'Repeat after me'
-      ),
+          typeId: 'repeat_after_me', defaultDisplayName: 'Repeat after me'),
+      'listen_and_speak': TaskEditorController(
+          typeId: 'listen_and_speak', defaultDisplayName: 'Listen & Speak'),
     };
-    
-    // Set current controller based on existing data
+
     final existingType = widget.existingData?['type'] as String?;
     if (existingType != null && taskControllers.containsKey(existingType)) {
       selectedType = existingType;
     }
     currentController = taskControllers[selectedType]!;
+
+    if (!_isEditing) _prefillNextOrder();
+  }
+
+  Future<void> _prefillNextOrder() async {
+    try {
+      final snap = await db.getPersonalizedTasks(
+        widget.groupId,
+        widget.contentId,
+        widget.unitId,
+        widget.lessonId,
+        widget.activityId,
+      );
+      if (mounted && orderController.text.isEmpty) {
+        orderController.text = (snap.docs.length + 1).toString();
+      }
+    } catch (_) {}
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    
-    // Validate current editor through controller
+
     final validationError = currentController.validate();
     if (validationError != null) {
       _showSnackBar(validationError, AppColors.danger);
       return;
     }
-    
+
     setState(() => isLoading = true);
-    
+
     try {
-      final taskId = widget.taskId ?? 'task_${DateTime.now().millisecondsSinceEpoch}';
-      
-      // ✅ CORREGIDO: Solo usar questionController si tiene campo de pregunta
-      final questionText = _hasQuestionField() 
-          ? questionController.text.trim() 
-          : ''; // Los tipos sin campo de pregunta no necesitan question text
-      
-      // Collect data through controller
+      final taskId =
+          widget.taskId ?? 'task_${DateTime.now().millisecondsSinceEpoch}';
+      final questionText =
+          _hasQuestionField() ? questionController.text.trim() : '';
+
+      // ── Upload any pending local assets before saving to Firestore ─────────
+      // For reading tasks in Voice mode, this uploads locally-recorded audio
+      // to Cloudinary. For all other task types this is a no-op.
+      await currentController.prepareForSubmit();
+
       final collectedData = currentController.collectData();
-      
-      if (widget.taskId != null) {
+
+      if (_isEditing) {
         await db.updatePersonalizedTask(
           groupId: widget.groupId,
           contentId: widget.contentId,
@@ -142,7 +151,7 @@ class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScr
           order: int.parse(orderController.text.trim()),
           data: collectedData,
         );
-        _showSnackBar('Task updated successfully!', AppColors.primary);
+        _showSnackBar('Task updated successfully!', AppColors.success);
       } else {
         await db.createPersonalizedTask(
           groupId: widget.groupId,
@@ -156,9 +165,9 @@ class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScr
           order: int.parse(orderController.text.trim()),
           data: collectedData,
         );
-        _showSnackBar('Task created successfully!', AppColors.primary);
+        _showSnackBar('Task created successfully!', AppColors.success);
       }
-      
+
       if (mounted) Navigator.pop(context);
     } catch (e) {
       _showSnackBar('Error: $e', AppColors.danger);
@@ -167,20 +176,18 @@ class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScr
     }
   }
 
-  // ✅ Solo usar UNA función: _hasQuestionField
   bool _hasQuestionField() {
-    return selectedType == 'image_select' || 
-           selectedType == 'image_select_reverse' ||
-           selectedType == 'complete_the_chat';
+    return selectedType == 'image_select' ||
+        selectedType == 'image_select_reverse' ||
+        selectedType == 'complete_the_chat';
   }
 
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
-      ),
+          content: Text(message),
+          backgroundColor: color,
+          behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -193,72 +200,68 @@ class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScr
 
   Widget _buildCurrentEditor() {
     final existingData = widget.existingData?['data'];
-    
+
     switch (selectedType) {
       case 'image_select':
         return ImageSelectTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['image_select']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['image_select']!,
+            onChanged: () => setState(() {}));
       case 'image_select_reverse':
         return ImageSelectReverseTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['image_select_reverse']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['image_select_reverse']!,
+            onChanged: () => setState(() {}));
       case 'complete_the_chat':
         return CompleteChatTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['complete_the_chat']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['complete_the_chat']!,
+            onChanged: () => setState(() {}));
       case 'fill_blank':
         return FillBlankTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['fill_blank']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['fill_blank']!,
+            onChanged: () => setState(() {}));
       case 'arrange':
         return ArrangeTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['arrange']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['arrange']!,
+            onChanged: () => setState(() {}));
       case 'match':
         return MatchTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['match']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['match']!,
+            onChanged: () => setState(() {}));
       case 'reading':
         return ReadingTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['reading']!,
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['reading']!,
+            onChanged: () => setState(() {}));
       case 'sentence_builder':
         return SentenceBuilderTask(
-          groupColor: widget.groupColor,
-          existingData: existingData,
-          controller: taskControllers['sentence_builder']!,
-          onChanged: () => setState(() {}),
-        );
-
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['sentence_builder']!,
+            onChanged: () => setState(() {}));
       case 'repeat_after_me':
         return RepeatAfterMeTask(
-          groupColor: widget.groupColor, 
-          existingData: existingData,
-          controller: taskControllers['repeat_after_me']!, 
-          onChanged: () => setState(() {}),
-        );
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['repeat_after_me']!,
+            onChanged: () => setState(() {}));
+      case 'listen_and_speak':
+        return ListenAndSpeakTask(
+            groupColor: _c,
+            existingData: existingData,
+            controller: taskControllers['listen_and_speak']!,
+            onChanged: () => setState(() {}));
       default:
         return const SizedBox.shrink();
     }
@@ -266,18 +269,14 @@ class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScr
 
   @override
   Widget build(BuildContext context) {
-    final c = widget.groupColor;
-    
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       appBar: AppBar(
-        backgroundColor: c,
+        backgroundColor: _c,
         elevation: 0,
         iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: Text(
-          widget.taskId != null ? 'Edit Task' : 'Create Task',
-          style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold, fontSize: 20),
-        ),
+        title: Text(_isEditing ? 'Edit Task' : 'Create Task',
+            style: AppText.appBarTitle),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.md),
@@ -286,124 +285,66 @@ class _CreatePersonalizedTaskScreenState extends State<CreatePersonalizedTaskScr
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Task Type Dropdown
-              DropdownButtonFormField<String>(
-                value: selectedType,
-                decoration: InputDecoration(
-                  labelText: 'Task Type',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.md),
-                    borderSide: BorderSide(color: c, width: 2),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-                items: taskControllers.entries.map((entry) {
-                  return DropdownMenuItem(
-                    value: entry.key,
-                    child: Text(entry.value.displayName),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null && taskControllers.containsKey(value)) {
-                    setState(() {
-                      selectedType = value;
-                      currentController = taskControllers[value]!;
-                      
-                      // ✅ Limpiar el campo de pregunta si el nuevo tipo NO lo usa
-                      if (!_hasQuestionField()) {
-                        questionController.clear();
-                      }
-                    });
-                  }
+              const CreateFormLabel('Task Type'),
+              const SizedBox(height: AppSpacing.sm),
+              TaskTypePickerField(
+                selectedId: selectedType,
+                color: _c,
+                onSelected: (value) {
+                  if (!taskControllers.containsKey(value)) return;
+                  setState(() {
+                    selectedType = value;
+                    currentController = taskControllers[value]!;
+                    if (!_hasQuestionField()) questionController.clear();
+                  });
                 },
               ),
               const SizedBox(height: AppSpacing.md),
-              
-              // ✅ Question Field (solo para tipos que lo necesitan)
+
               if (_hasQuestionField()) ...[
-                _buildLabelRow('Question'),
+                const CreateFormLabel('Question'),
                 const SizedBox(height: AppSpacing.xs),
-                TextFormField(
+                CreateFormField(
                   controller: questionController,
-                  decoration: _inputDecoration(c, 'Enter the word or question...'), // ✅ hint text fijo
+                  color: _c,
+                  hint: 'Enter the word or question...',
                   maxLines: selectedType == 'complete_the_chat' ? 1 : 3,
-                  validator: (v) => _hasQuestionField() && (v?.isEmpty ?? true) ? 'Required' : null,
+                  validator: (v) =>
+                      _hasQuestionField() && (v?.isEmpty ?? true)
+                          ? 'Required'
+                          : null,
                 ),
                 const SizedBox(height: AppSpacing.md),
               ],
-              
-              // Order Field
-              _buildLabelRow('Order'),
+
+              const CreateFormLabel('Order'),
               const SizedBox(height: AppSpacing.xs),
-              TextFormField(
+              CreateFormField(
                 controller: orderController,
-                decoration: _inputDecoration(c, '1, 2, 3…'),
+                color: _c,
+                hint: '1, 2, 3…',
                 keyboardType: TextInputType.number,
                 validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
               ),
               const SizedBox(height: AppSpacing.md),
-              
-              const Divider(height: 1),
+
+              const Divider(height: 1, color: AppColors.divider),
               const SizedBox(height: AppSpacing.md),
-              
-              // Type-specific Editor
+
               _buildCurrentEditor(),
-              
+
               const SizedBox(height: AppSpacing.lg),
-              
-              // Submit Button
-              SizedBox(
-                width: double.infinity,
-                height: 54,
-                child: ElevatedButton(
-                  onPressed: isLoading ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: c,
-                    foregroundColor: AppColors.onPrimary,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-                  ),
-                  child: isLoading
-                      ? SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: AppColors.onPrimary, strokeWidth: 2))
-                      : Text(widget.taskId != null ? 'Update' : 'Create', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
+
+              CreateFormSubmitButton(
+                color: _c,
+                label: _isEditing ? 'UPDATE' : 'CREATE',
+                isLoading: isLoading,
+                onPressed: _submit,
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildLabelRow(String text) {
-    return Row(
-      children: [
-        Icon(Icons.label_outline, size: 14, color: widget.groupColor),
-        const SizedBox(width: AppSpacing.xs),
-        Text(
-          text.toUpperCase(),
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: widget.groupColor, letterSpacing: 1.1),
-        ),
-      ],
-    );
-  }
-
-  InputDecoration _inputDecoration(Color c, String hint) {
-    return InputDecoration(
-      hintText: hint,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        borderSide: BorderSide(color: c.withOpacity(0.3)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        borderSide: BorderSide(color: c, width: 2),
-      ),
-      filled: true,
-      fillColor: Colors.white,
     );
   }
 }

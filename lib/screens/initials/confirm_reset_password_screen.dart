@@ -6,7 +6,6 @@ import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/password_utils.dart';
 
-// ─── Shared auth-flow palette ────────────────────────────────────────────────
 const _kTopGradient = LinearGradient(
   colors: [Color(0xFFF6E96B), Color(0xFFBEDC74), Color(0xFFA2CA71)],
   begin: Alignment.topCenter,
@@ -38,7 +37,7 @@ class _ConfirmResetPasswordScreenState
   final _newPassCtrl = TextEditingController();
   final _confirmPassCtrl = TextEditingController();
 
-  bool _showStrength = false; // only shown once user starts typing
+  bool _showStrength = false;
   bool _isLoading = false;
 
   @override
@@ -47,7 +46,6 @@ class _ConfirmResetPasswordScreenState
     _newPassCtrl.addListener(() {
       setState(() => _showStrength = _newPassCtrl.text.isNotEmpty);
     });
-    // Rebuild on confirm field change so mismatch warning refreshes
     _confirmPassCtrl.addListener(() => setState(() {}));
   }
 
@@ -57,8 +55,6 @@ class _ConfirmResetPasswordScreenState
     _confirmPassCtrl.dispose();
     super.dispose();
   }
-
-  // ── Snackbar ──────────────────────────────────────────────────────────────
 
   void _snack(String msg, {Color color = AppColors.danger}) {
     if (!mounted) return;
@@ -70,8 +66,6 @@ class _ConfirmResetPasswordScreenState
           borderRadius: BorderRadius.circular(AppRadii.md)),
     ));
   }
-
-  // ── Reset password action ─────────────────────────────────────────────────
 
   Future<void> _resetPassword() async {
     final newPwd = _newPassCtrl.text.trim();
@@ -96,7 +90,11 @@ class _ConfirmResetPasswordScreenState
 
     setState(() => _isLoading = true);
     try {
-      await _otpService.updatePassword(newPwd, updateFirestore: true);
+      await _otpService.updatePassword(
+        email: widget.email,
+        otp: widget.otp,
+        newPassword: newPwd,
+      );
       _snack('Password reset successfully!', color: AppColors.success);
       if (mounted) {
         Navigator.pushAndRemoveUntil(
@@ -113,8 +111,6 @@ class _ConfirmResetPasswordScreenState
     }
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     final screenH = MediaQuery.of(context).size.height;
@@ -130,8 +126,6 @@ class _ConfirmResetPasswordScreenState
       body: Stack(
         children: [
           Container(color: _kBottomColor),
-
-          // ── Hero gradient ────────────────────────────────────────────────
           Positioned(
             top: 0,
             left: 0,
@@ -182,8 +176,6 @@ class _ConfirmResetPasswordScreenState
               ),
             ),
           ),
-
-          // ── Wave divider ─────────────────────────────────────────────────
           Positioned(
             top: heroH - 8,
             left: 0,
@@ -194,8 +186,6 @@ class _ConfirmResetPasswordScreenState
               waveIntensity: 1.0,
             ),
           ),
-
-          // ── Scrollable form ───────────────────────────────────────────────
           Positioned(
             top: heroH + 20,
             left: 0,
@@ -209,8 +199,6 @@ class _ConfirmResetPasswordScreenState
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: AppSpacing.lg),
-
-                    // ── White card ─────────────────────────────────────────
                     Container(
                       padding: const EdgeInsets.all(AppSpacing.lg),
                       decoration: BoxDecoration(
@@ -227,31 +215,23 @@ class _ConfirmResetPasswordScreenState
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // New password field
                           MyTextField(
                             controller: _newPassCtrl,
                             hintText: 'New password',
                             obscureText: true,
                             isEnabled: true,
                           ),
-
-                          // ── Password strength indicator ──────────────────
                           if (_showStrength) ...[
                             const SizedBox(height: AppSpacing.md),
                             _PasswordStrengthPanel(password: password),
                           ],
-
                           const SizedBox(height: AppSpacing.md),
-
-                          // Confirm password field
                           MyTextField(
                             controller: _confirmPassCtrl,
                             hintText: 'Confirm password',
                             obscureText: true,
                             isEnabled: true,
                           ),
-
-                          // Mismatch warning
                           if (mismatch) ...[
                             const SizedBox(height: AppSpacing.sm),
                             Row(
@@ -271,10 +251,7 @@ class _ConfirmResetPasswordScreenState
                               ],
                             ),
                           ],
-
                           const SizedBox(height: AppSpacing.lg),
-
-                          // Reset button
                           ElevatedButton(
                             onPressed: _isLoading ? null : _resetPassword,
                             style: ElevatedButton.styleFrom(
@@ -302,7 +279,6 @@ class _ConfirmResetPasswordScreenState
                         ],
                       ),
                     ),
-
                     const SizedBox(height: AppSpacing.xl * 2),
                   ],
                 ),
@@ -314,8 +290,6 @@ class _ConfirmResetPasswordScreenState
     );
   }
 }
-
-// ─── Password strength panel (self-contained for testability) ─────────────────
 
 class _PasswordStrengthPanel extends StatelessWidget {
   final String password;
@@ -338,7 +312,6 @@ class _PasswordStrengthPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Strength label + bar
           Row(
             children: [
               Text(
@@ -356,7 +329,6 @@ class _PasswordStrengthPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          // Visual bar split into 5 segments
           Row(
             children: List.generate(5, (i) {
               return Expanded(
@@ -371,8 +343,6 @@ class _PasswordStrengthPanel extends StatelessWidget {
               );
             }),
           ),
-
-          // Only show missing requirements
           if (missing.isNotEmpty) ...[
             const SizedBox(height: 10),
             ...missing.map((req) => Padding(

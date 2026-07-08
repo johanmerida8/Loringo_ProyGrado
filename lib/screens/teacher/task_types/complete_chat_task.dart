@@ -42,7 +42,7 @@ class CompleteChatTask extends StatefulWidget {
   State<CompleteChatTask> createState() => _CompleteChatTaskState();
 }
 
-class _CompleteChatTaskState extends State<CompleteChatTask> implements TaskTypeEditor {
+class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   List<ChatTurn> turns = [];
 
   @override

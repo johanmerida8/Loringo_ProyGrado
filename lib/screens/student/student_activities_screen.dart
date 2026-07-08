@@ -45,10 +45,6 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
     super.dispose();
   }
 
-  /// Listens to the student document in real time. This is what makes the
-  /// avatar (and group, if it ever changes) update instantly anywhere this
-  /// tab is visible — no hot reload, no manual refresh, no callback chain
-  /// up to a parent screen needed.
   void _listenToStudentDoc() {
     _studentSub = FirebaseFirestore.instance
         .collection('students')
@@ -59,9 +55,6 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
 
       final studentData = studentDoc.data();
       final fetchedGroupId = studentData?['groupId'] as String?;
-      // Assumes the avatar field is stored as 'avatar' on the student doc.
-      // If StudentAuthService.updateStudentAvatar writes to a different
-      // field name, update the key below to match.
       final fetchedAvatar = studentData?['avatar'] as String?;
 
       final isFirstLoad = _assignedContentFuture == null;
@@ -83,14 +76,24 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
         groupId = fetchedGroupId;
         groupName = fetchedGroupName;
         if (fetchedAvatar != null) _avatar = fetchedAvatar;
-        // Only re-run the (expensive, deeply nested) content query on the
-        // first load or when the group actually changes — not on every
-        // avatar update.
         if (isFirstLoad || groupChanged) {
           _assignedContentFuture = _loadAssignedContent();
         }
       });
     }, onError: (e) => debugPrint('Error listening to student doc: $e'));
+  }
+
+  /// Forces a real reload of assigned content. Reassigns
+  /// _assignedContentFuture to a brand-new Future so unlock/completion
+  /// state is recomputed from fresh Firestore data — a plain
+  /// setState(() {}) does nothing here since an already-resolved Future
+  /// never re-runs. This is what fixes the "need hot reload to see unit 2"
+  /// bug. Called after returning from any activity or quiz screen.
+  void _refreshContent() {
+    if (!mounted) return;
+    setState(() {
+      _assignedContentFuture = _loadAssignedContent();
+    });
   }
 
   @override
@@ -248,6 +251,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
       final bool isQuiz = itemType == 'quiz';
       final bool isCompleted = item['isCompleted'] ?? false;
       final int stars = item['stars'] ?? 0;
+      final bool isClosedAfterAttempts = item['isClosedAfterAttempts'] ?? false;
 
       activityWidgets.add(Padding(
         padding: const EdgeInsets.symmetric(vertical: 28),
@@ -292,17 +296,14 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            isUnlocked
-                                ? (isQuiz ? Icons.quiz : Icons.star)
-                                : Icons.lock,
+                            !isUnlocked && isClosedAfterAttempts
+                                ? Icons.check_circle
+                                : (isUnlocked
+                                    ? (isQuiz ? Icons.quiz : Icons.star)
+                                    : Icons.lock),
                             color: Colors.white,
                             size: 28,
                           ),
-                          // Completed activities and quizzes both show their
-                          // earned stars. An uncompleted quiz still shows
-                          // "Quiz" so it reads differently from a regular
-                          // activity bubble; an uncompleted activity just
-                          // keeps the star icon above, no extra label.
                           if (isCompleted) ...[
                             const SizedBox(height: 4),
                             Text(
@@ -342,11 +343,22 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                     ),
                   ),
                 ),
+                if (!isUnlocked && isClosedAfterAttempts) ...[
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: 140,
+                    child: Text(
+                      'Completed',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                  ),
+                ],
               ],
-            ),
-          ],
+            ),],
+          ),
         ),
-      ));
+      );
 
       if (count > 0 && progress == midPoint) {
         activityWidgets.add(Center(
@@ -375,9 +387,10 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
               quizId: item['quizId'],
               quizTitle: item['title'],
               studentId: widget.studentId,
+              studentName: widget.studentName,
             ),
           ),
-        );
+        ).then((_) => _refreshContent());
       } else {
         Navigator.push(
           context,
@@ -391,7 +404,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
               studentId: widget.studentId,
             ),
           ),
-        );
+        ).then((_) => _refreshContent());
       }
     } else {
       Navigator.push(
@@ -405,12 +418,12 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             activityTitle: item['title'],
             studentId: widget.studentId,
             xpBase: item['xpBase'] ?? 100,
-            bonusXP: item['bonusXP'] ?? 0,
+            bonusXP: 0,
             collectionName: 'content',
             isPreview: false,
           ),
         ),
-      ).then((_) => setState(() {}));
+      ).then((_) => _refreshContent());
     }
   }
 
@@ -430,11 +443,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
           return ao.compareTo(bo);
         });
 
-      // Both activity and quiz progress docs carry an 'isCompleted' flag and
-      // a 'stars' field (see students/{id}/progress/{activityOrQuizId}), so
-      // both maps below follow the same shape.
       Map<String, dynamic> completedActivities = {};
       Map<String, dynamic> completedQuizzes = {};
+      Map<String, dynamic> quizProgressDetails = {};
 
       try {
         final progressSnapshot = await FirebaseFirestore.instance
@@ -455,6 +466,11 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 'stars': pd['stars'] ?? 0,
                 'score': pd['score'] ?? 0
               };
+              quizProgressDetails[pd['quizId']] = {
+                'attempts': pd['attempts'] ?? 0,
+                'passed': pd['passed'] ?? false,
+                'isClosedAfterAttempts': pd['isClosedAfterAttempts'] ?? false,
+              };
             }
           }
         }
@@ -473,10 +489,33 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             .orderBy('order')
             .get();
 
+        List<String> previousUnitIds = [];
+        Map<String, bool> unitCompletedMap = {};
+
         for (final unitDoc in unitsSnap.docs) {
           final unitId = unitDoc.id;
-          List<String> unitActivityIds = [];
-          int unitActivitiesCompleted = 0;
+
+          bool unitCompleted = false;
+          bool hasUnitQuiz = false;
+          bool unitQuizCompleted = false;
+
+          final unitQuizzesSnap = await FirebaseFirestore.instance
+              .collection('quizzes')
+              .where('type', isEqualTo: 'unit')
+              .where('contentId', isEqualTo: contentId)
+              .where('unitId', isEqualTo: unitId)
+              .get();
+
+          if (unitQuizzesSnap.docs.isNotEmpty) {
+            hasUnitQuiz = true;
+            for (final qDoc in unitQuizzesSnap.docs) {
+              final quizId = qDoc.id;
+              if (completedQuizzes.containsKey(quizId)) {
+                unitQuizCompleted = true;
+                break;
+              }
+            }
+          }
 
           final lessonsSnap = await FirebaseFirestore.instance
               .collection('content')
@@ -486,6 +525,56 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
               .collection('lessons')
               .orderBy('order')
               .get();
+
+          List<String> unitActivityIds = [];
+          int unitActivitiesCompleted = 0;
+
+          for (final lessonDoc in lessonsSnap.docs) {
+            final lessonId = lessonDoc.id;
+
+            final activitiesSnap = await FirebaseFirestore.instance
+                .collection('content')
+                .doc(contentId)
+                .collection('units')
+                .doc(unitId)
+                .collection('lessons')
+                .doc(lessonId)
+                .collection('activities')
+                .orderBy('order')
+                .get();
+
+            for (final actDoc in activitiesSnap.docs) {
+              final activityId = actDoc.id;
+              unitActivityIds.add(activityId);
+              if (completedActivities.containsKey(activityId)) {
+                unitActivitiesCompleted++;
+              }
+            }
+          }
+
+          bool allActivitiesCompleted = unitActivityIds.isNotEmpty &&
+              unitActivitiesCompleted == unitActivityIds.length;
+
+          if (hasUnitQuiz) {
+            unitCompleted = allActivitiesCompleted && unitQuizCompleted;
+          } else {
+            unitCompleted = allActivitiesCompleted;
+          }
+
+          unitCompletedMap[unitId] = unitCompleted;
+
+          bool isUnitUnlocked = true;
+
+          if (previousUnitIds.isNotEmpty) {
+            bool allPreviousCompleted = true;
+            for (final prevUnitId in previousUnitIds) {
+              if (!(unitCompletedMap[prevUnitId] ?? false)) {
+                allPreviousCompleted = false;
+                break;
+              }
+            }
+            isUnitUnlocked = allPreviousCompleted;
+          }
 
           for (final lessonDoc in lessonsSnap.docs) {
             final lessonId = lessonDoc.id;
@@ -506,18 +595,16 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
               final actData = actDoc.data();
               final activityId = actDoc.id;
               final requiredActivityId = actData['requiredActivityId'];
-              unitActivityIds.add(activityId);
               final isCompleted = completedActivities.containsKey(activityId);
-              if (isCompleted) unitActivitiesCompleted++;
               final stars = isCompleted
                   ? (completedActivities[activityId]['stars'] ?? 0)
                   : 0;
-              bool isUnlocked = true;
-              if (requiredActivityId != null &&
-                  requiredActivityId.isNotEmpty) {
-                isUnlocked =
-                    completedActivities.containsKey(requiredActivityId);
+
+              bool isUnlocked = isUnitUnlocked;
+              if (requiredActivityId != null && requiredActivityId.isNotEmpty) {
+                isUnlocked = isUnlocked && completedActivities.containsKey(requiredActivityId);
               }
+
               allItems.add({
                 'type': 'activity',
                 'contentId': contentId,
@@ -533,12 +620,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 'isCompleted': isCompleted,
                 'stars': stars,
                 'requiredActivityId': requiredActivityId,
-                'bonusXP': null,
-                'deadline': null,
               });
             }
 
-            // ✅ Load lesson quizzes from root 'quizzes' collection
             final lessonQuizzesSnap = await FirebaseFirestore.instance
                 .collection('quizzes')
                 .where('type', isEqualTo: 'lesson')
@@ -550,12 +634,14 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             for (final qDoc in lessonQuizzesSnap.docs) {
               final qData = qDoc.data();
               final quizId = qDoc.id;
-              final isQuizUnlocked =
-                  unitActivitiesCompleted == unitActivityIds.length &&
-                      unitActivityIds.isNotEmpty;
+
+              final bool isQuizUnlocked = isUnitUnlocked &&
+                  unitActivityIds.isNotEmpty &&
+                  unitActivitiesCompleted == unitActivityIds.length;
+
               final isCompleted = completedQuizzes.containsKey(quizId);
-              final stars =
-                  isCompleted ? (completedQuizzes[quizId]['stars'] ?? 0) : 0;
+              final stars = isCompleted ? (completedQuizzes[quizId]['stars'] ?? 0) : 0;
+
               allItems.add({
                 'type': 'quiz',
                 'contentId': contentId,
@@ -563,34 +649,52 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 'lessonId': lessonId,
                 'quizId': quizId,
                 'title': qData['title'] ?? 'Lesson Quiz',
-                'description':
-                    qData['description'] ?? 'Test your lesson knowledge',
+                'description': qData['description'] ?? 'Test your lesson knowledge',
                 'isUnlocked': isQuizUnlocked,
                 'isCompleted': isCompleted,
                 'stars': stars,
-                'bonusXP': null,
-                'deadline': null,
               });
             }
           }
 
-          // ✅ Load unit quizzes from root 'quizzes' collection
-          final unitQuizzesSnap = await FirebaseFirestore.instance
+          // ── UNIT QUIZZES ──
+          final unitQuizSnapshots = await FirebaseFirestore.instance
               .collection('quizzes')
               .where('type', isEqualTo: 'unit')
               .where('contentId', isEqualTo: contentId)
               .where('unitId', isEqualTo: unitId)
               .get();
 
-          for (final qDoc in unitQuizzesSnap.docs) {
+          for (final qDoc in unitQuizSnapshots.docs) {
             final qData = qDoc.data();
             final quizId = qDoc.id;
-            final isQuizUnlocked =
-                unitActivitiesCompleted == unitActivityIds.length &&
-                    unitActivityIds.isNotEmpty;
+
+            final bool activitiesReady = isUnitUnlocked &&
+                unitActivityIds.isNotEmpty &&
+                unitActivitiesCompleted == unitActivityIds.length;
+
             final isCompleted = completedQuizzes.containsKey(quizId);
-            final stars =
-                isCompleted ? (completedQuizzes[quizId]['stars'] ?? 0) : 0;
+            final stars = isCompleted ? (completedQuizzes[quizId]['stars'] ?? 0) : 0;
+
+            final int maxAttempts = (qData['maxAttempts'] as num?)?.toInt() ?? 1;
+            final progressDetail = quizProgressDetails[quizId];
+            final int attemptsUsed = progressDetail != null
+                ? (progressDetail['attempts'] as int? ?? 0)
+                : 0;
+            // final bool hasPassed = progressDetail != null
+            //     ? (progressDetail['passed'] as bool? ?? false)
+            //     : false;
+
+            final bool isCompletedAfterAttempts = progressDetail != null
+                ? (progressDetail['isClosedAfterAttempts'] as bool? ?? false)
+                : false;
+
+            // final bool attemptsExhausted = attemptsUsed >= maxAttempts;
+
+            final bool quizClosed = isCompletedAfterAttempts || isCompleted;
+
+            final bool isQuizUnlocked = activitiesReady && !quizClosed;
+
             allItems.add({
               'type': 'quiz',
               'contentId': contentId,
@@ -598,15 +702,17 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
               'lessonId': '',
               'quizId': quizId,
               'title': qData['title'] ?? 'Unit Quiz',
-              'description':
-                  qData['description'] ?? 'Complete to unlock next unit',
+              'description': qData['description'] ?? 'Complete to unlock next unit',
               'isUnlocked': isQuizUnlocked,
               'isCompleted': isCompleted,
+              'isClosedAfterAttempts': quizClosed,
+              'attemptsUsed': attemptsUsed,
+              'maxAttempts': maxAttempts,
               'stars': stars,
-              'bonusXP': null,
-              'deadline': null,
             });
           }
+
+          previousUnitIds.add(unitId);
         }
       }
       return allItems;

@@ -9,59 +9,34 @@ import 'package:loringo_app/theme/app_theme.dart';
 class StudentSettingsTab extends StatefulWidget {
   final String studentId;
   final String studentName;
-  final String studentAvatar; // Add this parameter
+  final String studentAvatar;
+  final bool showBackButton;
 
   const StudentSettingsTab({
     super.key,
     required this.studentId,
     required this.studentName,
-    required this.studentAvatar, // Required parameter
+    required this.studentAvatar,
+    this.showBackButton = false,
   });
 
-  @override
-  State<StudentSettingsTab> createState() => _StudentSettingsTabState();
-}
-
-class _StudentSettingsTabState extends State<StudentSettingsTab> {
-  late String currentAvatar; // Store current avatar state
-
-  @override
-  void initState() {
-    super.initState();
-    currentAvatar = widget.studentAvatar; // Initialize with database value
-
-    // Initialize biometric provider
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<BiometricProvider>().initialize(widget.studentId);
-    });
-  }
-
-  Future<void> _toggleBiometric(bool value) async {
-    final biometricProvider = context.read<BiometricProvider>();
-    await biometricProvider.toggle(context, widget.studentId);
-  }
-
-  /// Show avatar selector dialog
-  void _showAvatarSelector() {
-    showDialog(
+  static Future<void> showAvatarSelectorFor({
+    required BuildContext context,
+    required String studentId,
+    required String currentAvatar,
+    required void Function(String newAvatar) onUpdated,
+  }) {
+    return showDialog(
       context: context,
       builder: (context) => AvatarSelector(
         currentAvatar: currentAvatar,
         onAvatarSelected: (avatar) async {
-          // Update the avatar in Firebase
           try {
             await StudentAuthService.updateStudentAvatar(
-              studentId: widget.studentId,
+              studentId: studentId,
               newAvatar: avatar,
             );
-
-            // Update local state. The Activities tab listens to the
-            // student doc directly via a Firestore stream, so it picks up
-            // this change on its own — no callback or shared state needed.
-            setState(() {
-              currentAvatar = avatar;
-            });
-
+            onUpdated(avatar);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -87,88 +62,139 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
   }
 
   @override
+  State<StudentSettingsTab> createState() => _StudentSettingsTabState();
+}
+
+class _StudentSettingsTabState extends State<StudentSettingsTab> {
+  late String currentAvatar;
+
+  @override
+  void initState() {
+    super.initState();
+    currentAvatar = widget.studentAvatar;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<BiometricProvider>().initialize(widget.studentId);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant StudentSettingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.studentAvatar != oldWidget.studentAvatar) {
+      currentAvatar = widget.studentAvatar;
+    }
+  }
+
+  Future<void> _toggleBiometric(bool value) async {
+    final biometricProvider = context.read<BiometricProvider>();
+    await biometricProvider.toggle(context, widget.studentId);
+  }
+
+  void _showAvatarSelector() {
+    StudentSettingsTab.showAvatarSelectorFor(
+      context: context,
+      studentId: widget.studentId,
+      currentAvatar: currentAvatar,
+      onUpdated: (avatar) => setState(() => currentAvatar = avatar),
+    );
+  }
+
+  /// Same inline header pattern used by _SecurityScreen — a rounded
+  /// back-arrow chip next to the title, no Flutter AppBar. Only shown
+  /// when this screen was navigated to (Navigator.canPop is true); when
+  /// embedded as a tab inside StudentMainScreen's IndexedStack there's
+  /// nothing to pop back to, so the arrow is omitted there.
+  Widget _buildHeader(BuildContext context, String title) {
+    return Row(children: [
+      if (widget.showBackButton) ...[
+        GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: AppColors.primarySoft(0.1),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+            ),
+            child: const Icon(Icons.arrow_back_ios_new_rounded,
+                color: AppColors.primary, size: 18),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.md),
+      ],
+      Text(title, style: AppText.h1),
+    ]);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final biometricProvider = context.watch<BiometricProvider>();
 
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFE8F5E9), Colors.white],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+    return Scaffold(
+      backgroundColor: const Color(0xFFE8F5E9),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFE8F5E9), Colors.white],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
         ),
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 20),
-              const Text(
-                'Settings',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
-                ),
-              ),
-              const SizedBox(height: 30),
-
-              // Avatar Section — centered, avatar-only, tap to change
-              _buildAvatarSection(),
-
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 24),
-
-              if (biometricProvider.isLoading)
-                const Center(
-                  child: CircularProgressIndicator(
-                    color: AppColors.primary,
-                  ),
-                )
-              else if (biometricProvider.isSupported)
-                ListTile(
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.tint(AppColors.primary),
-                      borderRadius: AppRadii.smAll,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(context, 'Settings'),
+                const SizedBox(height: 30),
+                _buildAvatarSection(),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 24),
+                if (biometricProvider.isLoading)
+                  const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary),
+                  )
+                else if (biometricProvider.isSupported)
+                  ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.tint(AppColors.primary),
+                        borderRadius: AppRadii.smAll,
+                      ),
+                      child: Icon(
+                        biometricProvider.biometricTypeName == 'Face ID'
+                            ? Icons.face_rounded
+                            : Icons.fingerprint_rounded,
+                        color: AppColors.primary,
+                      ),
                     ),
-                    child: Icon(
-                      biometricProvider.biometricTypeName == 'Face ID'
-                          ? Icons.face_rounded
-                          : Icons.fingerprint_rounded,
-                      color: AppColors.primary,
+                    title: Text(
+                      '${biometricProvider.biometricTypeName} Login',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  title: Text(
-                    '${biometricProvider.biometricTypeName} Login',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
+                    subtitle: const Text('Quick and secure login'),
+                    trailing: Switch(
+                      value: biometricProvider.isEnabled,
+                      onChanged: _toggleBiometric,
+                      activeColor: AppColors.primary,
                     ),
                   ),
-                  subtitle: const Text('Quick and secure login'),
-                  trailing: Switch(
-                    value: biometricProvider.isEnabled,
-                    onChanged: _toggleBiometric,
-                    activeColor: AppColors.primary,
-                  ),
-                ),
-              const SizedBox(height: 16),
-              _buildLogoutTile(),
-            ],
+                const SizedBox(height: 16),
+                _buildLogoutTile(),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  /// Centered avatar with an edit badge — tap anywhere on it to open the
-  /// avatar picker. No name shown here on purpose; the name already shows
-  /// on the Home tab header.
   Widget _buildAvatarSection() {
     return Center(
       child: GestureDetector(

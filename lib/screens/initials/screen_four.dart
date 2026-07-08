@@ -1,9 +1,17 @@
+// screen_four.dart
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:just_audio/just_audio.dart';
+// import 'package:just_audio/just_audio.dart';
+import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:lottie/lottie.dart';
+import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 class _FillOption {
   final String textEn;
@@ -46,7 +54,7 @@ class ScreenFour extends StatefulWidget {
 }
 
 class _ScreenFourState extends State<ScreenFour> {
-  final AudioPlayer _player = AudioPlayer();
+  // final AudioPlayer _player = AudioPlayer();
   final FlutterTts _tts = FlutterTts();
 
   static const Color _green = Color(0xFF4CAF50);
@@ -80,6 +88,11 @@ class _ScreenFourState extends State<ScreenFour> {
 
   void _speak(String text) async {
     if (text.isNotEmpty) await _tts.speak(text);
+  }
+
+  Future<void> _handleClose() async {
+    final shouldExit = await confirmExitTask(context);
+    if (shouldExit && context.mounted) Navigator.pop(context);
   }
 
   String get _fullSentence {
@@ -161,64 +174,94 @@ class _ScreenFourState extends State<ScreenFour> {
         }
       }
     }
-    _playFeedback(correct);
-  }
 
-  void _playFeedback(bool correct) {
-    if (correct) HapticFeedback.mediumImpact(); else HapticFeedback.heavyImpact();
-    _player.setAsset(correct ? 'assets/sound/success-2.mp3' : 'assets/sound/fail-2.mp3').then((_) => _player.play());
-    _showResultSheet(correct);
-  }
+    TaskFeedback.fire(correct);
 
-  void _showResultSheet(bool correct) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.4,
-        maxChildSize: 0.6,
-        builder: (_, __) => Container(
-          padding: const EdgeInsets.all(16),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    widget.onTaskComplete!(correct);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: correct ? _green : Colors.orange,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 5,
-                  ),
-                  child: const Text(
-                    'Continue',
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    TaskResultSheet.show(
+      context,
+      isCorrect: correct,
+      onContinue: () {
+        if (correct) {
+          widget.onTaskComplete!(true);
+        } else {
+          _resetBlanksForRetry();
+        }
+      },
     );
   }
 
+  // void _playFeedback(bool correct) {
+  //   if (correct) HapticFeedback.mediumImpact(); else HapticFeedback.heavyImpact();
+
+  //   FeedbackSoundService.instance.playResult(correct);
+  //   _showResultSheet(correct);
+  // }
+
+  /// Clears whatever the student chose/dropped so a retry starts blank
+  /// instead of re-showing the wrong answer already in place.
+  void _resetBlanksForRetry() {
+    setState(() {
+      _selectedOptionEn = '';
+      _droppedWords = List<String?>.filled(_blankCount, null);
+    });
+  }
+
+  // void _showResultSheet(bool correct) {
+  //   showModalBottomSheet(
+  //     context: context,
+  //     backgroundColor: Colors.transparent,
+  //     isScrollControlled: true,
+  //     // Locked: must tap the button, no swipe/tap-out escape.
+  //     isDismissible: false,
+  //     enableDrag: false,
+  //     builder: (_) => DraggableScrollableSheet(
+  //       initialChildSize: 0.4,
+  //       maxChildSize: 0.6,
+  //       builder: (_, __) => Container(
+  //         padding: const EdgeInsets.all(16),
+  //         decoration: const BoxDecoration(
+  //           color: Colors.white,
+  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
+  //         ),
+  //         child: Column(
+  //           mainAxisAlignment: MainAxisAlignment.center,
+  //           children: [
+  //             Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
+  //             const SizedBox(height: 20),
+  //             SizedBox(
+  //               width: double.infinity,
+  //               child: ElevatedButton(
+  //                 onPressed: () {
+  //                   Navigator.pop(context);
+  //                   if (correct) {
+  //                     widget.onTaskComplete!(true);
+  //                   } else {
+  //                     _resetBlanksForRetry();
+  //                   }
+  //                 },
+  //                 style: ElevatedButton.styleFrom(
+  //                   backgroundColor: correct ? _green : Colors.orange,
+  //                   padding: const EdgeInsets.symmetric(vertical: 16),
+  //                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  //                   elevation: 5,
+  //                 ),
+  //                 child: Text(
+  //                   correct ? 'Continue' : 'Try Again',
+  //                   style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+  //                 ),
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     ),
+  //   );
+  // }
+
   @override
   void dispose() {
-    _player.dispose();
+    // _player.dispose();
     _tts.stop();
     super.dispose();
   }
@@ -230,7 +273,7 @@ class _ScreenFourState extends State<ScreenFour> {
         children: [
           IconButton(
             icon: const Icon(Icons.close, color: Colors.black87, size: 28),
-            onPressed: () => Navigator.pop(context),
+            onPressed: _handleClose,
           ),
           Expanded(
             child: ClipRRect(
@@ -458,22 +501,24 @@ class _ScreenFourState extends State<ScreenFour> {
               ? const Center(child: CircularProgressIndicator())
               : _options.isEmpty
                   ? const Center(child: Text('No options available'))
-                  : Column(
-                      children: [
-                        _buildProgressBar(),
-                        _buildSubtitle(),
-                        const SizedBox(height: 16),
-                        if (_blankCount == 1) _buildSingleBlankQuestion() else _buildMultiBlankQuestion(),
-                        const SizedBox(height: 24),
-                        if (_blankCount == 1)
-                          _buildSingleBlankOptions()
-                        else ...[
-                          Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _buildWordPool()),
-                          const Spacer(),
+                  : ResponsiveActivityShell(
+                    child: Column(
+                        children: [
+                          _buildProgressBar(),
+                          _buildSubtitle(),
+                          const SizedBox(height: 16),
+                          if (_blankCount == 1) _buildSingleBlankQuestion() else _buildMultiBlankQuestion(),
+                          const SizedBox(height: 24),
+                          if (_blankCount == 1)
+                            _buildSingleBlankOptions()
+                          else ...[
+                            Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _buildWordPool()),
+                            const Spacer(),
+                          ],
+                          _buildCheckButton(),
                         ],
-                        _buildCheckButton(),
-                      ],
-                    ),
+                      ),
+                  ),
         ),
       ),
     );

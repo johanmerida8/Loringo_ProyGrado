@@ -31,7 +31,7 @@ class ParentReportsScreen extends StatelessWidget {
         children: [
           // ── Inline header ──
           const Padding(
-            padding: EdgeInsets.fromLTRB(20, 56, 20, 4),
+            padding: EdgeInsets.fromLTRB(20, 20, 20, 4),
             child: Text(
               'Reports',
               style: TextStyle(

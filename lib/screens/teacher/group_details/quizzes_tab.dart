@@ -1,19 +1,26 @@
-// quizzes_tab.dart
+// quizzes_tab.dart - Clean Version with Back Button
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/quiz_management_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 class QuizzesTab extends StatelessWidget {
   QuizzesTab({
     super.key,
     required this.groupId,
     required this.groupColor,
+    this.showBackButton = false,
+    this.onBackPressed,
   });
 
   final String groupId;
   final Color groupColor;
+  final bool showBackButton;
+  final VoidCallback? onBackPressed;
+
   final Database _db = Database();
 
   @override
@@ -35,39 +42,65 @@ class QuizzesTab extends StatelessWidget {
           return const _NoContentEmptyState();
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
-          itemCount: contentDocs.length + 1,
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Quizzes',
-                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: groupColor),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Manage lesson quizzes and unit tests for your content',
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-                    ),
-                  ],
-                ),
-              );
-            }
-            final doc = contentDocs[index - 1];
-            return _ContentQuizCard(
-              contentDoc: doc,
-              groupId: groupId,
-              groupColor: groupColor,
-              db: _db,
-            );
-          },
+        return Column(
+          children: [
+            // ── Clean Header with Back Button ──────────────────────────
+            _buildHeader(context),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                itemCount: contentDocs.length,
+                itemBuilder: (context, index) {
+                  final doc = contentDocs[index];
+                  return _ContentQuizCard(
+                    contentDoc: doc,
+                    groupId: groupId,
+                    groupColor: groupColor,
+                    db: _db,
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
+      child: Row(
+        children: [
+          // ── Back Button ──────────────────────────────────────────────
+          if (showBackButton)
+            GestureDetector(
+              onTap: onBackPressed ?? () => Navigator.pop(context),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primarySoft(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.arrow_back_rounded,
+                  color: AppColors.primary,
+                  size: 24,
+                ),
+              ),
+            ),
+          if (showBackButton) const SizedBox(width: 12),
+          // ── Title ─────────────────────────────────────────────────────
+          const Text(
+            'Quizzes',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: AppColors.primary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -124,6 +157,7 @@ class _ContentQuizCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = contentDoc.data() as Map<String, dynamic>;
     final title = data['title'] as String? ?? 'Untitled';
+    final contentId = contentDoc.id;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -156,24 +190,32 @@ class _ContentQuizCard extends StatelessWidget {
             ]),
           ),
 
-          // ── Units ──────────────────────────────────────────────────────
+          // ── Units (NO LOCK STATUS - Teacher view) ──────────────────────
           StreamBuilder<QuerySnapshot>(
-            stream: db.getPersonalizedUnitsStream(groupId, contentDoc.id),
+            stream: db.getPersonalizedUnitsStream(groupId, contentId),
             builder: (context, unitsSnapshot) {
-              if (!unitsSnapshot.hasData) {
-                return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()));
-              }
-              final units = unitsSnapshot.data!.docs;
-              if (units.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text('No units found', style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
+              if (unitsSnapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.all(20), 
+                  child: Center(child: CircularProgressIndicator())
                 );
               }
+              
+              if (!unitsSnapshot.hasData || unitsSnapshot.data!.docs.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'No units found', 
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13)
+                  ),
+                );
+              }
+              
+              final units = unitsSnapshot.data!.docs;
               return Column(
                 children: List.generate(units.length, (i) => _UnitSection(
                   groupId: groupId,
-                  contentId: contentDoc.id,
+                  contentId: contentId,
                   unitDoc: units[i],
                   groupColor: groupColor,
                   db: db,
@@ -188,7 +230,7 @@ class _ContentQuizCard extends StatelessWidget {
   }
 }
 
-// ── Unit section ──────────────────────────────────────────────────────────────
+// ── Unit section (Teacher view - NO LOCKS) ──────────────────────────────────
 
 class _UnitSection extends StatelessWidget {
   const _UnitSection({
@@ -211,11 +253,12 @@ class _UnitSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final unitData = unitDoc.data() as Map<String, dynamic>;
     final unitTitle = unitData['title'] as String? ?? 'Untitled';
+    final unitId = unitDoc.id;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Unit label
+        // Unit label (NO lock status)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
           child: Row(children: [
@@ -233,7 +276,7 @@ class _UnitSection extends StatelessWidget {
           ]),
         ),
 
-        // Unit Test button
+        // Unit Test button (ALWAYS clickable for teachers)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
           child: _QuizActionTile(
@@ -250,7 +293,7 @@ class _UnitSection extends StatelessWidget {
                   type: QuizManagementType.unit,
                   groupId: groupId,
                   contentId: contentId,
-                  unitId: unitDoc.id,
+                  unitId: unitId,
                   title: unitTitle,
                   groupColor: groupColor,
                 ),
@@ -272,7 +315,7 @@ class _UnitSection extends StatelessWidget {
         _LessonQuizList(
           groupId: groupId,
           contentId: contentId,
-          unitId: unitDoc.id,
+          unitId: unitId,
           groupColor: groupColor,
           db: db,
         ),
@@ -284,7 +327,7 @@ class _UnitSection extends StatelessWidget {
   }
 }
 
-// ── Action tile (used for Unit Test) ─────────────────────────────────────────
+// ── Action tile (Teacher view - NO lock) ────────────────────────────────────
 
 class _QuizActionTile extends StatelessWidget {
   const _QuizActionTile({
@@ -349,7 +392,7 @@ class _QuizActionTile extends StatelessWidget {
   }
 }
 
-// ── Lesson quiz list ──────────────────────────────────────────────────────────
+// ── Lesson quiz list (Teacher view) ──────────────────────────────────────────
 
 class _LessonQuizList extends StatelessWidget {
   const _LessonQuizList({
@@ -396,7 +439,7 @@ class _LessonQuizList extends StatelessWidget {
   }
 }
 
-// ── Lesson quiz tile ──────────────────────────────────────────────────────────
+// ── Lesson quiz tile (Teacher view) ──────────────────────────────────────────
 
 class _LessonQuizTile extends StatelessWidget {
   const _LessonQuizTile({

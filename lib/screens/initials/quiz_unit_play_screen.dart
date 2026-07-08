@@ -165,7 +165,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     }
   }
 
-  // NEW: Check if student can retake
+  // Check if student can retake
   Future<bool> _canRetake() async {
     if (widget.isPreview) return false;
     if (widget.studentId == null) return false;
@@ -176,10 +176,20 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     final data = progressDoc.data() as Map<String, dynamic>?;
     final attemptsUsed = data?['attempts'] as int? ?? 1;
     final isCompleted = data?['isCompleted'] as bool? ?? false;
-    
+    final passed = data?['passed'] as bool? ?? false;
+    final reportGenerated = data?['reportGenerated'] as bool? ?? false;
+
+    // If report has been generated, student cannot retake
+    if (reportGenerated) return false;
+
     // If already passed, no need to retake
+    if (passed) return false;
+    
+    // If the quiz is marked as completed (regardless of pass/fail), 
+    // student cannot retake - it's done
     if (isCompleted) return false;
     
+    // Only allow retake if attempts remaining and not completed
     return attemptsUsed < _maxAttempts;
   }
 
@@ -198,12 +208,34 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
       return;
     }
 
-    // Check if student has attempts left
+    // Check if student can take this quiz
     final canRetake = await _canRetake();
     if (!canRetake && !widget.isPreview) {
+      // Get more details about why they can't retake
+      final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
+      String message = 'You cannot take this quiz.';
+      
+      if (progressDoc.exists) {
+        final data = progressDoc.data() as Map<String, dynamic>;
+        final isCompleted = data['isCompleted'] as bool? ?? false;
+        final passed = data['passed'] as bool? ?? false;
+        final attemptsUsed = data['attempts'] as int? ?? 0;
+        final reportGenerated = data['reportGenerated'] as bool? ?? false;
+        
+        if (reportGenerated) {
+          message = 'This quiz has already been reviewed and reported.';
+        } else if (passed) {
+          message = 'You have already passed this quiz.';
+        } else if (isCompleted) {
+          message = 'You have already completed this quiz.';
+        } else if (attemptsUsed >= _maxAttempts) {
+          message = 'You have used all $_maxAttempts attempts for this quiz.';
+        }
+      }
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('You have used all $_maxAttempts attempts for this quiz.'),
+          content: Text(message),
           backgroundColor: Colors.red,
         ),
       );
@@ -282,6 +314,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
           reportType: 'unit',
           studentName: widget.studentName,
           passed: passed,
+          isClosedAfterAttempts: true,
         );
 
         await _saveStudentAnswers();
@@ -307,6 +340,11 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     debugPrint('   remainingAttempts: $remainingAttempts');
     debugPrint('   Final xpEarned being passed to ActivityCompleteScreen: $xpEarned');
 
+    // Only show retake button if:
+    // 1. Quiz was NOT passed AND
+    // 2. There are remaining attempts
+    final bool showRetake = !passed && remainingAttempts > 0;
+
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -318,7 +356,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
           wrongAnswers: totalQ - correctCount,
           xpEarned: xpEarned,
           isGraded: true,
-          onRetake: passed ? null : _onRetakeQuiz,
+          onRetake: showRetake ? _onRetakeQuiz : null,  // Only show retake if not passed AND attempts remain
           attemptsRemaining: remainingAttempts > 0 ? remainingAttempts : 0,
           maxAttempts: _maxAttempts,
         ),

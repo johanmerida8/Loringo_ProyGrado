@@ -24,13 +24,14 @@ class OTPScreen extends StatefulWidget {
 class _OTPScreenState extends State<OTPScreen> {
   final OTPService _otpService = OTPService();
 
-  // Six individual controllers + focus nodes for the OTP boxes
   final List<TextEditingController> _controllers =
       List.generate(6, (_) => TextEditingController());
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
+  final List<FocusNode> _keyListenerNodes =
+      List.generate(6, (_) => FocusNode());
 
   bool _isLoading = false;
-  int _remainingTime = 30; // 30-second resend cooldown
+  int _remainingTime = 30;
   bool _canResend = false;
 
   @override
@@ -44,10 +45,9 @@ class _OTPScreenState extends State<OTPScreen> {
   void dispose() {
     for (final c in _controllers) c.dispose();
     for (final n in _focusNodes) n.dispose();
+    for (final n in _keyListenerNodes) n.dispose();
     super.dispose();
   }
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
 
   void _snack(String msg, {Color color = AppColors.danger}) {
     if (!mounted) return;
@@ -60,15 +60,14 @@ class _OTPScreenState extends State<OTPScreen> {
     ));
   }
 
-  String get _otpValue =>
-      _controllers.map((c) => c.text).join();
+  String get _otpValue => _controllers.map((c) => c.text).join();
 
   void _clearFields() {
     for (final c in _controllers) c.clear();
+    setState(() {});
     _focusNodes[0].requestFocus();
   }
 
-  // ── Countdown for resend button ────────────────────────────────────────────
   void _startCountdown() {
     Future.delayed(const Duration(seconds: 1), () {
       if (!mounted) return;
@@ -82,46 +81,60 @@ class _OTPScreenState extends State<OTPScreen> {
     });
   }
 
-  // ── Auto-paste from clipboard on open ────────────────────────────────────
+  void _fillCode(String digits) {
+    // TEMP DEBUG
+    debugPrint('DEBUG _fillCode called with: "$digits" (length: ${digits.length})');
+    for (int i = 0; i < 6 && i < digits.length; i++) {
+      _controllers[i].text = digits[i];
+      debugPrint('DEBUG set controller[$i].text = "${digits[i]}"');
+    }
+    setState(() {});
+    _focusNodes[5].requestFocus();
+    // TEMP DEBUG — check right after fill
+    for (int i = 0; i < _controllers.length; i++) {
+      debugPrint('DEBUG AFTER FILL controller[$i].text = "${_controllers[i].text}"');
+    }
+  }
+
   Future<void> _tryAutoPaste() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final text = data?.text?.trim() ?? '';
+      debugPrint('DEBUG _tryAutoPaste clipboard raw: "$text"');
       if (RegExp(r'^\d{6}$').hasMatch(text)) {
-        for (int i = 0; i < 6; i++) {
-          _controllers[i].text = text[i];
-        }
-        _focusNodes[5].requestFocus();
+        _fillCode(text);
         _snack('Code pasted automatically', color: AppColors.success);
       }
-    } catch (_) {
-      // Silent — user can still type manually
+    } catch (e) {
+      debugPrint('DEBUG _tryAutoPaste error: $e');
     }
   }
 
-  // ── Manual paste from clipboard button ───────────────────────────────────
   Future<void> _pasteFromClipboard() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final raw = data?.text?.replaceAll(RegExp(r'\s+'), '') ?? '';
       final digits = raw.replaceAll(RegExp(r'\D'), '');
+      debugPrint('DEBUG _pasteFromClipboard raw: "$raw" digits: "$digits"');
       if (digits.length >= 6) {
-        for (int i = 0; i < 6; i++) {
-          _controllers[i].text = digits[i];
-        }
-        _focusNodes[5].requestFocus();
+        _fillCode(digits.substring(0, 6));
         _snack('Code pasted', color: AppColors.success);
       } else {
         _snack('Clipboard doesn\'t contain a valid code', color: AppColors.warning);
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('DEBUG _pasteFromClipboard error: $e');
       _snack('Could not paste code');
     }
   }
 
-  // ── Verify OTP ────────────────────────────────────────────────────────────
   Future<void> _verifyOTP() async {
     final code = _otpValue;
+    // TEMP DEBUG
+    debugPrint('DEBUG _verifyOTP code = "$code" (length: ${code.length})');
+    for (int i = 0; i < _controllers.length; i++) {
+      debugPrint('DEBUG VERIFY controller[$i].text = "${_controllers[i].text}"');
+    }
     if (code.length != 6) {
       _snack('Please enter all 6 digits', color: AppColors.warning);
       return;
@@ -131,7 +144,6 @@ class _OTPScreenState extends State<OTPScreen> {
     try {
       final isValid = await _otpService.verifyOTP(widget.email, code);
       if (isValid) {
-        await _otpService.cleanupSession();
         _snack('Code verified!', color: AppColors.success);
         if (mounted) {
           Navigator.pushReplacement(
@@ -155,7 +167,6 @@ class _OTPScreenState extends State<OTPScreen> {
     }
   }
 
-  // ── Resend OTP ────────────────────────────────────────────────────────────
   Future<void> _resendOTP() async {
     if (!_canResend) return;
     setState(() => _isLoading = true);
@@ -180,8 +191,6 @@ class _OTPScreenState extends State<OTPScreen> {
     }
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     final screenH = MediaQuery.of(context).size.height;
@@ -192,8 +201,6 @@ class _OTPScreenState extends State<OTPScreen> {
       body: Stack(
         children: [
           Container(color: _kBottomColor),
-
-          // ── Hero gradient ────────────────────────────────────────────────
           Positioned(
             top: 0,
             left: 0,
@@ -207,7 +214,6 @@ class _OTPScreenState extends State<OTPScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Spacer(),
-                    // Shield / verification icon
                     Container(
                       width: 100,
                       height: 100,
@@ -245,8 +251,6 @@ class _OTPScreenState extends State<OTPScreen> {
               ),
             ),
           ),
-
-          // ── Wave divider ─────────────────────────────────────────────────
           Positioned(
             top: heroH - 8,
             left: 0,
@@ -257,8 +261,6 @@ class _OTPScreenState extends State<OTPScreen> {
               waveIntensity: 1.0,
             ),
           ),
-
-          // ── Scrollable form ───────────────────────────────────────────────
           Positioned(
             top: heroH + 20,
             left: 0,
@@ -272,8 +274,6 @@ class _OTPScreenState extends State<OTPScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: AppSpacing.lg),
-
-                    // ── White card ─────────────────────────────────────────
                     Container(
                       padding: const EdgeInsets.all(AppSpacing.lg),
                       decoration: BoxDecoration(
@@ -289,7 +289,6 @@ class _OTPScreenState extends State<OTPScreen> {
                       ),
                       child: Column(
                         children: [
-                          // Destination email label
                           Text(
                             'Code sent to',
                             style: TextStyle(
@@ -306,15 +305,14 @@ class _OTPScreenState extends State<OTPScreen> {
                               color: AppColors.primaryDark,
                             ),
                           ),
-
                           const SizedBox(height: AppSpacing.lg),
-
-                          // ── 6 OTP boxes ──────────────────────────────────
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: List.generate(6, (i) => _OTPBox(
+                              key: ValueKey('otp_box_$i'),
                               controller: _controllers[i],
                               focusNode: _focusNodes[i],
+                              keyListenerFocusNode: _keyListenerNodes[i],
                               onChanged: (v) {
                                 if (v.isNotEmpty && i < 5) {
                                   _focusNodes[i + 1].requestFocus();
@@ -330,10 +328,7 @@ class _OTPScreenState extends State<OTPScreen> {
                               },
                             )),
                           ),
-
                           const SizedBox(height: AppSpacing.sm),
-
-                          // Paste button
                           TextButton.icon(
                             onPressed: _pasteFromClipboard,
                             icon: const Icon(Icons.content_paste_rounded,
@@ -345,10 +340,7 @@ class _OTPScreenState extends State<OTPScreen> {
                                   fontWeight: FontWeight.w600, fontSize: 14),
                             ),
                           ),
-
                           const SizedBox(height: AppSpacing.md),
-
-                          // Verify button
                           ElevatedButton(
                             onPressed: _isLoading ? null : _verifyOTP,
                             style: ElevatedButton.styleFrom(
@@ -372,10 +364,7 @@ class _OTPScreenState extends State<OTPScreen> {
                                 : const Text('Verify Code',
                                     style: AppText.button),
                           ),
-
                           const SizedBox(height: AppSpacing.md),
-
-                          // Resend row
                           _canResend
                               ? Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -412,7 +401,6 @@ class _OTPScreenState extends State<OTPScreen> {
                         ],
                       ),
                     ),
-
                     const SizedBox(height: AppSpacing.xl * 2),
                   ],
                 ),
@@ -425,17 +413,18 @@ class _OTPScreenState extends State<OTPScreen> {
   }
 }
 
-// ─── Extracted OTP box widget (keeps build() clean) ──────────────────────────
-
 class _OTPBox extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
+  final FocusNode keyListenerFocusNode;
   final ValueChanged<String> onChanged;
   final VoidCallback onBackspace;
 
   const _OTPBox({
+    super.key,
     required this.controller,
     required this.focusNode,
+    required this.keyListenerFocusNode,
     required this.onChanged,
     required this.onBackspace,
   });
@@ -445,10 +434,10 @@ class _OTPBox extends StatelessWidget {
     return SizedBox(
       width: 46,
       height: 58,
-      child: RawKeyboardListener(
-        focusNode: FocusNode(),
-        onKey: (event) {
-          if (event is RawKeyDownEvent &&
+      child: KeyboardListener(
+        focusNode: keyListenerFocusNode,
+        onKeyEvent: (event) {
+          if (event is KeyDownEvent &&
               event.logicalKey == LogicalKeyboardKey.backspace) {
             if (controller.text.isEmpty) onBackspace();
           }

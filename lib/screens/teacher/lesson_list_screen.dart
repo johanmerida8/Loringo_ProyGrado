@@ -2,8 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/activity_list_screen.dart';
 import 'package:loringo_app/screens/teacher/create_lesson_screen.dart';
-// import 'package:loringo_app/screens/teacher/hierarchy_widgets.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
+import 'package:loringo_app/screens/teacher/widgets/hierarchy_breadcrumb.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -13,6 +13,7 @@ class PersonalizedLessonListScreen extends StatefulWidget {
   final String unitId;
   final String unitTitle;
   final Color  groupColor;
+  final List<String> ancestorTrail;
 
   const PersonalizedLessonListScreen({
     super.key,
@@ -21,6 +22,7 @@ class PersonalizedLessonListScreen extends StatefulWidget {
     required this.unitId,
     required this.unitTitle,
     required this.groupColor,
+    required this.ancestorTrail,
   });
 
   @override
@@ -98,6 +100,7 @@ class _PersonalizedLessonListScreenState
   @override
   Widget build(BuildContext context) {
     final c = widget.groupColor;
+    final breadcrumb = [...widget.ancestorTrail, widget.unitTitle];
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
@@ -119,69 +122,77 @@ class _PersonalizedLessonListScreenState
           ],
         ),
       ),
-      body: StreamBuilder(
-        stream: db.getPersonalizedLessonsStream(
-            widget.groupId, widget.contentId, widget.unitId),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator(color: c));
-          }
-          final lessons = snapshot.data?.docs ?? [];
+      body: Column(
+        children: [
+          HierarchyBreadcrumb(items: breadcrumb, color: c),
+          Expanded(
+            child: StreamBuilder(
+              stream: db.getPersonalizedLessonsStream(
+                  widget.groupId, widget.contentId, widget.unitId),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator(color: c));
+                }
+                final lessons = snapshot.data?.docs ?? [];
 
-          if (lessons.isEmpty) {
-            return HierarchyEmptyState(
-              icon:        Icons.school_outlined,
-              title:       'No Lessons Yet',
-              subtitle:    'Tap + to create your first lesson',
-              color:       c,
-              actionLabel: 'Create First Lesson',
-              onAction: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CreatePersonalizedLessonScreen(
-                    groupId:   widget.groupId,
-                    contentId: widget.contentId,
-                    unitId:    widget.unitId,
-                    groupColor: c,
-                  ),
-                ),
-              ),
-            );
-          }
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            itemCount: lessons.length,
-            itemBuilder: (context, i) {
-              final doc   = lessons[i];
-              final data  = doc.data() as Map<String, dynamic>;
-              final title = data['title'] ?? 'Untitled';
-              final order = data['order']  ?? 0;
-
-              return HierarchyListCard(
-                order:    order,
-                title:    title,
-                subtitle: 'Tap to view activities',
-                color:    c,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PersonalizedActivityListScreen(
-                      groupId:      widget.groupId,
-                      contentId:    widget.contentId,
-                      unitId:       widget.unitId,
-                      lessonId:     doc.id,
-                      lessonTitle:  title,
-                      groupColor:   c,
+                if (lessons.isEmpty) {
+                  return HierarchyEmptyState(
+                    icon:        Icons.school_outlined,
+                    title:       'No Lessons Yet',
+                    subtitle:    'Tap + to create your first lesson',
+                    color:       c,
+                    actionLabel: 'Create First Lesson',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => CreatePersonalizedLessonScreen(
+                          groupId:   widget.groupId,
+                          contentId: widget.contentId,
+                          unitId:    widget.unitId,
+                          groupColor: c,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                onEdit:   () => _editLesson(doc.id, data),
-                onDelete: () => _deleteLesson(doc.id, title),
-              );
-            },
-          );
-        },
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  itemCount: lessons.length,
+                  itemBuilder: (context, i) {
+                    final doc   = lessons[i];
+                    final data  = doc.data() as Map<String, dynamic>;
+                    final title = data['title'] ?? 'Untitled';
+                    final order = data['order']  ?? 0;
+
+                    return HierarchyListCard(
+                      order:    order,
+                      title:    title,
+                      subtitle: 'Tap to view activities',
+                      color:    c,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PersonalizedActivityListScreen(
+                            groupId:       widget.groupId,
+                            contentId:     widget.contentId,
+                            unitId:        widget.unitId,
+                            lessonId:      doc.id,
+                            lessonTitle:   title,
+                            groupColor:    c,
+                            ancestorTrail: breadcrumb,
+                          ),
+                        ),
+                      ),
+                      onEdit:   () => _editLesson(doc.id, data),
+                      onDelete: () => _deleteLesson(doc.id, title),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(

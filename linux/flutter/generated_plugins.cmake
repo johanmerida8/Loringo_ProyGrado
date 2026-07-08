@@ -3,9 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  gtk
+  audioplayers_linux
   printing
-  url_launcher_linux
+  record_linux
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

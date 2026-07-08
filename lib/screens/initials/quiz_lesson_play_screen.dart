@@ -234,6 +234,11 @@ class _LessonQuizPlayScreenState extends State<LessonQuizPlayScreen> {
           unitTitle:      '',
           generateReport: false,
           reportType:     'lesson',
+          // Lesson quizzes no tienen passingScore configurado por el
+          // docente (no son graded) — se usa 70% como umbral solo para
+          // que el campo 'passed' quede coherente en Firestore. No
+          // bloquea ni desbloquea nada, a diferencia del unit quiz.
+          passed:         percentage >= 70,
         );
       } catch (e) {
         debugPrint('Error saving lesson quiz progress: $e');

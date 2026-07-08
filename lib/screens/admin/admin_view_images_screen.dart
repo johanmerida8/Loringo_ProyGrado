@@ -23,6 +23,7 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
   bool                isLoading       = false;
   int                 _perPage        = 15;
   late ScrollController _scrollCtrl;
+  bool _isNavigatingToUpload = false;
 
   @override
   void initState() {
@@ -41,6 +42,63 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
     if (_scrollCtrl.position.pixels ==
         _scrollCtrl.position.maxScrollExtent) {
       setState(() => _perPage += 10);
+    }
+  }
+
+  void _showSuccessSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.danger,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  // ✅ Guarda anti-doble-tap: evita dos instancias de AdminUploadImageScreen
+  // coexistiendo (mismo bug de Hero tag duplicado que en teacher).
+  Future<void> _openUploadScreen() async {
+    if (_isNavigatingToUpload) return;
+    _isNavigatingToUpload = true;
+
+    final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => AdminUploadImageScreen(
+                categoryId:   widget.categoryId,
+                categoryName: widget.categoryName)));
+
+    _isNavigatingToUpload = false;
+
+    _loadImages();
+
+    if (result != null && result is Map && mounted) {
+      // Espera a que la animación de transición de ruta termine antes de
+      // insertar el SnackBar, evitando "Floating SnackBar off screen".
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted) {
+        _showUploadResultSnackbar(result);
+      }
     }
   }
 
@@ -97,21 +155,50 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
         await _imageService.deleteImage(cloudinaryPublicId);
     if (!deleted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Failed to delete from Cloudinary'),
-            backgroundColor: AppColors.danger,
-            behavior: SnackBarBehavior.floating));
+        _showErrorSnackBar(context, 'Failed to delete from Cloudinary');
       }
       return;
     }
     await _db.deleteImage(widget.categoryId, imageId);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Image deleted'),
-          backgroundColor: Colors.orange,
-          behavior: SnackBarBehavior.floating));
+      _showSuccessSnackBar(context, 'Image deleted');
       _loadImages();
     }
+  }
+
+  // ✅ Snackbar diferenciado: distingue rechazo por contenido de error técnico.
+  void _showUploadResultSnackbar(Map result) {
+    final success         = result['success'] as int? ?? 0;
+    final rejectedContent = result['rejectedContent'] as int? ?? 0;
+    final failedTechnical = result['failedTechnical'] as int? ?? 0;
+    final allGood = rejectedContent == 0 && failedTechnical == 0;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(children: [
+          Icon(
+            allGood ? Icons.check_circle : Icons.warning_rounded,
+            color: AppColors.onPrimary,
+            size: 18,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text([
+              if (success > 0) '$success uploaded',
+              if (rejectedContent > 0) '$rejectedContent flagged as inappropriate',
+              if (failedTechnical > 0) '$failedTechnical failed (technical error)',
+            ].join(' · ')),
+          ),
+        ]),
+        backgroundColor: allGood ? AppColors.primary : Colors.orange,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
+        duration: const Duration(seconds: 5),
+      ),
+    );
   }
 
   @override
@@ -147,14 +234,7 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
               child: CircularProgressIndicator(
                   color: AppColors.primary))
           : displayed.isEmpty
-              ? _EmptyGallery(
-                  onAdd: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => AdminUploadImageScreen(
-                                  categoryId: widget.categoryId,
-                                  categoryName: widget.categoryName)))
-                      .then((_) => _loadImages()))
+              ? _EmptyGallery(onAdd: _openUploadScreen)
               : CustomScrollView(
                   controller: _scrollCtrl,
                   slivers: [
@@ -253,14 +333,10 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
                       ),
                   ],
                 ),
+      // ✅ heroTag único explícito — evita "multiple heroes share the same tag"
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => AdminUploadImageScreen(
-                        categoryId: widget.categoryId,
-                        categoryName: widget.categoryName)))
-            .then((_) => _loadImages()),
+        heroTag: 'admin_view_images_fab',
+        onPressed: _openUploadScreen,
         backgroundColor: AppColors.primary,
         elevation: 3,
         icon: const Icon(Icons.add_photo_alternate_rounded,

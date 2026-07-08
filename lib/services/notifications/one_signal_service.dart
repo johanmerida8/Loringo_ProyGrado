@@ -1,9 +1,7 @@
 // lib/services/notification/onesignal_service.dart
-import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-// import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:flutter/foundation.dart';
 
@@ -11,11 +9,11 @@ class OneSignalNotificationService {
   // Set external user ID after login (simplified)
   static Future<void> initializeUser(String userId) async {
     if (kIsWeb) return;
-    
+
     try {
       // Just set external user ID - no tags
       await OneSignal.login(userId);
-      
+
       // Store player ID in Firestore
       final playerId = OneSignal.User.pushSubscription.id;
       if (playerId != null) {
@@ -25,52 +23,49 @@ class OneSignalNotificationService {
             .set({
               'oneSignalPlayerId': playerId,
             }, SetOptions(merge: true));
-        
-        debugPrint('✅ OneSignal initialized for user: $userId');
+
+        debugPrint('OneSignal initialized for user: $userId');
       }
     } catch (e) {
-      debugPrint('❌ Error initializing OneSignal: $e');
+      debugPrint('Error initializing OneSignal: $e');
     }
   }
 
   // Remove user on logout
   static Future<void> removeUser() async {
     if (kIsWeb) return;
-    
+
     try {
       await OneSignal.logout();
-      debugPrint('✅ OneSignal user removed');
+      debugPrint('OneSignal user removed');
     } catch (e) {
-      debugPrint('❌ Error removing OneSignal user: $e');
+      debugPrint('Error removing OneSignal user: $e');
     }
   }
 
-  // Send notification using Edge Function
+  // Send notification using the Cloud Function `sendNotification`
   static Future<void> sendNotification({
     required String userId,
     required String title,
     required String message,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse("https://woltjhrvnompchyccqiy.supabase.co/functions/v1/send-notifications"),
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: jsonEncode({
-          "userId": userId,
-          "title": title,
-          "body": message,
-        }),
-      );
-      
-      if (response.statusCode == 200) {
-        debugPrint('✅ Notification sent to user: $userId');
+      final callable = FirebaseFunctions.instance.httpsCallable('sendNotification');
+      final result = await callable.call({
+        'userId': userId,
+        'title': title,
+        'body': message,
+      });
+
+      if (result.data['success'] == true) {
+        debugPrint('Notification sent to user: $userId');
       } else {
-        debugPrint('❌ Failed to send notification: ${response.body}');
+        debugPrint('Failed to send notification: ${result.data}');
       }
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('sendNotification failed: ${e.code} - ${e.message}');
     } catch (e) {
-      debugPrint('❌ Error sending notification: $e');
+      debugPrint('Error sending notification: $e');
     }
   }
 }

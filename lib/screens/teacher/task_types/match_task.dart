@@ -47,7 +47,7 @@ class MatchTask extends StatefulWidget {
   State<MatchTask> createState() => _MatchTaskState();
 }
 
-class _MatchTaskState extends State<MatchTask> implements TaskTypeEditor {
+class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   late List<MatchPair> pairs;
   late String matchMode;
 

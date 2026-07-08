@@ -1,3 +1,4 @@
+// teacher_activity_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_play_screen.dart';
@@ -6,14 +7,14 @@ import 'package:loringo_app/screens/initials/quiz_unit_play_screen.dart';
 import 'package:loringo_app/screens/teacher/task_list_screen.dart';
 import 'package:lottie/lottie.dart';
 
-class TeacherLevelScreen extends StatefulWidget {
+class TeacherActivityScreen extends StatefulWidget {
   final String groupId;
   final String groupName;
   final bool embedded;
   final List<Map<String, dynamic>>? preloadedItems;
   final void Function(List<Map<String, dynamic>>)? onLoaded;
 
-  const TeacherLevelScreen({
+  const TeacherActivityScreen({
     super.key,
     required this.groupId,
     required this.groupName,
@@ -23,10 +24,10 @@ class TeacherLevelScreen extends StatefulWidget {
   });
 
   @override
-  State<TeacherLevelScreen> createState() => _TeacherLevelScreenState();
+  State<TeacherActivityScreen> createState() => _TeacherActivityScreenState();
 }
 
-class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
+class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
   static const Color greenPrimary = Color(0xFF4CAF50);
   static const Color greenAccent = Color(0xFF81C784);
 
@@ -110,10 +111,13 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
         final contentDoc = contentDocs[ci];
         final contentId = contentDoc.id;
         final contentData = contentDoc.data();
+        // Tracked so every descendant item below can carry the full
+        // ancestor trail (needed for breadcrumb navigation downstream).
+        final contentTitle = contentData['title'] as String? ?? 'Untitled Content';
 
         items.add({
           'type': 'content_header',
-          'title': contentData['title'] ?? 'Untitled Content',
+          'title': contentTitle,
           'contentId': contentId,
         });
 
@@ -159,10 +163,11 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
           final unitId = unitDoc.id;
           final unitData = unitDoc.data();
           unitIndex++;
+          final unitTitle = unitData['title'] as String? ?? 'Untitled Unit';
 
           items.add({
             'type': 'unit_header',
-            'unitTitle': unitData['title'] ?? 'Untitled Unit',
+            'unitTitle': unitTitle,
             'unitIndex': unitIndex,
             'contentId': contentId,
             'unitId': unitId,
@@ -188,10 +193,11 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
             final lessonDoc = lessonDocs[li];
             final lessonId = lessonDoc.id;
             final lessonData = lessonDoc.data();
+            final lessonTitle = lessonData['title'] as String? ?? 'Untitled Lesson';
 
             items.add({
               'type': 'lesson_header',
-              'lessonTitle': lessonData['title'] ?? 'Untitled Lesson',
+              'lessonTitle': lessonTitle,
               'contentId': contentId,
               'unitId': unitId,
               'lessonId': lessonId,
@@ -210,6 +216,11 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
                 'order': d['order'] ?? 0,
                 'xpBase': d['xpBase'] ?? 0,
                 'difficulty': d['difficulty'] ?? 'easy',
+                // Carried so the Activity dialog can build a breadcrumb
+                // trail when jumping into PersonalizedTaskListScreen.
+                'contentTitle': contentTitle,
+                'unitTitle': unitTitle,
+                'lessonTitle': lessonTitle,
               });
             }
           }
@@ -270,6 +281,12 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
   }
 
   void _showActivityDialog(Map<String, dynamic> item) {
+    final ancestorTrail = <String>[
+      item['contentTitle'] as String? ?? '',
+      item['unitTitle'] as String? ?? '',
+      item['lessonTitle'] as String? ?? '',
+    ];
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -295,6 +312,7 @@ class _TeacherLevelScreenState extends State<TeacherLevelScreen> {
                   activityId: item['activityId'],
                   activityTitle: item['title'],
                   groupColor: greenPrimary,
+                  ancestorTrail: ancestorTrail,
                 ),
               ));
             },

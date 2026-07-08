@@ -116,14 +116,42 @@ class Database {
     String reportType = 'unit',
     String studentName = '',
     String feedback = '',
-    bool passed = false,
+    required bool passed,
+    bool isClosedAfterAttempts = false, // NEW parameter
   }) async {
+    // get current progress to check attempts
+    final progressDoc = await studentProgress(studentId).doc(quizId).get();
+    int currentAttempts = 0;
+    int previousBestScore = -1;
+    bool previousPassed = false;
+    bool previousClosed = false;
+
+    if (progressDoc.exists) {
+      final data = progressDoc.data() as Map<String, dynamic>;
+      currentAttempts = (data['attempts'] ?? 0) as int;
+      previousBestScore = (data['score'] ?? -1) as int;
+      previousPassed = (data['passed'] ?? false) as bool;
+      previousClosed = (data['isClosedAfterAttempts'] ?? false) as bool;
+    }
+
+    final newAttempts = currentAttempts + 1;
+    
+    // Determine if quiz should be closed
+    // Quiz is closed if it's completed (regardless of pass/fail) OR attempts are exhausted
+    final bool shouldBeClosed = true; // Once completed, it's closed
+
     if (updateBestOnly) {
+      final isNewBest = score > previousBestScore;
+      final passedNow = previousPassed || passed;
+
       await studentProgress(studentId).doc(quizId).update({
-        'score': score,
-        'stars': stars,
+        if (isNewBest) 'score': score,
+        if (isNewBest) 'stars': stars,
         'lastAttemptAt': FieldValue.serverTimestamp(),
-        'attempts': FieldValue.increment(1),
+        'attempts': newAttempts,
+        'isCompleted': true,
+        'passed': passedNow,
+        'isClosedAfterAttempts': shouldBeClosed || previousClosed, // Mark as closed
       });
     } else {
       await studentProgress(studentId).doc(quizId).set({
@@ -137,11 +165,13 @@ class Database {
         'completedAt': FieldValue.serverTimestamp(),
         'lastAttemptAt': FieldValue.serverTimestamp(),
         'attempts': 1,
-        'isCompleted': passed,
+        'isCompleted': true,
+        'passed': passed,
+        'isClosedAfterAttempts': shouldBeClosed, // Mark as closed
       });
     }
 
-    if (xpEarned > 0) {
+    if (xpEarned > 0 && passed) {
       await _db.collection('students').doc(studentId).update({
         'xp': FieldValue.increment(xpEarned),
       });
@@ -881,5 +911,213 @@ class Database {
         .where('lessonId', isEqualTo: lessonId)
         .orderBy('createdAt', descending: true)
         .snapshots();
+  }
+
+  // =========================
+  // UNIT PROGRESSION WITH LOCKING
+  // =========================
+
+  /// Check if a student has completed (attempted) a unit quiz
+  Future<bool> hasStudentCompletedUnitQuiz({
+    required String studentId,
+    required String contentId,
+    required String unitId,
+  }) async {
+    try {
+      // First, find the unit quiz for this unit
+      final quizSnapshot = await allQuizzes
+          .where('type', isEqualTo: 'unit')
+          .where('contentId', isEqualTo: contentId)
+          .where('unitId', isEqualTo: unitId)
+          .limit(1)
+          .get();
+      
+      if (quizSnapshot.docs.isEmpty) {
+        return false; // No unit quiz exists
+      }
+
+      final quizDoc = quizSnapshot.docs.first;
+      final quizId = quizDoc.id;
+
+      // Check if student has any attempt (completed means they at least tried it)
+      final progressDoc = await studentProgress(studentId).doc(quizId).get();
+
+      if (!progressDoc.exists) {
+        return false;
+      }
+
+      final progressData = progressDoc.data() as Map<String, dynamic>;
+      // Just check if they've attempted it (isCompleted: true means they completed it)
+      return progressData['isCompleted'] as bool? ?? false;
+    } catch (e) {
+      debugPrint('Error checking unit completion: $e');
+      return false;
+    }
+  }
+
+  /// Check if a unit is unlocked for a student
+  Future<bool> isUnitUnlocked({
+    required String studentId,
+    required String contentId,
+    required String unitId,
+  }) async {
+    try {
+      // Get all units ordered
+      final unitsSnapshot = await personalizedUnits(contentId)
+          .orderBy('order')
+          .get();
+
+      if (unitsSnapshot.docs.isEmpty) {
+        return false;
+      }
+
+      int unitIndex = -1;
+      for (int i = 0; i < unitsSnapshot.docs.length; i++) {
+        if (unitsSnapshot.docs[i].id == unitId) {
+          unitIndex = i;
+          break;
+        }
+      }
+
+      if (unitIndex == -1) {
+        return false; // Unit not found
+      }
+
+      // First unit is always unlocked
+      if (unitIndex == 0) {
+        return true;
+      }
+
+      // Check if the previous unit is completed
+      final previousUnitId = unitsSnapshot.docs[unitIndex - 1].id;
+      final isPreviousCompleted = await hasStudentCompletedUnitQuiz(
+        studentId: studentId,
+        contentId: contentId,
+        unitId: previousUnitId,
+      );
+
+      return isPreviousCompleted;
+    } catch (e) {
+      debugPrint('Error checking unit unlock status: $e');
+      return false;
+    }
+  }
+
+  /// Get all units with their lock status
+  Future<List<Map<String, dynamic>>> getUnitsWithLockStatus({
+    required String studentId,
+    required String contentId,
+  }) async {
+    try {
+      final unitsSnapshot = await personalizedUnits(contentId)
+          .orderBy('order')
+          .get();
+
+      List<Map<String, dynamic>> result = [];
+
+      for (int i = 0; i < unitsSnapshot.docs.length; i++) {
+        final unitDoc = unitsSnapshot.docs[i];
+        final unitId = unitDoc.id;
+        final unitData = unitDoc.data() as Map<String, dynamic>;
+
+        // Check if unit is completed
+        final isCompleted = await hasStudentCompletedUnitQuiz(
+          studentId: studentId,
+          contentId: contentId,
+          unitId: unitId,
+        );
+
+        // Check if unit is unlocked
+        final isUnlocked = await isUnitUnlocked(
+          studentId: studentId,
+          contentId: contentId,
+          unitId: unitId,
+        );
+
+        result.add({
+          'id': unitId,
+          'data': unitData,
+          'isCompleted': isCompleted,
+          'isUnlocked': isUnlocked,
+          'order': i + 1,
+        });
+      }
+
+      return result;
+    } catch (e) {
+      debugPrint('Error getting units with lock status: $e');
+      return [];
+    }
+  }
+
+  /// Stream for units with lock status (for real-time updates)
+  Stream<List<Map<String, dynamic>>> getUnitsWithLockStatusStream({
+    required String studentId,
+    required String contentId,
+  }) {
+    return personalizedUnits(contentId)
+        .orderBy('order')
+        .snapshots()
+        .asyncMap((snapshot) async {
+          List<Map<String, dynamic>> result = [];
+
+          for (int i = 0; i < snapshot.docs.length; i++) {
+            final doc = snapshot.docs[i];
+            final unitId = doc.id;
+            final data = doc.data();
+
+            final isCompleted = await hasStudentCompletedUnitQuiz(
+              studentId: studentId,
+              contentId: contentId,
+              unitId: unitId,
+            );
+
+            final isUnlocked = await isUnitUnlocked(
+              studentId: studentId,
+              contentId: contentId,
+              unitId: unitId,
+            );
+
+            result.add({
+              'id': unitId,
+              'data': data,
+              'isCompleted': isCompleted,
+              'isUnlocked': isUnlocked,
+              'order': i + 1,
+            });
+          }
+
+          return result;
+        });
+  }
+
+  /// Get the next incomplete unit (for navigation)
+  Future<String?> getNextIncompleteUnit({
+    required String studentId,
+    required String contentId,
+  }) async {
+    try {
+      final unitsSnapshot = await personalizedUnits(contentId)
+          .orderBy('order')
+          .get();
+      
+      for (final doc in unitsSnapshot.docs) {
+        final unitId = doc.id;
+        final isCompleted = await hasStudentCompletedUnitQuiz(
+          studentId: studentId, 
+          contentId: contentId, 
+          unitId: unitId
+        );
+
+        if (!isCompleted) {
+          return unitId;
+        }
+      }
+
+      return null; // All units completed
+    } catch (e) {
+      debugPrint('Error getting next incomplete unit: $e');
+      return null;
+    }
   }
 }

@@ -1,16 +1,41 @@
 // reading_task.dart - Teacher writes page text and can preview it with TTS
-// (same en-GB / rate / pitch config used on the student-facing screen, so
-// what the teacher hears here matches what students hear). No voice
-// recording, no Cloudinary audio upload, no AudioService dependency, no
-// speech-to-text dictation — text entry is manual typing only.
+// (ReadingTtsService -- flutter_edge_tts / Microsoft Edge neural voices,
+// same engine and voice students hear on screen_seven, so what the
+// teacher previews here matches actual playback exactly, word-boundary
+// highlighting included). No voice recording, no Cloudinary audio
+// upload, no AudioService dependency, no speech-to-text dictation --
+// text entry is manual typing only.
+//
+// -- TTS migration (flutter_tts -> ReadingTtsService) ------------------
+// Previously used flutter_tts with setProgressHandler for live
+// word-by-word highlighting during preview. Since student-facing
+// narration now goes through ReadingTtsService (Edge TTS), keeping the
+// teacher preview on flutter_tts would mean the teacher hears a
+// different (robotic, on-device) voice than what students actually get
+// -- defeating the point of a preview. ReadingTtsService's synthesize()
+// call returns real word-boundary timings (WordTiming: text/startMs/
+// endMs) alongside the audio, same data screen_seven.dart uses for its
+// highlight, so the highlight here is reconstructed from real timing
+// data via a position-tracking stream listener instead of flutter_tts's
+// character-offset progress callback.
+//
+// -- Word limit ---------------------------------------------------------
+// Soft warning only, at 300 words -- not a hard cap. Target ages span
+// 5-9 (grade-level guidance: ages 5-6 want ~20-50 words per passage,
+// ages 8-9 can handle 300-500), so a single fixed limit doesn't suit
+// every age band. 300 is a reasonable nudge for now; a per-task target
+// age selector that adjusts this dynamically is a possible future
+// addition, not implemented here.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter/services.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-import 'package:loringo_app/services/tts/tts_phonetic_service.dart';
+import 'package:loringo_app/services/tts/reading_tts_service.dart';
 
-// ─── ReadingQuestion ──────────────────────────────────────────────────────────
+// -- ReadingQuestion ----------------------------------------------------
 
 class ReadingQuestion {
   TextEditingController questionCtrl;
@@ -33,39 +58,38 @@ class ReadingQuestion {
   }
 }
 
-// ─── PagePreviewState ─────────────────────────────────────────────────────────
-// Tracks whether this page's text is currently being previewed via TTS, and
-// the character range flutter_tts reports as currently being spoken (used to
-// highlight the word being read live, word-by-word).
+// -- PagePreviewState -----------------------------------------------------
+// Tracks whether this page's text is currently being previewed, and the
+// word-timing list + currently-highlighted word index for that preview.
 
 class PagePreviewState {
   final String pageId;
   bool isPlaying;
-  int highlightStart;
-  int highlightEnd;
+  List<WordTiming> words;
+  int highlightIndex;
 
   PagePreviewState({
     required this.pageId,
     this.isPlaying = false,
-    this.highlightStart = -1,
-    this.highlightEnd = -1,
+    this.words = const [],
+    this.highlightIndex = -1,
   });
 
   PagePreviewState copyWith({
     bool? isPlaying,
-    int? highlightStart,
-    int? highlightEnd,
+    List<WordTiming>? words,
+    int? highlightIndex,
   }) {
     return PagePreviewState(
       pageId: pageId,
       isPlaying: isPlaying ?? this.isPlaying,
-      highlightStart: highlightStart ?? this.highlightStart,
-      highlightEnd: highlightEnd ?? this.highlightEnd,
+      words: words ?? this.words,
+      highlightIndex: highlightIndex ?? this.highlightIndex,
     );
   }
 }
 
-// ─── ReadingTask ──────────────────────────────────────────────────────────────
+// -- ReadingTask ------------------------------------------------------------
 
 class ReadingTask extends StatefulWidget {
   final Color groupColor;
@@ -97,6 +121,12 @@ class ReadingTask extends StatefulWidget {
 class _ReadingTaskState extends State<ReadingTask>
     with TaskTypeEditorMixin
     implements TaskTypeEditor {
+  // Soft warning threshold, not a hard cap -- reverted from a 150-word
+  // hard limit. With target ages spanning 5-9 (per grade-level guidance:
+  // ages 5-6 want ~20-50 words, ages 8-9 can handle 300-500), a single
+  // fixed cap doesn't fit every age band. Until a per-task target-age
+  // selector exists to set this dynamically, 300 stays as a visual
+  // nudge only -- the teacher can still write past it.
   static const int _warnWords = 300;
 
   late TextEditingController _titleController;
@@ -105,11 +135,10 @@ class _ReadingTaskState extends State<ReadingTask>
   late List<PagePreviewState> _previewStates;
 
   int _currentPageIndex = 0;
+  int? _previewPageIndex;
+  StreamSubscription<Duration>? _positionSub;
 
-  final FlutterTts _tts = FlutterTts();
-  bool _isTtsReady = false;
-
-  // ─── Lifecycle ────────────────────────────────────────────────────────────
+  // -- Lifecycle ------------------------------------------------------------
 
   @override
   void initState() {
@@ -131,85 +160,40 @@ class _ReadingTaskState extends State<ReadingTask>
     }
     widget.controller.registerEditor(this);
 
-    _initTts();
-  }
-
-  Future<void> _initTts() async {
-    // en-GB: authentic British English, not US — matches student-facing
-    // playback voice so what the teacher previews here is what students hear.
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.45);
-    await _tts.setPitch(1.1);
-
-    // Load phonetic corrections (e.g. "Mia" -> "Mee-ah") once, shared with
-    // the student-facing screen so previews here match actual playback.
-    await TtsPhoneticService.instance.load();
-
-    _tts.setProgressHandler((text, start, end, word) {
-      if (_highlightDisabledForCurrentPreview) return;
-      final idx = _previewPageIndex ?? _currentPageIndex;
-      if (idx >= _previewStates.length || !mounted) return;
-      setState(() {
-        _previewStates[idx] = _previewStates[idx].copyWith(
-          highlightStart: start,
-          highlightEnd: end,
-        );
-      });
-    });
-
-    _tts.setCompletionHandler(() {
-      final idx = _previewPageIndex ?? _currentPageIndex;
-      if (idx >= _previewStates.length || !mounted) return;
-      setState(() {
-        _previewStates[idx] = _previewStates[idx].copyWith(
-          isPlaying: false,
-          highlightStart: -1,
-          highlightEnd: -1,
-        );
-        _previewPageIndex = null;
-      });
-    });
-
-    _tts.setCancelHandler(() {
-      final idx = _previewPageIndex ?? _currentPageIndex;
-      if (idx >= _previewStates.length || !mounted) return;
-      setState(() {
-        _previewStates[idx] = _previewStates[idx].copyWith(
-          isPlaying: false,
-          highlightStart: -1,
-          highlightEnd: -1,
-        );
-        _previewPageIndex = null;
-      });
-    });
-
-    _tts.setErrorHandler((dynamic msg) {
-      debugPrint('[TTS] error: $msg');
-      final idx = _previewPageIndex ?? _currentPageIndex;
-      if (idx < _previewStates.length && mounted) {
+    // Tracks playback position during a preview to figure out which
+    // word is currently being spoken, same approach as
+    // screen_seven.dart's highlight.
+    _positionSub = ReadingTtsService.positionStream.listen((position) {
+      final idx = _previewPageIndex;
+      if (idx == null || idx >= _previewStates.length || !mounted) return;
+      final ms = position.inMilliseconds;
+      final words = _previewStates[idx].words;
+      int newIndex = -1;
+      for (int i = 0; i < words.length; i++) {
+        if (ms >= words[i].startMs && ms < words[i].endMs) {
+          newIndex = i;
+          break;
+        }
+      }
+      if (newIndex != _previewStates[idx].highlightIndex) {
         setState(() {
-          _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: false);
-          _previewPageIndex = null;
+          _previewStates[idx] = _previewStates[idx].copyWith(highlightIndex: newIndex);
         });
       }
     });
-
-    if (mounted) setState(() => _isTtsReady = true);
   }
-
-  int? _previewPageIndex;
-  bool _highlightDisabledForCurrentPreview = false;
 
   @override
   void dispose() {
     _titleController.dispose();
     for (final c in _pageControllers) c.dispose();
     for (final q in _questions) q.dispose();
-    _tts.stop();
+    _positionSub?.cancel();
+    ReadingTtsService.stop();
     super.dispose();
   }
 
-  // ─── TaskTypeEditor ───────────────────────────────────────────────────────
+  // -- TaskTypeEditor ---------------------------------------------------------
 
   @override
   String get typeId => 'reading';
@@ -263,7 +247,7 @@ class _ReadingTaskState extends State<ReadingTask>
       }).toList();
     }
 
-    // 'useVoiceRecording' and 'audioData' are intentionally no longer read —
+    // 'useVoiceRecording' and 'audioData' are intentionally no longer read --
     // any pre-existing tasks that had voice recordings simply fall back to
     // TTS playback on the student side, since that data is no longer
     // written or consumed here.
@@ -319,7 +303,7 @@ class _ReadingTaskState extends State<ReadingTask>
     return null;
   }
 
-  // ─── TTS Preview (hear how this page will sound to students) ─────────────
+  // -- TTS Preview (hear how this page will sound to students) -----------
 
   bool get _isAnyPagePlaying => _previewPageIndex != null;
 
@@ -327,63 +311,52 @@ class _ReadingTaskState extends State<ReadingTask>
     final text = _pageControllers[idx].text.trim();
     if (text.isEmpty) return;
 
-    // If another page is currently playing, stop it first so state doesn't
-    // get out of sync (the handlers key off _previewPageIndex).
     if (_previewPageIndex != null && _previewPageIndex != idx) {
-      await _tts.stop();
+      await ReadingTtsService.stop();
       setState(() {
         _previewStates[_previewPageIndex!] =
-            _previewStates[_previewPageIndex!].copyWith(
-          isPlaying: false,
-          highlightStart: -1,
-          highlightEnd: -1,
-        );
+            _previewStates[_previewPageIndex!].copyWith(isPlaying: false, highlightIndex: -1);
       });
     }
 
-    if (!_isTtsReady) {
-      if (mounted) {
-        _showSnack('Text-to-speech is still loading, try again in a moment',
-            isError: true);
-      }
-      return;
-    }
-
-    final spokenText = TtsPhoneticService.instance.applyFixes(text);
-    // If a phonetic fix changed the text, the character offsets
-    // setProgressHandler reports will refer to spokenText, not the original
-    // displayed text — they'd no longer line up for highlighting. Rather
-    // than show a misaligned highlight, we disable it for this playback
-    // (_highlightDisabledForCurrentPreview) and just play audio normally.
-    _highlightDisabledForCurrentPreview = spokenText != text;
-
     setState(() {
       _previewPageIndex = idx;
-      _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: true);
+      _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: true, highlightIndex: -1);
     });
 
-    try {
-      await _tts.speak(spokenText);
-    } catch (e) {
-      debugPrint('[TTS] speak error: $e');
-      if (mounted) {
+    final success = await ReadingTtsService.speak(
+      text,
+      onAudioReady: () {
+        if (!mounted) return;
         setState(() {
-          _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: false);
-          _previewPageIndex = null;
+          _previewStates[idx] = _previewStates[idx].copyWith(words: ReadingTtsService.currentWords);
         });
-        _showSnack('Could not play preview: $e', isError: true);
-      }
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: false, highlightIndex: -1);
+      _previewPageIndex = null;
+    });
+
+    if (!success) {
+      _showSnack('Could not play preview -- check your connection and try again.', isError: true);
     }
   }
 
   Future<void> _stopPreview(int idx) async {
     if (!_previewStates[idx].isPlaying) return;
-    await _tts.stop();
-    // setCancelHandler will flip isPlaying back to false and clear
-    // _previewPageIndex, so no need to setState manually here.
+    await ReadingTtsService.stop();
+    if (mounted) {
+      setState(() {
+        _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: false, highlightIndex: -1);
+        _previewPageIndex = null;
+      });
+    }
   }
 
-  // ─── Page management ──────────────────────────────────────────────────────
+  // -- Page management --------------------------------------------------------
 
   void _addPage() {
     if (_pageControllers.length >= widget.maxPages) return;
@@ -411,7 +384,7 @@ class _ReadingTaskState extends State<ReadingTask>
     widget.onChanged();
   }
 
-  // ─── Question management ──────────────────────────────────────────────────
+  // -- Question management ------------------------------------------------------
 
   void _addQuestion() {
     if (_questions.length >= 5) return;
@@ -428,7 +401,7 @@ class _ReadingTaskState extends State<ReadingTask>
     widget.onChanged();
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  // -- Helpers ------------------------------------------------------------------
 
   int _wordCount(String text) =>
       text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
@@ -445,7 +418,7 @@ class _ReadingTaskState extends State<ReadingTask>
     );
   }
 
-  // ─── Build ────────────────────────────────────────────────────────────────
+  // -- Build ----------------------------------------------------------------
 
   @override
   Widget buildEditor(BuildContext context) => build(context);
@@ -464,7 +437,7 @@ class _ReadingTaskState extends State<ReadingTask>
     );
   }
 
-  // ─── Title field ────────────────────────────────────────────────────────
+  // -- Title field ------------------------------------------------------------
 
   Widget _buildTitleField() {
     final c = widget.groupColor;
@@ -505,7 +478,7 @@ class _ReadingTaskState extends State<ReadingTask>
     );
   }
 
-  // ─── Pages section ────────────────────────────────────────────────────────
+  // -- Pages section --------------------------------------------------------
 
   Widget _buildPagesSection() {
     final c = widget.groupColor;
@@ -713,44 +686,45 @@ class _ReadingTaskState extends State<ReadingTask>
     );
   }
 
-  // ─── Highlighted text while TTS preview is playing ────────────────────────
+  // -- Highlighted text while TTS preview is playing -----------------------
+  // Built from real WordTiming data (same as screen_seven.dart's
+  // highlight) rather than flutter_tts's character-offset progress
+  // callback -- matches word-for-word what a student would see/hear.
 
   Widget _buildHighlightedText(String text, PagePreviewState preview) {
-    final hasRange = preview.highlightStart >= 0 &&
-        preview.highlightEnd > preview.highlightStart &&
-        preview.highlightEnd <= text.length;
+    const baseStyle = TextStyle(fontSize: 14, height: 1.65, color: Colors.black87);
 
-    if (!hasRange) {
-      return SelectableText(
-        text,
-        style: const TextStyle(fontSize: 14, height: 1.65, color: Colors.black87),
-      );
+    if (preview.words.isEmpty) {
+      return SelectableText(text, style: baseStyle);
     }
 
-    final before = text.substring(0, preview.highlightStart);
-    final current = text.substring(preview.highlightStart, preview.highlightEnd);
-    final after = text.substring(preview.highlightEnd);
+    final spans = <TextSpan>[];
+    int searchStart = 0;
+    for (int i = 0; i < preview.words.length; i++) {
+      final word = preview.words[i].text;
+      final matchIdx = text.indexOf(word, searchStart);
+      if (matchIdx < 0) continue;
 
-    return RichText(
-      text: TextSpan(
-        style: const TextStyle(fontSize: 14, height: 1.65, color: Colors.black87),
-        children: [
-          TextSpan(text: before),
-          TextSpan(
-            text: current,
-            style: TextStyle(
-              backgroundColor: Colors.blue.withOpacity(0.25),
-              fontWeight: FontWeight.w700,
-              color: Colors.blue.shade900,
-            ),
-          ),
-          TextSpan(text: after),
-        ],
-      ),
-    );
+      if (matchIdx > searchStart) {
+        spans.add(TextSpan(text: text.substring(searchStart, matchIdx)));
+      }
+      final isActive = i == preview.highlightIndex;
+      spans.add(TextSpan(
+        text: word,
+        style: isActive
+            ? TextStyle(backgroundColor: Colors.blue.withOpacity(0.25), color: Colors.blue.shade900)
+            : null,
+      ));
+      searchStart = matchIdx + word.length;
+    }
+    if (searchStart < text.length) {
+      spans.add(TextSpan(text: text.substring(searchStart)));
+    }
+
+    return RichText(text: TextSpan(style: baseStyle, children: spans));
   }
 
-  // ─── Preview row (TTS) ─────────────────────────────────────────────────────
+  // -- Preview row (TTS) -----------------------------------------------------
 
   Widget _buildPreviewRow(
       PagePreviewState preview, bool hasText, bool isOtherPagePlaying) {
@@ -816,7 +790,7 @@ class _ReadingTaskState extends State<ReadingTask>
     );
   }
 
-  // ─── Questions section ────────────────────────────────────────────────────
+  // -- Questions section ------------------------------------------------------
 
   Widget _buildQuestionsSection() {
     final c = widget.groupColor;

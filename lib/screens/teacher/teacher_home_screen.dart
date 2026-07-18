@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 // import 'package:loringo_app/components/app_drawer.dart';
 import 'package:loringo_app/components/responsive_scaffold.dart';
 import 'package:loringo_app/screens/teacher/group_navigation_screen.dart';
-import 'package:loringo_app/screens/teacher/teacher_content_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_content_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_league_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_quizzes_screen.dart';
@@ -142,7 +142,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
             onTap: () {
               if (!isWide) Navigator.pop(context);
               Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const TeacherContentScreen()));
+                  MaterialPageRoute(builder: (_) => const TeacherContentEditorScreen()));
             },
           ),
           ListTile(
@@ -539,6 +539,7 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
   final classroomController = TextEditingController();
   Color selectedColor   = AppColors.primary;
   int   selectedYear    = DateTime.now().year;
+  bool  _isChecking     = false;
 
   List<int> get _years {
     final current = DateTime.now().year;
@@ -562,10 +563,52 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
     return List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
   }
 
-  void _createGroup() {
-    if (_formKey.currentState!.validate()) {
-      final colorHex =
-          '#${selectedColor.value.toRadixString(16).substring(2).toUpperCase()}';
+  /// Checks whether this teacher already has a group with the same name
+  /// (case-insensitive, trimmed), regardless of academic year — the
+  /// scope is global per teacher, not per-year, since the same title
+  /// showing up twice across any two groups is what actually causes
+  /// confusion when assigning content later.
+  ///
+  /// Firestore can't do a case-insensitive query directly, so this reads
+  /// all of the teacher's groups and compares client-side. That's fine
+  /// at the scale a single teacher's group list realistically reaches;
+  /// if that ever changes, a stored lowercase 'nameLower' field with an
+  /// exact-match query would be the way to avoid the full read.
+  Future<bool> _nameAlreadyExists(String name, String teacherId) async {
+    final normalized = name.trim().toLowerCase();
+    final snap = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .where('teacherId', isEqualTo: teacherId)
+        .get();
+    return snap.docs.any((doc) {
+      final existingName = (doc.data()['name'] as String? ?? '').trim().toLowerCase();
+      return existingName == normalized;
+    });
+  }
+
+  Future<void> _createGroup() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    if (teacherId == null) return;
+
+    setState(() => _isChecking = true);
+    final duplicate = await _nameAlreadyExists(nameController.text, teacherId);
+    if (mounted) setState(() => _isChecking = false);
+
+    if (duplicate) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('You already have a group named "${nameController.text.trim()}". Choose a different name.'),
+          backgroundColor: AppColors.danger,
+        ));
+      }
+      return;
+    }
+
+    final colorHex =
+        '#${selectedColor.value.toRadixString(16).substring(2).toUpperCase()}';
+    if (mounted) {
       Navigator.pop(context, {
         'name':         nameController.text.trim(),
         'color':        colorHex,
@@ -697,7 +740,7 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
               SizedBox(
                 width: double.infinity, height: 52,
                 child: ElevatedButton(
-                  onPressed: _createGroup,
+                  onPressed: _isChecking ? null : _createGroup,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     foregroundColor: AppColors.onPrimary,
@@ -705,9 +748,15 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
                         borderRadius: BorderRadius.circular(AppRadii.md)),
                     elevation: 0,
                   ),
-                  child: const Text('Create Group',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: _isChecking
+                      ? const SizedBox(
+                          height: 22, width: 22,
+                          child: CircularProgressIndicator(
+                              color: AppColors.onPrimary, strokeWidth: 2),
+                        )
+                      : const Text('Create Group',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),

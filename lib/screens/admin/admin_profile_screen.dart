@@ -29,12 +29,26 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
   Future<void> _loadUser() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    
-    // Initialize biometric provider
-    if (mounted) {
+
+    // BUGFIX: same root cause as TeacherProfileScreen. The existing
+    // `if (mounted)` guard here did NOT fix the "setState() or
+    // markNeedsBuild() called during build" crash — the widget WAS
+    // mounted, that was never the problem. The problem is timing:
+    // BiometricProvider.initialize() calls notifyListeners()
+    // synchronously on entry (before its own first await), and this was
+    // being called from _loadUser(), which runs from initState() — i.e.
+    // still inside this widget's very first build. Provider then tries
+    // to mark its InheritedWidget dirty mid-build, which Flutter
+    // disallows.
+    //
+    // addPostFrameCallback defers the call until the first frame has
+    // fully finished, which is the actual fix — not an additional
+    // mounted check.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       context.read<BiometricProvider>().initialize(uid);
-    }
-    
+    });
+
     final doc = await FirebaseFirestore.instance
         .collection('users')
         .doc(uid)

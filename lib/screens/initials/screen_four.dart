@@ -3,14 +3,16 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-import 'package:lottie/lottie.dart';
+// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 class _FillOption {
@@ -35,6 +37,7 @@ class ScreenFour extends StatefulWidget {
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
+  final bool isPracticeRound;
 
   const ScreenFour({
     super.key,
@@ -47,17 +50,19 @@ class ScreenFour extends StatefulWidget {
     required this.currentTaskNumber,
     required this.totalTasks,
     this.collectionName = 'content',
+    this.isPracticeRound = false,
   });
 
   @override
   State<ScreenFour> createState() => _ScreenFourState();
 }
 
-class _ScreenFourState extends State<ScreenFour> {
+class _ScreenFourState extends State<ScreenFour> with RetryableTask {
   // final AudioPlayer _player = AudioPlayer();
   final FlutterTts _tts = FlutterTts();
 
   static const Color _green = Color(0xFF4CAF50);
+  static const Color _red = Color(0xFFE53935);
 
   String _subtitle = '';
   List<String> _segments = [];
@@ -66,6 +71,18 @@ class _ScreenFourState extends State<ScreenFour> {
   String _selectedOptionEn = '';
 
   bool _isLoading = true;
+
+  // ── Check/result feedback state ─────────────────────────────────────
+  // While true, the check button is disabled and the blank(s) render in
+  // their "revealed" state (word shown, colored green/red) instead of
+  // the normal interactive drop-target/selection look. Set right after
+  // the TTS confirmation utterance finishes. Cleared by _resetLocalState
+  // whether that reset comes from RetryableTask's onRetry (soft wrong,
+  // same task instance) or from ActivityPlayScreen mounting a fresh
+  // instance for the review round (initState runs again naturally).
+  bool _isChecking = false;
+  bool _showResult = false;
+  bool _lastAnswerCorrect = false;
 
   int get _blankCount => _segments.length - 1;
   bool get _allBlanksFilled =>
@@ -86,8 +103,19 @@ class _ScreenFourState extends State<ScreenFour> {
     await _tts.setPitch(1.0);
   }
 
-  void _speak(String text) async {
+  Future<void> _speak(String text) async {
     if (text.isNotEmpty) await _tts.speak(text);
+  }
+
+  /// Awaits the utterance instead of firing-and-forgetting, so callers
+  /// (specifically _checkAnswer) can sequence "speak the sentence" before
+  /// "reveal the result" instead of both happening simultaneously.
+  /// flutter_tts's speak() future already completes on synthesis
+  /// completion on both Android and iOS, so no extra completion-handler
+  /// wiring is needed here.
+  Future<void> _speakAndWait(String text) async {
+    if (text.isEmpty) return;
+    await _tts.speak(text);
   }
 
   Future<void> _handleClose() async {
@@ -101,6 +129,22 @@ class _ScreenFourState extends State<ScreenFour> {
       buf.write(_segments[i]);
       if (i < _blankCount) {
         buf.write('...');
+      }
+    }
+    return buf.toString();
+  }
+
+  /// Same sentence as _fullSentence but with the student's chosen
+  /// word(s) filled in instead of "...", used for the confirmation TTS
+  /// fired on Check — hearing "Please listen to the teacher" reads much
+  /// better than hearing the sentence with a pause where the blank is.
+  String get _fullSentenceWithAnswers {
+    final buf = StringBuffer();
+    for (int i = 0; i < _segments.length; i++) {
+      buf.write(_segments[i]);
+      if (i < _blankCount) {
+        final word = _blankCount == 1 ? _selectedOptionEn : _droppedWords[i];
+        buf.write(word != null && word.isNotEmpty ? word : '...');
       }
     }
     return buf.toString();
@@ -153,111 +197,74 @@ class _ScreenFourState extends State<ScreenFour> {
     }
   }
 
-  void _checkAnswer() {
-    bool correct;
+  bool _evaluateCorrect() {
     if (_blankCount == 1) {
       final correctOpt = _options.firstWhere(
         (o) => o.isCorrect && o.blankIndex == 0,
         orElse: () => _FillOption(textEn: '', isCorrect: false),
       );
-      correct = _selectedOptionEn == correctOpt.textEn;
-    } else {
-      correct = true;
-      for (int i = 0; i < _blankCount; i++) {
-        final correctOpt = _options.firstWhere(
-          (o) => o.isCorrect && o.blankIndex == i,
-          orElse: () => _FillOption(textEn: '', isCorrect: false),
-        );
-        if (_droppedWords[i] != correctOpt.textEn) {
-          correct = false;
-          break;
-        }
-      }
+      return _selectedOptionEn == correctOpt.textEn;
     }
+    for (int i = 0; i < _blankCount; i++) {
+      final correctOpt = _options.firstWhere(
+        (o) => o.isCorrect && o.blankIndex == i,
+        orElse: () => _FillOption(textEn: '', isCorrect: false),
+      );
+      if (_droppedWords[i] != correctOpt.textEn) return false;
+    }
+    return true;
+  }
+
+  /// Check flow: speak the completed sentence -> reveal the blank(s) in
+  /// green/red -> brief pause so the student can register it -> then
+  /// either offer a retry (RetryableTask, soft wrong / attempts left)
+  /// or show the normal result sheet (correct, or hard wrong with no
+  /// attempts left).
+  Future<void> _checkAnswer() async {
+    if (_isChecking) return;
+    setState(() => _isChecking = true);
+
+    await _speakAndWait(_fullSentenceWithAnswers);
+    if (!mounted) return;
+
+    final correct = _evaluateCorrect();
+    setState(() {
+      _lastAnswerCorrect = correct;
+      _showResult = true;
+    });
+
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
 
     TaskFeedback.fire(correct);
 
+    if (!correct &&
+        offerRetry(context: context, onRetry: _resetLocalState)) {
+      // Soft wrong answer, attempts remain — retry sheet already shown
+      // and local state already reset via _resetLocalState. Don't fall
+      // through to TaskResultSheet; nothing was scored yet.
+      return;
+    }
+
+    // Either correct, or wrong with attempts exhausted — proceed with
+    // the normal scored result exactly as before.
     TaskResultSheet.show(
       context,
       isCorrect: correct,
-      onContinue: () {
-        if (correct) {
-          widget.onTaskComplete!(true);
-        } else {
-          _resetBlanksForRetry();
-        }
-      },
+      isPracticeRound: widget.isPracticeRound,
+      onContinue: () => widget.onTaskComplete!(correct),
     );
   }
 
-  // void _playFeedback(bool correct) {
-  //   if (correct) HapticFeedback.mediumImpact(); else HapticFeedback.heavyImpact();
-
-  //   FeedbackSoundService.instance.playResult(correct);
-  //   _showResultSheet(correct);
-  // }
-
-  /// Clears whatever the student chose/dropped so a retry starts blank
-  /// instead of re-showing the wrong answer already in place.
-  void _resetBlanksForRetry() {
+  void _resetLocalState() {
     setState(() {
       _selectedOptionEn = '';
       _droppedWords = List<String?>.filled(_blankCount, null);
+      _showResult = false;
+      _isChecking = false;
+      _lastAnswerCorrect = false;
     });
   }
-
-  // void _showResultSheet(bool correct) {
-  //   showModalBottomSheet(
-  //     context: context,
-  //     backgroundColor: Colors.transparent,
-  //     isScrollControlled: true,
-  //     // Locked: must tap the button, no swipe/tap-out escape.
-  //     isDismissible: false,
-  //     enableDrag: false,
-  //     builder: (_) => DraggableScrollableSheet(
-  //       initialChildSize: 0.4,
-  //       maxChildSize: 0.6,
-  //       builder: (_, __) => Container(
-  //         padding: const EdgeInsets.all(16),
-  //         decoration: const BoxDecoration(
-  //           color: Colors.white,
-  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-  //         ),
-  //         child: Column(
-  //           mainAxisAlignment: MainAxisAlignment.center,
-  //           children: [
-  //             Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
-  //             const SizedBox(height: 20),
-  //             SizedBox(
-  //               width: double.infinity,
-  //               child: ElevatedButton(
-  //                 onPressed: () {
-  //                   Navigator.pop(context);
-  //                   if (correct) {
-  //                     widget.onTaskComplete!(true);
-  //                   } else {
-  //                     _resetBlanksForRetry();
-  //                   }
-  //                 },
-  //                 style: ElevatedButton.styleFrom(
-  //                   backgroundColor: correct ? _green : Colors.orange,
-  //                   padding: const EdgeInsets.symmetric(vertical: 16),
-  //                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  //                   elevation: 5,
-  //                 ),
-  //                 child: Text(
-  //                   correct ? 'Continue' : 'Try Again',
-  //                   style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-  //                 ),
-  //               ),
-  //             ),
-  //           ],
-  //         ),
-  //       ),
-  //     ),
-  //   );
-  // }
 
   @override
   void dispose() {
@@ -305,7 +312,7 @@ class _ScreenFourState extends State<ScreenFour> {
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          onPressed: _allBlanksFilled ? _checkAnswer : null,
+          onPressed: (_allBlanksFilled && !_isChecking) ? _checkAnswer : null,
           style: ElevatedButton.styleFrom(
             backgroundColor: _green,
             padding: const EdgeInsets.symmetric(vertical: 18),
@@ -320,6 +327,33 @@ class _ScreenFourState extends State<ScreenFour> {
   Widget _buildSingleBlankQuestion() {
     final before = _segments.isNotEmpty ? _segments[0] : '';
     final after = _segments.length > 1 ? _segments[1] : '';
+
+    // Revealed state: show the chosen word inside the blank, colored by
+    // correctness, instead of the neutral placeholder box.
+    final Widget blankWidget = _showResult
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: (_lastAnswerCorrect ? _green : _red).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: _lastAnswerCorrect ? _green : _red, width: 2),
+            ),
+            child: Text(
+              _selectedOptionEn,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: _lastAnswerCorrect ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+              ),
+            ),
+          )
+        : Container(
+            width: 80, height: 28,
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(6)),
+          );
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
@@ -337,11 +371,7 @@ class _ScreenFourState extends State<ScreenFour> {
               child: Wrap(
                 children: [
                   if (before.isNotEmpty) Text(before, style: const TextStyle(fontSize: 18)),
-                  Container(
-                    width: 80, height: 28,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(6)),
-                  ),
+                  blankWidget,
                   if (after.isNotEmpty) Text(after, style: const TextStyle(fontSize: 18)),
                 ],
               ),
@@ -361,19 +391,37 @@ class _ScreenFourState extends State<ScreenFour> {
           itemBuilder: (context, index) {
             final opt = _options[index];
             final isSelected = _selectedOptionEn == opt.textEn;
+
+            // Once results are revealed, options become non-interactive
+            // and the selected one is recolored to match the blank's
+            // green/red verdict instead of the neutral "selected" green.
+            Color bg = Colors.white;
+            Color border = Colors.grey.shade300;
+            Color text = Colors.black87;
+            if (_showResult && isSelected) {
+              final resultColor = _lastAnswerCorrect ? _green : _red;
+              bg = resultColor;
+              border = resultColor;
+              text = Colors.white;
+            } else if (!_showResult && isSelected) {
+              bg = _green;
+              border = _green;
+              text = Colors.white;
+            }
+
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: GestureDetector(
-                onTap: () => setState(() => _selectedOptionEn = opt.textEn),
+                onTap: _showResult ? null : () => setState(() => _selectedOptionEn = opt.textEn),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                   decoration: BoxDecoration(
-                    color: isSelected ? _green : Colors.white,
+                    color: bg,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: isSelected ? _green : Colors.grey.shade300, width: 2),
+                    border: Border.all(color: border, width: 2),
                   ),
-                  child: Text(opt.textEn, style: TextStyle(color: isSelected ? Colors.white : Colors.black87, fontSize: 18, fontWeight: FontWeight.w600)),
+                  child: Text(opt.textEn, style: TextStyle(color: text, fontSize: 18, fontWeight: FontWeight.w600)),
                 ),
               ),
             );
@@ -417,8 +465,44 @@ class _ScreenFourState extends State<ScreenFour> {
     return chunks;
   }
 
+  /// Per-blank correctness used only once _showResult is true — each
+  /// blank is graded independently in the multi-blank case so a student
+  /// can see exactly which one(s) they got wrong, not just an
+  /// all-or-nothing verdict.
+  bool _isBlankCorrect(int blankIdx) {
+    final correctOpt = _options.firstWhere(
+      (o) => o.isCorrect && o.blankIndex == blankIdx,
+      orElse: () => _FillOption(textEn: '', isCorrect: false),
+    );
+    return _droppedWords[blankIdx] == correctOpt.textEn;
+  }
+
   Widget _buildDropTarget(int blankIdx) {
     final dropped = _droppedWords[blankIdx];
+
+    if (_showResult) {
+      final correct = _isBlankCorrect(blankIdx);
+      final color = correct ? _green : _red;
+      return Container(
+        height: 36,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color, width: 2),
+        ),
+        child: Text(
+          dropped ?? '',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: correct ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+          ),
+        ),
+      );
+    }
+
     return DragTarget<String>(
       onWillAcceptWithDetails: (details) => true,
       onAcceptWithDetails: (details) {
@@ -493,32 +577,35 @@ class _ScreenFourState extends State<ScreenFour> {
       gradient: LinearGradient(colors: [Color(0xFFE8F5E9), Colors.white], begin: Alignment.topCenter, end: Alignment.bottomCenter),
     );
 
-    return Scaffold(
-      body: Container(
-        decoration: grad,
-        child: SafeArea(
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _options.isEmpty
-                  ? const Center(child: Text('No options available'))
-                  : ResponsiveActivityShell(
-                    child: Column(
-                        children: [
-                          _buildProgressBar(),
-                          _buildSubtitle(),
-                          const SizedBox(height: 16),
-                          if (_blankCount == 1) _buildSingleBlankQuestion() else _buildMultiBlankQuestion(),
-                          const SizedBox(height: 24),
-                          if (_blankCount == 1)
-                            _buildSingleBlankOptions()
-                          else ...[
-                            Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _buildWordPool()),
-                            const Spacer(),
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
+        body: Container(
+          decoration: grad,
+          child: SafeArea(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _options.isEmpty
+                    ? const Center(child: Text('No options available'))
+                    : ResponsiveActivityShell(
+                      child: Column(
+                          children: [
+                            _buildProgressBar(),
+                            _buildSubtitle(),
+                            const SizedBox(height: 16),
+                            if (_blankCount == 1) _buildSingleBlankQuestion() else _buildMultiBlankQuestion(),
+                            const SizedBox(height: 24),
+                            if (_blankCount == 1)
+                              _buildSingleBlankOptions()
+                            else ...[
+                              Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _buildWordPool()),
+                              const Spacer(),
+                            ],
+                            _buildCheckButton(),
                           ],
-                          _buildCheckButton(),
-                        ],
-                      ),
-                  ),
+                        ),
+                    ),
+          ),
         ),
       ),
     );

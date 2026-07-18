@@ -1,5 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
+
+// NOTE: previously had a Scaffold.appBar (solid `groupColor` bar with a
+// "N Q" pill in actions:). Replaced with TeacherScreenHeader to match the
+// rest of the hierarchy. Also replaced every hardcoded Colors.* with
+// AppColors tokens (blue → AppColors.info, purple → left as a deliberate
+// distinct accent for the Attempts card since neither AppColors.info nor
+// AppColors.warning read correctly there — FLAGGED below for CJ to confirm
+// or pick a token).
 
 // ── Question model ────────────────────────────────────────────────────────────
 class _QuizQuestion {
@@ -169,7 +179,7 @@ class _CreatePersonalizedUnitQuizScreenState
     return true;
   }
 
-  void _showSnack(String msg, {Color color = Colors.red}) {
+  void _showSnack(String msg, {Color color = AppColors.danger}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
@@ -180,7 +190,7 @@ class _CreatePersonalizedUnitQuizScreenState
     if (!_validateQuestions()) return;
 
     if (_maxAttempts < 1 || _maxAttempts > 5) {
-      _showSnack('Please set maximum attempts (1-5)', color: Colors.orange);
+      _showSnack('Please set maximum attempts (1-5)', color: AppColors.warning);
       return;
     }
 
@@ -204,7 +214,7 @@ class _CreatePersonalizedUnitQuizScreenState
           maxAttempts: _maxAttempts,
         );
         if (mounted) {
-          _showSnack('Unit quiz updated successfully', color: Colors.green);
+          _showSnack('Unit quiz updated successfully', color: AppColors.success);
           Navigator.pop(context);
         }
       } else {
@@ -220,7 +230,7 @@ class _CreatePersonalizedUnitQuizScreenState
           maxAttempts: _maxAttempts,
         );
         if (mounted) {
-          _showSnack('Unit quiz created successfully', color: Colors.green);
+          _showSnack('Unit quiz created successfully', color: AppColors.success);
           Navigator.pop(context);
         }
       }
@@ -245,62 +255,69 @@ class _CreatePersonalizedUnitQuizScreenState
           labelText: 'Quiz Title',
           hintText: 'e.g., Unit 1 Final Test',
           prefixIcon: Icon(Icons.assignment_outlined, color: c),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c, width: 2)),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md), borderSide: const BorderSide(color: AppColors.divider)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md), borderSide: BorderSide(color: c, width: 2)),
           filled: true, fillColor: Colors.white,
         ),
         validator: _validateTitle,
       ),
-      const SizedBox(height: 16),
+      const SizedBox(height: AppSpacing.md),
 
       // Passing score
       Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.withOpacity(0.3))),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+        decoration: BoxDecoration(color: AppColors.info.withOpacity(0.05), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.info.withOpacity(0.3))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const Icon(Icons.trending_up, color: Colors.blue, size: 18),
+            const Icon(Icons.trending_up, color: AppColors.info, size: 18),
             const SizedBox(width: 8),
             const Text('Passing Score', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
             const Spacer(),
             RichText(text: TextSpan(children: [
-              TextSpan(text: '$_passingScore / $n', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
-              TextSpan(text: '  (${((_passingScore / n) * 100).round()}%)', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              TextSpan(text: '$_passingScore / $n', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.info)),
+              TextSpan(text: '  (${((_passingScore / n) * 100).round()}%)', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
             ])),
           ]),
-          Slider(value: _passingScore.toDouble(), min: 1, max: n.toDouble(), divisions: n > 1 ? n - 1 : 1, activeColor: Colors.blue, label: '$_passingScore / $n', onChanged: (v) => setState(() => _passingScore = v.round())),
-          Text('Students must answer at least $_passingScore out of $n questions correctly to pass', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          Slider(value: _passingScore.toDouble(), min: 1, max: n.toDouble(), divisions: n > 1 ? n - 1 : 1, activeColor: AppColors.info, label: '$_passingScore / $n', onChanged: (v) => setState(() => _passingScore = v.round())),
+          Text('Students must answer at least $_passingScore out of $n questions correctly to pass', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
         ]),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: AppSpacing.sm),
 
       // XP reward
       Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(color: Colors.amber.withOpacity(0.06), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.amber.withOpacity(0.35))),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+        decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.06), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.warning.withOpacity(0.35))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const Icon(Icons.star_rounded, color: Colors.amber, size: 18),
+            const Icon(Icons.star_rounded, color: AppColors.warning, size: 18),
             const SizedBox(width: 8),
             const Text('XP Reward', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
             const Spacer(),
-            Text('$_xpReward XP', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.amber)),
+            Text('$_xpReward XP', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.warning)),
           ]),
-          Slider(value: _xpReward.toDouble(), min: 0, max: 100, divisions: 20, activeColor: Colors.amber, label: '$_xpReward XP', onChanged: (v) => setState(() => _xpReward = v.round())),
-          const Text('Awarded on passing this graded test (max 100 XP)', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          Slider(value: _xpReward.toDouble(), min: 0, max: 100, divisions: 20, activeColor: AppColors.warning, label: '$_xpReward XP', onChanged: (v) => setState(() => _xpReward = v.round())),
+          const Text('Awarded on passing this graded test (max 100 XP)', style: TextStyle(fontSize: 11, color: AppColors.muted)),
         ]),
       ),
     ]);
   }
 
-  // Add this new method for attempts configuration
+  // FLAG PARA CJ: el card de "Maximum Attempts" usaba Colors.purple como
+  // acento propio, distinto de info/warning/danger/success. No hay un
+  // token morado en el set de AppColors que rescaté de tu historial
+  // (primary/primaryLight/primaryDark/success/warning/danger/info). Lo
+  // dejé como Colors.purple literal por ahora — decime si querés que use
+  // AppColors.info en su lugar (quedaría igual al color de "Passing
+  // Score" arriba) o si preferís agregar un token nuevo tipo
+  // AppColors.accent a tu design system.
   Widget _buildAttemptsCard() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: Colors.purple.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppRadii.md),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -310,8 +327,7 @@ class _CreatePersonalizedUnitQuizScreenState
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
           const SizedBox(height: 8),
-          
-          // Always show the slider, but highlight if not set
+
           Column(
             children: [
               Row(
@@ -327,17 +343,17 @@ class _CreatePersonalizedUnitQuizScreenState
                     width: 60,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      border: _maxAttempts == 0 
-                          ? Border.all(color: Colors.orange, width: 2)
+                      border: _maxAttempts == 0
+                          ? Border.all(color: AppColors.warning, width: 2)
                           : null,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       _maxAttempts == 0 ? '?' : '$_maxAttempts',
                       style: TextStyle(
-                        fontSize: 24, 
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: _maxAttempts == 0 ? Colors.orange : Colors.black,
+                        color: _maxAttempts == 0 ? AppColors.warning : Colors.black,
                       ),
                     ),
                   ),
@@ -350,25 +366,25 @@ class _CreatePersonalizedUnitQuizScreenState
                   ),
                 ],
               ),
-              
+
               const SizedBox(height: 8),
-              
+
               // Warning if not set
               if (_maxAttempts == 0)
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                   decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
+                    color: AppColors.warning.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.info_outline, size: 14, color: Colors.orange),
+                      const Icon(Icons.info_outline, size: 14, color: AppColors.warning),
                       const SizedBox(width: 4),
-                      const Text(
+                      Text(
                         'Select 1-5 attempts',
-                        style: TextStyle(fontSize: 12, color: Colors.orange),
+                        style: TextStyle(fontSize: 12, color: AppColors.warning.withOpacity(0.9)),
                       ),
                     ],
                   ),
@@ -378,22 +394,22 @@ class _CreatePersonalizedUnitQuizScreenState
                   _maxAttempts == 1
                       ? 'Students can take this quiz once (no retakes)'
                       : 'Students can take this quiz up to $_maxAttempts times',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  style: const TextStyle(fontSize: 12, color: AppColors.muted),
                 ),
             ],
           ),
-          
-          const SizedBox(height: 12),
+
+          const SizedBox(height: AppSpacing.sm),
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
-              color: Colors.green.shade50,
+              color: AppColors.success.withOpacity(0.08),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
               children: [
-                Icon(Icons.psychology, size: 20, color: Colors.green.shade700),
-                const SizedBox(width: 12),
+                Icon(Icons.psychology, size: 20, color: AppColors.success),
+                const SizedBox(width: AppSpacing.sm),
                 const Expanded(
                   child: Text(
                     'Set attempts to 1 for no retakes, or 2-5 to allow retakes.',
@@ -413,36 +429,36 @@ class _CreatePersonalizedUnitQuizScreenState
     final c = widget.groupColor;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 20),
+      margin: const EdgeInsets.only(bottom: AppSpacing.lg),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
+        color: Colors.white, borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(color: c.withOpacity(0.2), width: 1.5),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Header
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
           decoration: BoxDecoration(
             color: c.withOpacity(0.06),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md)),
             border: Border(bottom: BorderSide(color: c.withOpacity(0.1))),
           ),
           child: Row(children: [
-            Container(width: 28, height: 28, decoration: BoxDecoration(color: c, shape: BoxShape.circle), child: Center(child: Text('${index + 1}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)))),
+            Container(width: 28, height: 28, decoration: BoxDecoration(color: c, shape: BoxShape.circle), child: Center(child: Text('${index + 1}', style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold, fontSize: 13)))),
             const SizedBox(width: 10),
             Text('Question ${index + 1}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: c)),
             const Spacer(),
             if (_questions.length > 1)
               GestureDetector(
                 onTap: () => _removeQuestion(index),
-                child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.red.shade50, shape: BoxShape.circle), child: Icon(Icons.close, size: 16, color: Colors.red.shade400)),
+                child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: AppColors.danger.withOpacity(0.08), shape: BoxShape.circle), child: Icon(Icons.close, size: 16, color: AppColors.danger.withOpacity(0.7))),
               ),
           ]),
         ),
 
         Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             // Question text
             TextFormField(
@@ -450,9 +466,9 @@ class _CreatePersonalizedUnitQuizScreenState
               decoration: InputDecoration(
                 hintText: 'e.g. "What does \'Stand up\' mean?"',
                 hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: c, width: 2)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm), borderSide: const BorderSide(color: AppColors.divider)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm), borderSide: BorderSide(color: c, width: 2)),
                 filled: true, fillColor: Colors.grey.shade50,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 prefixIcon: Icon(Icons.help_outline_rounded, color: Colors.grey.shade400, size: 18),
@@ -460,9 +476,9 @@ class _CreatePersonalizedUnitQuizScreenState
               maxLines: 2,
               validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppSpacing.md),
 
-            Text('Options', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+            const Text('Options', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted)),
             const SizedBox(height: 8),
 
             // Options A–D
@@ -473,17 +489,17 @@ class _CreatePersonalizedUnitQuizScreenState
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: isCorrect ? Colors.green.shade50 : Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: isCorrect ? Colors.green : Colors.grey.shade200, width: isCorrect ? 2 : 1),
+                  color: isCorrect ? AppColors.success.withOpacity(0.08) : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(AppRadii.sm),
+                  border: Border.all(color: isCorrect ? AppColors.success : Colors.grey.shade200, width: isCorrect ? 2 : 1),
                 ),
                 child: Row(children: [
                   GestureDetector(
                     onTap: () => setState(() => q.correctIndex = oi),
                     child: Container(
                       width: 28, height: 28,
-                      decoration: BoxDecoration(shape: BoxShape.circle, color: isCorrect ? Colors.green : Colors.white, border: Border.all(color: isCorrect ? Colors.green : Colors.grey.shade400, width: 2)),
-                      child: Center(child: isCorrect ? const Icon(Icons.check, size: 15, color: Colors.white) : Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade500))),
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: isCorrect ? AppColors.success : Colors.white, border: Border.all(color: isCorrect ? AppColors.success : Colors.grey.shade400, width: 2)),
+                      child: Center(child: isCorrect ? const Icon(Icons.check, size: 15, color: AppColors.onPrimary) : Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade500))),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -495,7 +511,7 @@ class _CreatePersonalizedUnitQuizScreenState
                         hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                         border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero,
                       ),
-                      style: TextStyle(fontSize: 14, color: isCorrect ? Colors.green.shade800 : Colors.black87),
+                      style: TextStyle(fontSize: 14, color: isCorrect ? AppColors.success : Colors.black87),
                     ),
                   ),
                 ]),
@@ -505,11 +521,11 @@ class _CreatePersonalizedUnitQuizScreenState
             // Hint
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: Colors.green.withOpacity(0.06), borderRadius: BorderRadius.circular(8)),
+              decoration: BoxDecoration(color: AppColors.success.withOpacity(0.06), borderRadius: BorderRadius.circular(8)),
               child: Row(children: [
-                const Icon(Icons.check_circle_outline, size: 14, color: Colors.green),
+                const Icon(Icons.check_circle_outline, size: 14, color: AppColors.success),
                 const SizedBox(width: 6),
-                Flexible(child: Text('Tap a letter to mark it as the correct answer (currently: ${String.fromCharCode(65 + q.correctIndex)})', style: const TextStyle(fontSize: 11, color: Colors.green))),
+                Flexible(child: Text('Tap a letter to mark it as the correct answer (currently: ${String.fromCharCode(65 + q.correctIndex)})', style: const TextStyle(fontSize: 11, color: AppColors.success))),
               ]),
             ),
           ]),
@@ -525,141 +541,144 @@ class _CreatePersonalizedUnitQuizScreenState
     final c = widget.groupColor;
 
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
-      appBar: AppBar(
-        backgroundColor: c,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: Text(
-          widget.isEditing ? 'Edit Unit Quiz' : 'Create Unit Quiz',
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(right: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-              child: Text('${_questions.length} Q', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-            ),
+      backgroundColor: AppColors.scaffoldBackground,
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: widget.isEditing ? 'Edit Unit Quiz' : 'Create Unit Quiz',
+            color: c,
           ),
-        ],
-      ),
-      body: _isLoadingQuestions
-          ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              CircularProgressIndicator(color: c),
-              const SizedBox(height: 16),
-              Text('Loading questions...', style: TextStyle(color: Colors.grey.shade500)),
-            ]))
-          : Form(
-              key: _formKey,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildSettingsCard(),
-                    const SizedBox(height: 16),
-                    _buildAttemptsCard(),
-                    const SizedBox(height: 28),
-                    
-                    // ✅ RED INFO BANNER - BEFORE QUESTIONS SECTION
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.07),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.red.withOpacity(0.25)),
-                      ),
-                      child: Row(
+          Expanded(
+            child: _isLoadingQuestions
+                ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    CircularProgressIndicator(color: c),
+                    const SizedBox(height: AppSpacing.md),
+                    const Text('Loading questions...', style: TextStyle(color: AppColors.muted)),
+                  ]))
+                : Form(
+                    key: _formKey,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.info_outline, color: Colors.red.shade700, size: 20),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Text(
-                              'This is a graded exam. Scores will be reported to parents.',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          // ── Question count chip ─────────────────────────
+                          // Replaces the AppBar's "N Q" pill.
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+                              child: Text('${_questions.length} Q', style: TextStyle(color: c, fontSize: 13, fontWeight: FontWeight.bold)),
                             ),
                           ),
+                          const SizedBox(height: AppSpacing.md),
+
+                          _buildSettingsCard(),
+                          const SizedBox(height: AppSpacing.md),
+                          _buildAttemptsCard(),
+                          const SizedBox(height: AppSpacing.xl),
+
+                          // Graded exam warning banner
+                          Container(
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            decoration: BoxDecoration(
+                              color: AppColors.danger.withOpacity(0.07),
+                              borderRadius: BorderRadius.circular(AppRadii.md),
+                              border: Border.all(color: AppColors.danger.withOpacity(0.25)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.info_outline, color: AppColors.danger.withOpacity(0.85), size: 20),
+                                const SizedBox(width: AppSpacing.sm),
+                                const Expanded(
+                                  child: Text(
+                                    'This is a graded exam. Scores will be reported to parents.',
+                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+
+                          // Questions header
+                          Row(children: [
+                            const Text('Questions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+                              child: Text('${_questions.length}/20', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: c)),
+                            ),
+                            const Spacer(),
+                            if (_questions.length < 20)
+                              TextButton.icon(
+                                onPressed: _addQuestion,
+                                icon: Icon(Icons.add, size: 18, color: c),
+                                label: Text('Add', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 13)),
+                                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+                              ),
+                          ]),
+                          const SizedBox(height: 4),
+                          const Text('Each question has 4 options (A–D). Tap a letter to mark the correct answer.', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                          const SizedBox(height: AppSpacing.md),
+
+                          // Question cards
+                          ...List.generate(_questions.length, (i) => _buildQuestionCard(i)),
+
+                          // Add question button (bottom)
+                          if (_questions.length < 20)
+                            GestureDetector(
+                              onTap: _addQuestion,
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                margin: const EdgeInsets.only(bottom: AppSpacing.lg),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(AppRadii.lg),
+                                  border: Border.all(color: c.withOpacity(0.3), width: 1.5),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.add_circle_outline, color: c, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text('Add Question (${_questions.length}/20)', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 14)),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                          // Save button
+                          SizedBox(
+                            width: double.infinity,
+                            height: 56,
+                            child: ElevatedButton(
+                              onPressed: _isSaving ? null : _save,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: c,
+                                disabledBackgroundColor: AppColors.divider,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.lg)),
+                                elevation: 0,
+                              ),
+                              child: _isSaving
+                                  ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: AppColors.onPrimary, strokeWidth: 2))
+                                  : Text(
+                                      widget.isEditing ? 'Save Changes' : 'Create Quiz',
+                                      style: const TextStyle(color: AppColors.onPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    
-                    // Questions header
-                    Row(children: [
-                      Text('Questions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                        child: Text('${_questions.length}/20', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: c)),
-                      ),
-                      const Spacer(),
-                      if (_questions.length < 20)
-                        TextButton.icon(
-                          onPressed: _addQuestion,
-                          icon: Icon(Icons.add, size: 18, color: c),
-                          label: Text('Add', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 13)),
-                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
-                        ),
-                    ]),
-                    const SizedBox(height: 4),
-                    Text('Each question has 4 options (A–D). Tap a letter to mark the correct answer.', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                    const SizedBox(height: 16),
-
-                    // Question cards
-                    ...List.generate(_questions.length, (i) => _buildQuestionCard(i)),
-
-                    // Add question button (bottom)
-                    if (_questions.length < 20)
-                      GestureDetector(
-                        onTap: _addQuestion,
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          margin: const EdgeInsets.only(bottom: 24),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: c.withOpacity(0.3), width: 1.5),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.add_circle_outline, color: c, size: 20),
-                              const SizedBox(width: 8),
-                              Text('Add Question (${_questions.length}/20)', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 14)),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                    // Save button
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: ElevatedButton(
-                        onPressed: _isSaving ? null : _save,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: c,
-                          disabledBackgroundColor: Colors.grey.shade400,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          elevation: 0,
-                        ),
-                        child: _isSaving
-                            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : Text(
-                                widget.isEditing ? 'Save Changes' : 'Create Quiz',
-                                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                              ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-                ),
-              ),
-            ),
-      );
-    }
+                  ),
+          ),
+        ],
+      ),
+    );
   }
+}

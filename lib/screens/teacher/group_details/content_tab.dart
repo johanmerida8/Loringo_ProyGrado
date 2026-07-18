@@ -3,7 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/create_content_screen.dart';
-import 'package:loringo_app/screens/teacher/content_details_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_unit_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_confirm_dialog.dart';
 import 'package:loringo_app/services/database/database.dart';
 
@@ -152,7 +152,7 @@ class _ChannelTile extends StatelessWidget {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => PersonalizedContentDetailsScreen(
+          builder: (_) => TeacherUnitEditorScreen(
             groupId: groupId,
             contentId: contentDoc.id,
             contentTitle: title,

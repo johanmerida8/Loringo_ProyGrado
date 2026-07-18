@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -34,8 +35,17 @@ class _CreatePersonalizedLessonScreenState
   final Database db = Database();
 
   late TextEditingController titleController;
+  // 'order' is a positional/technical field, not something a teacher
+  // should type by hand — see create_activity_screen.dart for the same
+  // pattern and rationale. Kept as a controller only because the save
+  // logic below already reads its .text; there is no visible field
+  // bound to it.
+  // - Creating: always set to (existing lessons in this unit) + 1 once
+  //   _prefillNextOrder() resolves — always appended to the end.
+  // - Editing: preserved as-is from existingData; never changed here.
   late TextEditingController orderController;
   bool isLoading = false;
+  bool _orderResolved = false;
   bool get _isEditing => widget.lessonId != null;
   Color get _c => widget.groupColor;
 
@@ -44,16 +54,30 @@ class _CreatePersonalizedLessonScreenState
     super.initState();
     titleController = TextEditingController(text: widget.existingData?['title'] ?? '');
     orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
-    if (!_isEditing) _prefillNextOrder();
+    if (_isEditing) {
+      _orderResolved = true;
+    } else {
+      _prefillNextOrder();
+    }
   }
 
   Future<void> _prefillNextOrder() async {
     try {
       final snap = await db.getPersonalizedLessons(widget.groupId, widget.contentId, widget.unitId);
-      if (mounted && orderController.text.isEmpty) {
-        orderController.text = (snap.docs.length + 1).toString();
+      if (mounted) {
+        setState(() {
+          orderController.text = (snap.docs.length + 1).toString();
+          _orderResolved = true;
+        });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          orderController.text = '1';
+          _orderResolved = true;
+        });
+      }
+    }
   }
 
   @override
@@ -72,8 +96,7 @@ class _CreatePersonalizedLessonScreenState
 
       if (_isEditing) {
         final origTitle = widget.existingData?['title'] as String? ?? '';
-        final origOrder = widget.existingData?['order']?.toString() ?? '';
-        if (titleController.text.trim() == origTitle && orderController.text.trim() == origOrder) {
+        if (titleController.text.trim() == origTitle) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
@@ -126,65 +149,54 @@ class _CreatePersonalizedLessonScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader.
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: _c,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: Text(_isEditing ? 'Edit Lesson' : 'Create Lesson', style: AppText.appBarTitle),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CreateFormBanner(
-                color: _c,
-                icon: Icons.school_rounded,
-                label: _isEditing ? 'Editing Lesson' : 'New Lesson',
-                description: 'Create engaging lessons with tasks',
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Lesson Title'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: titleController,
-                color: _c,
-                icon: Icons.title_rounded,
-                hint: 'e.g. Past Tense Basics',
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Display Order'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: orderController,
-                color: _c,
-                icon: Icons.sort_rounded,
-                hint: '1, 2, 3…',
-                helperText: 'Lessons appear in numeric order',
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'Order is required';
-                  if (int.tryParse(v) == null) return 'Enter a valid number';
-                  return null;
-                },
-              ),
-              const SizedBox(height: AppSpacing.xl),
-
-              CreateFormSubmitButton(
-                color: _c,
-                label: _isEditing ? 'UPDATE LESSON' : 'CREATE LESSON',
-                isLoading: isLoading,
-                onPressed: _submit,
-              ),
-            ],
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: _isEditing ? 'Edit Lesson' : 'Create Lesson',
+            color: _c,
           ),
-        ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CreateFormBanner(
+                      color: _c,
+                      icon: Icons.school_rounded,
+                      label: _isEditing ? 'Editing Lesson' : 'New Lesson',
+                      description: 'Create engaging lessons with tasks',
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Lesson Title'),
+                    const SizedBox(height: AppSpacing.sm),
+                    CreateFormField(
+                      controller: titleController,
+                      color: _c,
+                      icon: Icons.title_rounded,
+                      hint: 'e.g. Past Tense Basics',
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    CreateFormSubmitButton(
+                      color: _c,
+                      label: _isEditing ? 'UPDATE LESSON' : 'CREATE LESSON',
+                      isLoading: isLoading || !_orderResolved,
+                      onPressed: _submit,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

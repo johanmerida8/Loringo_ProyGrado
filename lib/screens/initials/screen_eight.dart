@@ -1,14 +1,16 @@
 // screen_eight.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-import 'package:lottie/lottie.dart';
+// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 class ScreenEight extends StatefulWidget {
@@ -21,6 +23,7 @@ class ScreenEight extends StatefulWidget {
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
+  final bool isPracticeRound;
 
   const ScreenEight({
     super.key,
@@ -33,13 +36,14 @@ class ScreenEight extends StatefulWidget {
     required this.currentTaskNumber,
     required this.totalTasks,
     this.collectionName = 'content',
+    this.isPracticeRound = false,
   });
 
   @override
   State<ScreenEight> createState() => _ScreenEightState();
 }
 
-class _ScreenEightState extends State<ScreenEight> {
+class _ScreenEightState extends State<ScreenEight> with RetryableTask {
   // final AudioPlayer _player = AudioPlayer();
   final FlutterTts _tts = FlutterTts();
 
@@ -59,10 +63,16 @@ class _ScreenEightState extends State<ScreenEight> {
   bool _isLoading = true;
 
   // FIX 3: Track whether bottom sheet is already open to prevent re-entry
+  // Also guards the retry-prompt sheet from RetryableTask for the same
+  // reason — only one bottom sheet (result or retry-prompt) should ever
+  // be in flight at once.
   bool _isResultSheetOpen = false;
 
   // Feedback messages shown when the answer is incorrect — no answer exposed
-  // (FIX 2)
+  // (FIX 2). These are shown inside the FINAL (hard-wrong) result sheet
+  // only now — the soft-wrong retry prompt has its own generic copy from
+  // RetryableTask, since showing a "keep trying" hint there and then a
+  // second one on the hard-wrong sheet would be redundant.
   static const List<String> _incorrectHints = [
     '¡Casi! Revisa el orden de las palabras.',
     '¡Buen intento! Sigue intentándolo.',
@@ -70,7 +80,7 @@ class _ScreenEightState extends State<ScreenEight> {
     '¡Inténtalo de nuevo! Estás muy cerca.',
     '¡No te rindas! Vuelve a intentarlo.',
   ];
-  int _attemptCount = 0;
+  int _hintCycleCount = 0;
 
   // convenience getters - everything UI-facing derives from these
   bool get _isEsToEn => _direction == 'es_to_en';
@@ -167,151 +177,45 @@ class _ScreenEightState extends State<ScreenEight> {
     if (_isResultSheetOpen) return;
 
     final isCorrect = _selectedWords.join(' ') == _correctAnswer.join(' ');
-    if (!isCorrect) _attemptCount++;
 
     TaskFeedback.fire(isCorrect);
+
+    if (!isCorrect) {
+      _isResultSheetOpen = true;
+      final softRetry = offerRetry(
+        context: context,
+        onRetry: () {
+          _isResultSheetOpen = false;
+          _clearAll();
+        },
+      );
+      if (softRetry) return;
+      // Hard wrong (attempts exhausted) — falls through to the normal
+      // scored result sheet below, with the cycling hint attached.
+      _hintCycleCount++;
+    }
 
     _isResultSheetOpen = true;
     TaskResultSheet.show(
       context,
       isCorrect: isCorrect,
-      // initialChildSize: 0.38,
-      // maxChildSize: 0.55,
+      isPracticeRound: widget.isPracticeRound,
       extraContent: isCorrect ? null : TaskResultHintBox(hint: _currentHint),
       onContinue: () {
         _isResultSheetOpen = false;
-        if (isCorrect) {
-          widget.onTaskComplete(true);
-        } else {
-          _clearAll();
-        }
+        // Both correct and (hard) wrong now advance — ActivityPlayScreen
+        // queues wrong tasks for a practice round at the end instead of
+        // this screen clearing the word bank and retrying in place.
+        widget.onTaskComplete(isCorrect);
       },
     ).then((_) => _isResultSheetOpen = false);
   }
 
-  /// Plays the success / failure sound without blocking the caller.
-  // void _playFeedbackSound(bool isCorrect) {
-  //   FeedbackSoundService.instance.playResult(isCorrect);
-  // }
-
   // FIX 2: Incorrect feedback never exposes the correct answer.
   // Instead, it cycles through encouraging hint messages.
   String get _currentHint {
-    return _incorrectHints[(_attemptCount - 1) % _incorrectHints.length];
+    return _incorrectHints[(_hintCycleCount - 1) % _incorrectHints.length];
   }
-
-  // void _showResultBottomSheet(bool isCorrect) {
-  //   _isResultSheetOpen = true;
-
-  //   showModalBottomSheet(
-  //     context: context,
-  //     backgroundColor: Colors.transparent,
-  //     isScrollControlled: true,
-  //     isDismissible: false,
-  //     enableDrag: false,
-  //     builder: (_) => DraggableScrollableSheet(
-  //       initialChildSize: 0.38,
-  //       maxChildSize: 0.55,
-  //       builder: (_, __) => Container(
-  //         padding: const EdgeInsets.all(24),
-  //         decoration: const BoxDecoration(
-  //           color: Colors.white,
-  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-  //           boxShadow: [
-  //             BoxShadow(
-  //               color: Colors.black26,
-  //               blurRadius: 20,
-  //               offset: Offset(0, -5),
-  //             ),
-  //           ],
-  //         ),
-  //         child: Column(
-  //           mainAxisAlignment: MainAxisAlignment.center,
-  //           children: [
-  //             Lottie.asset(
-  //               isCorrect
-  //                   ? 'assets/animation/correct.json'
-  //                   : 'assets/animation/fail.json',
-  //               height: 120,
-  //             ),
-  //             const SizedBox(height: 12),
-
-  //             if (!isCorrect) ...[
-  //               // FIX 2: Show encouragement hint — no correct answer revealed
-  //               Container(
-  //                 padding: const EdgeInsets.symmetric(
-  //                   horizontal: 16,
-  //                   vertical: 12,
-  //                 ),
-  //                 decoration: BoxDecoration(
-  //                   color: Colors.orange.shade50,
-  //                   borderRadius: BorderRadius.circular(12),
-  //                   border: Border.all(color: Colors.orange.shade200),
-  //                 ),
-  //                 child: Row(
-  //                   children: [
-  //                     Icon(
-  //                       Icons.lightbulb_outline,
-  //                       color: Colors.orange.shade600,
-  //                       size: 20,
-  //                     ),
-  //                     const SizedBox(width: 10),
-  //                     Expanded(
-  //                       child: Text(
-  //                         _currentHint,
-  //                         style: TextStyle(
-  //                           fontSize: 14,
-  //                           color: Colors.orange.shade800,
-  //                           fontWeight: FontWeight.w500,
-  //                         ),
-  //                       ),
-  //                     ),
-  //                   ],
-  //                 ),
-  //               ),
-  //               const SizedBox(height: 16),
-  //             ],
-
-  //             SizedBox(
-  //               width: double.infinity,
-  //               child: ElevatedButton(
-  //                 onPressed: () {
-  //                   Navigator.pop(context);
-  //                   _isResultSheetOpen = false;
-  //                   if (isCorrect) {
-  //                     widget.onTaskComplete(true);
-  //                   } else {
-  //                     // Reset so student can try again
-  //                     _clearAll();
-  //                   }
-  //                 },
-  //                 style: ElevatedButton.styleFrom(
-  //                   backgroundColor: isCorrect ? _green : Colors.orange,
-  //                   padding: const EdgeInsets.symmetric(vertical: 16),
-  //                   shape: RoundedRectangleBorder(
-  //                     borderRadius: BorderRadius.circular(12),
-  //                   ),
-  //                 ),
-  //                 child: Text(
-  //                   isCorrect ? 'Continue' : 'Try Again',
-  //                   style: const TextStyle(
-  //                     color: Colors.white,
-  //                     fontSize: 18,
-  //                     fontWeight: FontWeight.bold,
-  //                   ),
-  //                 ),
-  //               ),
-  //             ),
-  //           ],
-  //         ),
-  //       ),
-  //     ),
-  //   ).whenComplete(() {
-  //     // Safety net: ensure the flag is reset even if the sheet is dismissed
-  //     // by some other means.
-  //     _isResultSheetOpen = false;
-  //   });
-  // }
 
   @override
   void dispose() {
@@ -330,369 +234,372 @@ class _ScreenEightState extends State<ScreenEight> {
 
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
 
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFE8F5E9), Colors.white],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFFE8F5E9), Colors.white],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: ResponsiveActivityShell(
-            child: Column(
-              children: [
-                // ── Progress Bar ──────────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(
-                          Icons.close,
-                          color: Colors.black87,
-                          size: 28,
-                        ),
-                        onPressed: _handleClose,
-                      ),
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.all(
-                            Radius.circular(30),
+          child: SafeArea(
+            child: ResponsiveActivityShell(
+              child: Column(
+                children: [
+                  // ── Progress Bar ──────────────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.close,
+                            color: Colors.black87,
+                            size: 28,
                           ),
-                          child: LinearProgressIndicator(
-                            value: progressValue,
-                            backgroundColor: Colors.blueGrey,
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              _green,
+                          onPressed: _handleClose,
+                        ),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.all(
+                              Radius.circular(30),
                             ),
-                            minHeight: 8,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            
-                // ── Spanish Sentence Card ─────────────────────────────────────
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.translate, color: _green, size: 24),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Translate to English',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black54,
-                            ),
-                          ),
-                          const Spacer(),
-                          // FIX 1: Only the sentence card has audio
-                          IconButton(
-                            icon: Icon(
-                              Icons.volume_up,
-                              color: _green,
-                              size: 24,
-                            ),
-                            onPressed: _speakPrompt,
-                            tooltip: _listenTooltip,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _promptSentence,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-            
-                const SizedBox(height: 16),
-            
-                // ── Your Answer header ────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    children: [
-                      const Text(
-                        'Your Answer',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (_selectedWords.isNotEmpty)
-                        TextButton.icon(
-                          onPressed: _clearAll,
-                          icon: const Icon(Icons.clear_all, size: 18),
-                          label: const Text('Clear All'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.red,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-            
-                const SizedBox(height: 8),
-            
-                // ── Selected Words Area ───────────────────────────────────────
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 20),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _greyBg,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: _selectedWords.isEmpty
-                      ? Center(
-                          child: Text(
-                            'Tap words below to build your sentence',
-                            style: TextStyle(
-                              color: Colors.grey.shade500,
-                              fontSize: 14,
-                            ),
-                          ),
-                        )
-                      : Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          alignment: WrapAlignment.center,
-                          children: _selectedWords.asMap().entries.map((entry) {
-                            final index = entry.key;
-                            final word = entry.value;
-                            return GestureDetector(
-                              onTap: () => _removeWord(index),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _green,
-                                  borderRadius: BorderRadius.circular(24),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: _green.withOpacity(0.3),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      word,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    const Icon(
-                                      Icons.close,
-                                      size: 16,
-                                      color: Colors.white70,
-                                    ),
-                                  ],
-                                ),
+                            child: LinearProgressIndicator(
+                              value: progressValue,
+                              backgroundColor: Colors.blueGrey,
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                _green,
                               ),
-                            );
-                          }).toList(),
-                        ),
-                ),
-            
-                const SizedBox(height: 20),
-            
-                // ── Word Bank header ──────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    children: [
-                      const Text(
-                        'Word Bank',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _green.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          'Tap to add',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: _green,
-                            fontWeight: FontWeight.w500,
+                              minHeight: 8,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-            
-                const SizedBox(height: 8),
-            
-                // ── Word Bank Grid ────────────────────────────────────────────
-                // FIX 1: Tiles no longer have individual audio buttons.
-                Expanded(
-                  child: Padding(
+              
+                  // ── Spanish Sentence Card ─────────────────────────────────────
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.translate, color: _green, size: 24),
+                            const SizedBox(width: 12),
+                            const Text(
+                              'Translate to English',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            const Spacer(),
+                            // FIX 1: Only the sentence card has audio
+                            IconButton(
+                              icon: Icon(
+                                Icons.volume_up,
+                                color: _green,
+                                size: 24,
+                              ),
+                              onPressed: _speakPrompt,
+                              tooltip: _listenTooltip,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _promptSentence,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+              
+                  const SizedBox(height: 16),
+              
+                  // ── Your Answer header ────────────────────────────────────────
+                  Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: _wordBank.isEmpty
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Your Answer',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (_selectedWords.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: _clearAll,
+                            icon: const Icon(Icons.clear_all, size: 18),
+                            label: const Text('Clear All'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.red,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              
+                  const SizedBox(height: 8),
+              
+                  // ── Selected Words Area ───────────────────────────────────────
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 20),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _greyBg,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: _selectedWords.isEmpty
                         ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.check_circle,
-                                  size: 60,
-                                  color: _green.withOpacity(0.5),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'All words used!',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Tap CHECK when ready',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey.shade500,
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              'Tap words below to build your sentence',
+                              style: TextStyle(
+                                color: Colors.grey.shade500,
+                                fontSize: 14,
+                              ),
                             ),
                           )
-                        : GridView.builder(
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              childAspectRatio: 1.8,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                            ),
-                            itemCount: _wordBank.length,
-                            itemBuilder: (context, index) {
-                              final word = _wordBank[index];
+                        : Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            alignment: WrapAlignment.center,
+                            children: _selectedWords.asMap().entries.map((entry) {
+                              final index = entry.key;
+                              final word = entry.value;
                               return GestureDetector(
-                                onTap: () => _addWord(word),
+                                onTap: () => _removeWord(index),
                                 child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 10,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: _green.withOpacity(0.3),
-                                      width: 2,
-                                    ),
+                                    color: _green,
+                                    borderRadius: BorderRadius.circular(24),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withOpacity(0.05),
+                                        color: _green.withOpacity(0.3),
                                         blurRadius: 4,
                                         offset: const Offset(0, 2),
                                       ),
                                     ],
                                   ),
-                                  // FIX 1: Simple centered text, no audio icon
-                                  child: Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                      ),
-                                      child: Text(
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
                                         word,
                                         style: const TextStyle(
-                                          fontSize: 15,
+                                          color: Colors.white,
+                                          fontSize: 16,
                                           fontWeight: FontWeight.w600,
-                                          color: Colors.black87,
                                         ),
-                                        textAlign: TextAlign.center,
                                       ),
-                                    ),
+                                      const SizedBox(width: 8),
+                                      const Icon(
+                                        Icons.close,
+                                        size: 16,
+                                        color: Colors.white70,
+                                      ),
+                                    ],
                                   ),
                                 ),
                               );
-                            },
+                            }).toList(),
                           ),
                   ),
-                ),
-            
-                // ── CHECK Button ──────────────────────────────────────────────
-                // FIX 3: No longer uses _isSubmitting as a gating bool.
-                // The _isResultSheetOpen flag prevents double-tap; the button
-                // itself is disabled only when no words are selected.
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed:
-                          _selectedWords.isEmpty ? null : _checkAnswer,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _green,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+              
+                  const SizedBox(height: 20),
+              
+                  // ── Word Bank header ──────────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Word Bank',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
                         ),
-                        elevation: 3,
-                      ),
-                      child: const Text(
-                        'CHECK',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            'Tap to add',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: _green,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              
+                  const SizedBox(height: 8),
+              
+                  // ── Word Bank Grid ────────────────────────────────────────────
+                  // FIX 1: Tiles no longer have individual audio buttons.
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: _wordBank.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.check_circle,
+                                    size: 60,
+                                    color: _green.withOpacity(0.5),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'All words used!',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Tap CHECK when ready',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : GridView.builder(
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 1.8,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                              ),
+                              itemCount: _wordBank.length,
+                              itemBuilder: (context, index) {
+                                final word = _wordBank[index];
+                                return GestureDetector(
+                                  onTap: () => _addWord(word),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: _green.withOpacity(0.3),
+                                        width: 2,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.05),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    // FIX 1: Simple centered text, no audio icon
+                                    child: Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                        ),
+                                        child: Text(
+                                          word,
+                                          style: const TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.black87,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ),
+              
+                  // ── CHECK Button ──────────────────────────────────────────────
+                  // FIX 3: No longer uses _isSubmitting as a gating bool.
+                  // The _isResultSheetOpen flag prevents double-tap; the button
+                  // itself is disabled only when no words are selected.
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed:
+                            _selectedWords.isEmpty ? null : _checkAnswer,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _green,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 3,
+                        ),
+                        child: const Text(
+                          'CHECK',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

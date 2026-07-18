@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -31,9 +32,18 @@ class _CreatePersonalizedContentScreenState
 
   late TextEditingController titleController;
   late TextEditingController descriptionController;
+  // 'order' is a positional/technical field, not something a teacher
+  // should type by hand — see create_activity_screen.dart for the same
+  // pattern and rationale. Kept as a controller only because the save
+  // logic below already reads its .text; there is no visible field
+  // bound to it.
+  // - Creating: always set to (this teacher's existing content count) + 1
+  //   once _prefillNextOrder() resolves — i.e. always appended to the end.
+  // - Editing: preserved as-is from existingData; never changed here.
   late TextEditingController orderController;
   String selectedAgeGroup = '5-6 years';
   bool isLoading = false;
+  bool _orderResolved = false;
   bool get _isEditing => widget.contentId != null;
   Color get _c => widget.groupColor;
 
@@ -44,22 +54,40 @@ class _CreatePersonalizedContentScreenState
     descriptionController = TextEditingController(text: widget.existingData?['description'] ?? '');
     orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
     selectedAgeGroup = widget.existingData?['ageGroup'] ?? '5-6 years';
-    if (!_isEditing) _prefillNextOrder();
+    if (_isEditing) {
+      _orderResolved = true;
+    } else {
+      _prefillNextOrder();
+    }
   }
 
   Future<void> _prefillNextOrder() async {
     final teacherId = FirebaseAuth.instance.currentUser?.uid;
-    if (teacherId == null) return;
+    if (teacherId == null) {
+      if (mounted) setState(() => _orderResolved = true);
+      return;
+    }
     try {
       final snap = await FirebaseFirestore.instance
           .collection('content')
           .where('teacherId', isEqualTo: teacherId)
           .get();
-      if (mounted && orderController.text.isEmpty) {
-        orderController.text = (snap.docs.length + 1).toString();
+      if (mounted) {
+        setState(() {
+          orderController.text = (snap.docs.length + 1).toString();
+          _orderResolved = true;
+        });
       }
     } catch (_) {
-      // Non-critical — teacher can still type the order manually.
+      // Non-critical for the save flow itself, but the submit button
+      // stays disabled without a resolved order — fall back to 1 rather
+      // than leaving the teacher stuck if this ever fails.
+      if (mounted) {
+        setState(() {
+          orderController.text = '1';
+          _orderResolved = true;
+        });
+      }
     }
   }
 
@@ -85,12 +113,10 @@ class _CreatePersonalizedContentScreenState
         final origTitle = widget.existingData?['title'] as String? ?? '';
         final origDesc = widget.existingData?['description'] as String? ?? '';
         final origAge = widget.existingData?['ageGroup'] as String? ?? '5-6 years';
-        final origOrder = widget.existingData?['order']?.toString() ?? '';
         final noChanges =
             titleController.text.trim() == origTitle &&
             descriptionController.text.trim() == origDesc &&
-            selectedAgeGroup == origAge &&
-            orderController.text.trim() == origOrder;
+            selectedAgeGroup == origAge;
         if (noChanges) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -139,85 +165,81 @@ class _CreatePersonalizedContentScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader, same
+      // as the rest of the content hierarchy (list/editor screens). This
+      // screen previously had its own solid-color AppBar; removed for
+      // consistency.
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: _c,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: Text(_isEditing ? 'Edit Content' : 'Create New Content', style: AppText.appBarTitle),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CreateFormBanner(
-                color: _c,
-                icon: Icons.folder_open_rounded,
-                label: _isEditing ? 'Editing Content' : 'New Content',
-                description: 'A top-level subject area, like "English Essentials I"',
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Title'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: titleController,
-                color: _c,
-                icon: Icons.title,
-                hint: 'e.g. Present Tense Verbs, Numbers 1-100',
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Description'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: descriptionController,
-                color: _c,
-                icon: Icons.description,
-                hint: 'Brief description of the content',
-                maxLines: 3,
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Description is required' : null,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Age Group'),
-              const SizedBox(height: AppSpacing.sm),
-              ...['5-6 years', '7-8 years', '9+ years'].map((age) => RadioListTile<String>(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(age),
-                    value: age,
-                    groupValue: selectedAgeGroup,
-                    activeColor: _c,
-                    onChanged: (value) => setState(() => selectedAgeGroup = value!),
-                  )),
-              const SizedBox(height: AppSpacing.md),
-
-              const CreateFormLabel('Display Order'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: orderController,
-                color: _c,
-                icon: Icons.sort,
-                hint: '1, 2, 3…',
-                helperText: 'Content appears in numeric order',
-                keyboardType: TextInputType.number,
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Order is required' : null,
-              ),
-              const SizedBox(height: AppSpacing.xl),
-
-              CreateFormSubmitButton(
-                color: _c,
-                label: _isEditing ? 'UPDATE CONTENT' : 'CREATE CONTENT',
-                isLoading: isLoading,
-                onPressed: _submit,
-              ),
-            ],
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: _isEditing ? 'Edit Content' : 'Create New Content',
+            color: _c,
           ),
-        ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CreateFormBanner(
+                      color: _c,
+                      icon: Icons.folder_open_rounded,
+                      label: _isEditing ? 'Editing Content' : 'New Content',
+                      description: 'A top-level subject area, like "English Essentials I"',
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Title'),
+                    const SizedBox(height: AppSpacing.sm),
+                    CreateFormField(
+                      controller: titleController,
+                      color: _c,
+                      icon: Icons.title,
+                      hint: 'e.g. Present Tense Verbs, Numbers 1-100',
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Description'),
+                    const SizedBox(height: AppSpacing.sm),
+                    CreateFormField(
+                      controller: descriptionController,
+                      color: _c,
+                      icon: Icons.description,
+                      hint: 'Brief description of the content',
+                      maxLines: 3,
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Description is required' : null,
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Age Group'),
+                    const SizedBox(height: AppSpacing.sm),
+                    ...['5-6 years', '7-8 years', '9+ years'].map((age) => RadioListTile<String>(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(age),
+                          value: age,
+                          groupValue: selectedAgeGroup,
+                          activeColor: _c,
+                          onChanged: (value) => setState(() => selectedAgeGroup = value!),
+                        )),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    CreateFormSubmitButton(
+                      color: _c,
+                      label: _isEditing ? 'UPDATE CONTENT' : 'CREATE CONTENT',
+                      isLoading: isLoading || !_orderResolved,
+                      onPressed: _submit,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 
 /// Shared "are you sure you want to quit?" sheet shown whenever a student
 /// taps the close (X) button on any task screen. Locked the same way the
-/// result sheets are — no swipe, no tap-outside dismiss — so the only way
-/// out is one of the two explicit buttons.
+/// result sheets are — no swipe, no tap-outside dismiss, and (see
+/// PopScope below) no system back-gesture/button either — so the only
+/// way out is one of the two explicit buttons.
 ///
 /// Returns `true` if the student confirmed they want to quit (the caller
 /// should then pop the task screen), or `false` if they chose to stay.
@@ -15,7 +16,17 @@ Future<bool> confirmExitTask(BuildContext context) async {
     isScrollControlled: true,
     isDismissible: false,
     enableDrag: false,
-    builder: (sheetContext) => Container(
+    builder: (sheetContext) => PopScope(
+      // Same fix as TaskResultSheet: isDismissible:false/enableDrag:false
+      // only block gestures made directly on the sheet (tap-outside,
+      // drag-down). Neither blocks the Android system back-gesture,
+      // which can pop this sheet's own route directly — closing it
+      // without the student having chosen STAY or QUIT, and leaving the
+      // caller's `await` never resolved by an explicit choice. canPop:
+      // false makes the back gesture a no-op here, same as the other two
+      // guards.
+      canPop: false,
+      child: Container(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -102,6 +113,7 @@ Future<bool> confirmExitTask(BuildContext context) async {
             ),
           ],
         ),
+      ),
       ),
     ),
   );

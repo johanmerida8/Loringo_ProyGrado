@@ -1,11 +1,21 @@
-// quizzes_tab.dart - Clean Version with Back Button
+// quizzes_tab.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/quiz_management_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+
+// NOTE: this file had its own hand-rolled header (_buildHeader) that
+// duplicated the same visual pattern TeacherScreenHeader already
+// implements elsewhere (back button in a soft-tint container + bold
+// title). Replaced with TeacherScreenHeader directly — one less place to
+// keep in sync if the header style changes again. showBackButton /
+// onBackPressed are preserved: TeacherScreenHeader's onBack is only
+// wired when showBackButton is true, matching the previous conditional
+// back-button rendering.
 
 class QuizzesTab extends StatelessWidget {
   QuizzesTab({
@@ -44,11 +54,14 @@ class QuizzesTab extends StatelessWidget {
 
         return Column(
           children: [
-            // ── Clean Header with Back Button ──────────────────────────
-            _buildHeader(context),
+            TeacherScreenHeader(
+              title: 'Quizzes',
+              color: AppColors.primary,
+              onBack: showBackButton ? (onBackPressed ?? () => Navigator.pop(context)) : null,
+            ),
             Expanded(
               child: ListView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 32),
                 itemCount: contentDocs.length,
                 itemBuilder: (context, index) {
                   final doc = contentDocs[index];
@@ -64,43 +77,6 @@ class QuizzesTab extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-
-  Widget _buildHeader(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
-      child: Row(
-        children: [
-          // ── Back Button ──────────────────────────────────────────────
-          if (showBackButton)
-            GestureDetector(
-              onTap: onBackPressed ?? () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.primarySoft(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.arrow_back_rounded,
-                  color: AppColors.primary,
-                  size: 24,
-                ),
-              ),
-            ),
-          if (showBackButton) const SizedBox(width: 12),
-          // ── Title ─────────────────────────────────────────────────────
-          const Text(
-            'Quizzes',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: AppColors.primary,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -123,13 +99,13 @@ class _NoContentEmptyState extends StatelessWidget {
               decoration: BoxDecoration(color: Colors.grey.shade100, shape: BoxShape.circle),
               child: Icon(Icons.quiz_outlined, size: 56, color: Colors.grey.shade400),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.lg),
             const Text('No Content Available', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            Text(
+            const Text(
               'Create content first to start creating quizzes for your students.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500, height: 1.5),
+              style: TextStyle(fontSize: 14, color: AppColors.muted, height: 1.5),
             ),
           ],
         ),
@@ -163,7 +139,7 @@ class _ContentQuizCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(color: groupColor.withOpacity(0.12), width: 1.5),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 3))],
       ),
@@ -171,10 +147,10 @@ class _ContentQuizCard extends StatelessWidget {
         children: [
           // ── Content header ─────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, 14, AppSpacing.md, 14),
             decoration: BoxDecoration(
               color: groupColor.withOpacity(0.07),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(17)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.lg)),
               border: Border(bottom: BorderSide(color: groupColor.withOpacity(0.1))),
             ),
             child: Row(children: [
@@ -183,7 +159,7 @@ class _ContentQuizCard extends StatelessWidget {
                 decoration: BoxDecoration(color: groupColor.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
                 child: Icon(Icons.folder_outlined, color: groupColor, size: 22),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
@@ -202,12 +178,9 @@ class _ContentQuizCard extends StatelessWidget {
               }
               
               if (!unitsSnapshot.hasData || unitsSnapshot.data!.docs.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(
-                    'No units found', 
-                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13)
-                  ),
+                return const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('No units found', style: TextStyle(color: AppColors.muted, fontSize: 13)),
                 );
               }
               
@@ -260,7 +233,7 @@ class _UnitSection extends StatelessWidget {
       children: [
         // Unit label (NO lock status)
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 10),
           child: Row(children: [
             Container(
               width: 4, height: 18,
@@ -278,13 +251,13 @@ class _UnitSection extends StatelessWidget {
 
         // Unit Test button (ALWAYS clickable for teachers)
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, 10),
           child: _QuizActionTile(
             icon: Icons.assignment_outlined,
             label: 'Unit Test',
             subtitle: 'Graded multiple-choice exam',
             badgeLabel: 'GRADED',
-            badgeColor: Colors.red.shade700,
+            badgeColor: AppColors.danger,
             color: groupColor,
             onTap: () => Navigator.push(
               context,
@@ -304,7 +277,7 @@ class _UnitSection extends StatelessWidget {
 
         // Lesson quizzes
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, 4),
           child: Row(children: [
             Icon(Icons.quiz_outlined, size: 14, color: Colors.grey.shade500),
             const SizedBox(width: 6),
@@ -354,12 +327,12 @@ class _QuizActionTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppRadii.md),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: color.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppRadii.md),
             border: Border.all(color: color.withOpacity(0.2)),
           ),
           child: Row(children: [
@@ -368,7 +341,7 @@ class _QuizActionTile extends StatelessWidget {
               decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(9)),
               child: Icon(icon, color: color, size: 20),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
@@ -491,8 +464,8 @@ class _LessonQuizTile extends StatelessWidget {
             child: Row(children: [
               Container(
                 padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(color: Colors.blue.withOpacity(0.08), borderRadius: BorderRadius.circular(7)),
-                child: Icon(Icons.quiz_outlined, color: Colors.blue.shade600, size: 16),
+                decoration: BoxDecoration(color: AppColors.info.withOpacity(0.08), borderRadius: BorderRadius.circular(7)),
+                child: Icon(Icons.quiz_outlined, color: AppColors.info, size: 16),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -502,8 +475,8 @@ class _LessonQuizTile extends StatelessWidget {
                   Row(children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                      decoration: BoxDecoration(color: Colors.blue.withOpacity(0.08), borderRadius: BorderRadius.circular(4)),
-                      child: Text('PRACTICE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+                      decoration: BoxDecoration(color: AppColors.info.withOpacity(0.08), borderRadius: BorderRadius.circular(4)),
+                      child: Text('PRACTICE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: AppColors.info)),
                     ),
                     const SizedBox(width: 4),
                     Text('Lesson quiz', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),

@@ -45,11 +45,31 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
   Future<void> _loadUser() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    
-    // Initialize providers
-    context.read<BiometricProvider>().initialize(uid);
-    context.read<NotificationProvider>().initialize(uid);
-    
+
+    // BUGFIX: BiometricProvider.initialize() and
+    // NotificationProvider.initialize() each call notifyListeners()
+    // immediately on entry (before their own first `await`), to flip
+    // isLoading to true right away. Calling them directly here — inside
+    // initState()'s synchronous call chain via _loadUser() — means that
+    // first notifyListeners() fires WHILE this widget's very first build
+    // is still in progress. Provider's InheritedWidget then tries to
+    // mark itself dirty mid-build, which throws "setState() or
+    // markNeedsBuild() called during build" (this is the exact crash in
+    // the logs, with the stack trace running straight through
+    // initState -> _loadUser -> BiometricProvider.initialize ->
+    // notifyListeners).
+    //
+    // addPostFrameCallback defers both calls until after the first frame
+    // has finished building, which is the standard fix for "notify a
+    // listener as a side effect of initState" — by then Flutter is no
+    // longer in the build phase, so notifyListeners() can safely mark
+    // dependents dirty for the *next* frame instead of the current one.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<BiometricProvider>().initialize(uid);
+      context.read<NotificationProvider>().initialize(uid);
+    });
+
     final doc = await FirebaseFirestore.instance
         .collection('users')
         .doc(uid)

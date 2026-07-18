@@ -261,6 +261,8 @@ class _ParentNavigationScreenState extends State<ParentNavigationScreen> {
                     parentUserId: parentUserId,
                     myChildren: myChildren,
                     groupNames: groupNames,
+                    childReports: childReports,
+                    formatDate: _formatDate,
                     onSeeAllChildren: () => setState(() => _currentIndex = 1),
                     onNavigateToNotifications: _navigateToNotifications,
                     onLogout: _logout,

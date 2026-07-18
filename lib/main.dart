@@ -69,7 +69,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Loringo App',
+      title: 'Loringo',
       home: kIsWeb ? const AuthGate() : const SplashScreen(),
     );
   }

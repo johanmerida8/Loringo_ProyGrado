@@ -1,14 +1,15 @@
 // screen_nine.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-import 'package:lottie/lottie.dart';
+// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/highlight_text.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 import 'package:loringo_app/services/speech_to_text/speech_permissions.dart';
@@ -25,6 +26,7 @@ class ScreenNine extends StatefulWidget {
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
+  final bool isPracticeRound;
 
   const ScreenNine({
     super.key,
@@ -37,6 +39,7 @@ class ScreenNine extends StatefulWidget {
     required this.currentTaskNumber,
     required this.totalTasks,
     this.collectionName = 'content',
+    this.isPracticeRound = false,
   });
 
   @override
@@ -47,6 +50,21 @@ class _ScreenNineState extends State<ScreenNine>
     with SingleTickerProviderStateMixin {
   final FlutterTts _tts = FlutterTts();
   // final AudioPlayer _player = AudioPlayer();
+
+  // BUGFIX CONTEXT: SpeechToTextService used to be a singleton (a
+  // `factory` constructor returning one shared `_instance` across the
+  // whole app). This line looked like it was creating a private
+  // instance for this screen, but it wasn't — every screen that wrote
+  // `SpeechToTextService()`, including ScreenThirteen (slow_reveal), was
+  // actually grabbing the same global object and overwriting its
+  // callbacks (onFinalResult, onError, etc.) out from under each other.
+  // SpeechToTextService's constructor is no longer a factory/singleton,
+  // so this line now does exactly what it always looked like it did:
+  // creates a private, isolated instance scoped to this screen's
+  // lifecycle. No other change was needed here — this screen's usage
+  // pattern (create in the field initializer, configure callbacks in
+  // _setupSpeechService(), tear down in dispose()) was already correct
+  // for a non-shared instance.
   final SpeechToTextService _speechService = SpeechToTextService();
 
   late AnimationController _pulseController;
@@ -158,7 +176,7 @@ class _ScreenNineState extends State<ScreenNine>
   // ── TTS & audio ───────────────────────────────────────────────────────────
 
   Future<void> _initTts() async {
-    await _tts.setLanguage('en-US');
+    await _tts.setLanguage('en-GB');
     await _tts.setSpeechRate(0.45);
     await _tts.setPitch(1.0);
   }
@@ -207,11 +225,6 @@ class _ScreenNineState extends State<ScreenNine>
     setState(() => _isSpeaking = false);
   }
 
-  /// Plays success or failure sound without blocking the caller.
-  // void _playFeedbackSound(bool isCorrect) {
-  //   FeedbackSoundService.instance.playResult(isCorrect);
-  // }
-
   // ── Mic ───────────────────────────────────────────────────────────────────
 
   Future<void> _startRecording() async {
@@ -258,8 +271,7 @@ class _ScreenNineState extends State<ScreenNine>
     TaskResultSheet.show(
       context,
       isCorrect: isCorrect,
-      // initialChildSize: 0.42,
-      // maxChildSize: 0.58,
+      isPracticeRound: widget.isPracticeRound,
       message: message,
       messageColor: messageColor,
       extraContent: (!isCorrect && !captureError && _recognizedText.isNotEmpty)
@@ -267,13 +279,20 @@ class _ScreenNineState extends State<ScreenNine>
           : null,
       onContinue: () {
         _isResultSheetOpen = false;
-        if (isCorrect) {
-          widget.onTaskComplete(true);
-        } else {
+        // A microphone-capture error (no speech detected, timeout, etc.)
+        // isn't a wrong *answer* — it's the mic not hearing anything, so
+        // that case still lets the student retry right here rather than
+        // burning an attempt that was never actually evaluated. A genuine
+        // wrong pronunciation, like every other screen, now advances via
+        // onTaskComplete(false) instead of resetting for another try —
+        // ActivityPlayScreen queues it for the review round instead.
+        if (captureError) {
           setState(() {
             _recognizedText = '';
             _highlightWordsList = [];
           });
+        } else {
+          widget.onTaskComplete(isCorrect);
         }
       },
     ).then((_) => _isResultSheetOpen = false);
@@ -283,6 +302,11 @@ class _ScreenNineState extends State<ScreenNine>
   void dispose() {
     _tts.stop();
     // _player.dispose();
+    // Now safe by construction: this instance is private to this
+    // screen (SpeechToTextService is no longer a singleton), so
+    // disposing it only tears down THIS screen's mic session — it can
+    // no longer affect a slow_reveal screen or any other speech-using
+    // screen elsewhere in the app.
     _speechService.dispose();
     _pulseController.dispose();
     super.dispose();
@@ -294,284 +318,287 @@ class _ScreenNineState extends State<ScreenNine>
   Widget build(BuildContext context) {
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
 
-    return Scaffold(
-      backgroundColor: _greenLight,
-      body: SafeArea(
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: _green))
-            : ResponsiveActivityShell(
-              child: Column(
-                  children: [
-                    // ── Progress bar ──────────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 20, 8),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.close,
-                                color: Colors.black54, size: 26),
-                            onPressed: _handleClose,
-                          ),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(30),
-                              child: LinearProgressIndicator(
-                                value: progressValue,
-                                backgroundColor: Colors.black12,
-                                valueColor:
-                                    const AlwaysStoppedAnimation<Color>(_green),
-                                minHeight: 8,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-              
-                    // ── Hint ──────────────────────────────────────────────────
-                    if (_hint.isNotEmpty)
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
+        backgroundColor: _greenLight,
+        body: SafeArea(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator(color: _green))
+              : ResponsiveActivityShell(
+                child: Column(
+                    children: [
+                      // ── Progress bar ──────────────────────────────────────────
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
-                        child: Text(
-                          _hint,
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey.shade600,
-                              fontStyle: FontStyle.italic),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-              
-                    const SizedBox(height: 12),
-              
-                    // ── Loringo character ──────────────────────────────────────
-                    Image.asset(
-                      'assets/images/loringo-listening.png',
-                      width: 110,
-                      height: 110,
-                      fit: BoxFit.contain,
-                    ),
-              
-                    const SizedBox(height: 8),
-              
-                    const Text(
-                      'Repeat after me',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.black45,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
-              
-                    const SizedBox(height: 16),
-              
-                    // ── Phrase card with embedded Listen button ───────────────
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 24),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _green.withOpacity(0.12),
-                            blurRadius: 20,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        children: [
-                          // Phrase text with yellow highlight as words are spoken
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                            child: HighlightTextWidget(
-                              text: _phrase,
-                              wordsToHighlight: _highlightWordsList,
-                              normalStyle: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                                height: 1.45,
-                              ),
-                              highlightStyle: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF5D4037),
-                                backgroundColor: _highlightColor,
-                                height: 1.45,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-              
-                          Divider(
-                            height: 1,
-                            color: Colors.grey.shade100,
-                            indent: 16,
-                            endIndent: 16,
-                          ),
-              
-                          // Replay button embedded inside the card
-                          InkWell(
-                            onTap: _isSpeaking ? null : _speakPhrase,
-                            borderRadius: const BorderRadius.vertical(
-                                bottom: Radius.circular(28)),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 14, horizontal: 24),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 250),
-                                    child: _isSpeaking
-                                        ? SizedBox(
-                                            key: const ValueKey('loading'),
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: _orange,
-                                            ),
-                                          )
-                                        : Icon(
-                                            Icons.volume_up_rounded,
-                                            key: const ValueKey('icon'),
-                                            color: _orange,
-                                            size: 20,
-                                          ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    _isSpeaking
-                                        ? 'Playing…'
-                                        : 'Listen to pronunciation',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color:
-                                          _isSpeaking ? Colors.grey : _orange,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-              
-                    // ── Word progress pill (while speaking) ────────────────────
-                    if (_highlightWordsList.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _green.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.check_circle,
-                                size: 13, color: _green),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${_highlightWordsList.length} / ${_phraseWords.length} words',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: _green,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-              
-                    // ── Partial "you said" text while listening ────────────────
-                    if (_recognizedText.isNotEmpty && _isListening) ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 24),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 20, 8),
                         child: Row(
                           children: [
-                            Icon(Icons.record_voice_over_rounded,
-                                size: 16, color: Colors.grey.shade500),
-                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: const Icon(Icons.close,
+                                  color: Colors.black54, size: 26),
+                              onPressed: _handleClose,
+                            ),
                             Expanded(
-                              child: Text(
-                                _recognizedText,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.black87,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(30),
+                                child: LinearProgressIndicator(
+                                  value: progressValue,
+                                  backgroundColor: Colors.black12,
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(_green),
+                                  minHeight: 8,
                                 ),
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ],
-              
-                    const Spacer(),
-              
-                    // ── Mic button ─────────────────────────────────────────────
-                    AnimatedBuilder(
-                      animation: _pulseAnimation,
-                      builder: (context, child) => Transform.scale(
-                        scale: _isListening ? _pulseAnimation.value : 1.0,
-                        child: child,
+      
+                      // ── Hint ──────────────────────────────────────────────────
+                      if (_hint.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
+                          child: Text(
+                            _hint,
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade600,
+                                fontStyle: FontStyle.italic),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+      
+                      const SizedBox(height: 12),
+      
+                      // ── Loringo character ──────────────────────────────────────
+                      Image.asset(
+                        'assets/images/loringo-listening.png',
+                        width: 110,
+                        height: 110,
+                        fit: BoxFit.contain,
                       ),
-                      child: GestureDetector(
-                        onTap: _isListening ? _stopRecording : _startRecording,
-                        child: Container(
-                          width: 80,
-                          height: 80,
+      
+                      const SizedBox(height: 8),
+      
+                      const Text(
+                        'Repeat after me',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.black45,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+      
+                      const SizedBox(height: 16),
+      
+                      // ── Phrase card with embedded Listen button ───────────────
+                      Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 24),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _green.withOpacity(0.12),
+                              blurRadius: 20,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            // Phrase text with yellow highlight as words are spoken
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                              child: HighlightTextWidget(
+                                text: _phrase,
+                                wordsToHighlight: _highlightWordsList,
+                                normalStyle: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                  height: 1.45,
+                                ),
+                                highlightStyle: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF5D4037),
+                                  backgroundColor: _highlightColor,
+                                  height: 1.45,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+      
+                            Divider(
+                              height: 1,
+                              color: Colors.grey.shade100,
+                              indent: 16,
+                              endIndent: 16,
+                            ),
+      
+                            // Replay button embedded inside the card
+                            InkWell(
+                              onTap: _isSpeaking ? null : _speakPhrase,
+                              borderRadius: const BorderRadius.vertical(
+                                  bottom: Radius.circular(28)),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 14, horizontal: 24),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    AnimatedSwitcher(
+                                      duration: const Duration(milliseconds: 250),
+                                      child: _isSpeaking
+                                          ? SizedBox(
+                                              key: const ValueKey('loading'),
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: _orange,
+                                              ),
+                                            )
+                                          : Icon(
+                                              Icons.volume_up_rounded,
+                                              key: const ValueKey('icon'),
+                                              color: _orange,
+                                              size: 20,
+                                            ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _isSpeaking
+                                          ? 'Playing…'
+                                          : 'Listen to pronunciation',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color:
+                                            _isSpeaking ? Colors.grey : _orange,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+      
+                      // ── Word progress pill (while speaking) ────────────────────
+                      if (_highlightWordsList.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 6),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _isListening ? Colors.red : _green,
-                            boxShadow: [
-                              BoxShadow(
-                                color: (_isListening ? Colors.red : _green)
-                                    .withOpacity(0.4),
-                                blurRadius: _isListening ? 28 : 16,
-                                spreadRadius: _isListening ? 8 : 2,
+                            color: _green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.check_circle,
+                                  size: 13, color: _green),
+                              const SizedBox(width: 5),
+                              Text(
+                                '${_highlightWordsList.length} / ${_phraseWords.length} words',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: _green,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ],
                           ),
-                          child: Icon(
-                            _isListening ? Icons.stop_rounded : Icons.mic_rounded,
-                            size: 38,
+                        ),
+                      ],
+      
+                      // ── Partial "you said" text while listening ────────────────
+                      if (_recognizedText.isNotEmpty && _isListening) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 24),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
                             color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.grey.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.record_voice_over_rounded,
+                                  size: 16, color: Colors.grey.shade500),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _recognizedText,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+      
+                      const Spacer(),
+      
+                      // ── Mic button ─────────────────────────────────────────────
+                      AnimatedBuilder(
+                        animation: _pulseAnimation,
+                        builder: (context, child) => Transform.scale(
+                          scale: _isListening ? _pulseAnimation.value : 1.0,
+                          child: child,
+                        ),
+                        child: GestureDetector(
+                          onTap: _isListening ? _stopRecording : _startRecording,
+                          child: Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _isListening ? Colors.red : _green,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: (_isListening ? Colors.red : _green)
+                                      .withOpacity(0.4),
+                                  blurRadius: _isListening ? 28 : 16,
+                                  spreadRadius: _isListening ? 8 : 2,
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              _isListening ? Icons.stop_rounded : Icons.mic_rounded,
+                              size: 38,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-              
-                    const SizedBox(height: 8),
-              
-                    Text(
-                      _isListening ? 'Listening… speak now' : 'Tap to speak',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                          fontWeight: FontWeight.w500),
-                    ),
-              
-                    const SizedBox(height: 32),
-                  ],
-                ),
-            ),
+      
+                      const SizedBox(height: 8),
+      
+                      Text(
+                        _isListening ? 'Listening… speak now' : 'Tap to speak',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500),
+                      ),
+      
+                      const SizedBox(height: 32),
+                    ],
+                  ),
+              ),
+        ),
       ),
     );
   }

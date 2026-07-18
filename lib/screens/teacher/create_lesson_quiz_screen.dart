@@ -1,5 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
+
+// NOTE: previously had a Scaffold.appBar (solid `groupColor` bar with a
+// "N selected" pill in actions:). Replaced with TeacherScreenHeader to
+// match the rest of the hierarchy. The "N selected" counter that used to
+// live in the AppBar's actions now sits as a small chip directly under
+// the header — same information, no colored bar needed to hold it.
 
 class CreatePersonalizedLessonQuizScreen extends StatefulWidget {
   final String groupId;
@@ -57,6 +65,60 @@ class _CreatePersonalizedLessonQuizScreenState
     _loadActivitiesAndTasks();
   }
 
+  // ─── Type label resolver ────────────────────────────────────────────────
+  // Mirrors task_list_screen.dart's _typeLabel() — without this, the raw
+  // 'type' string (image_select, arrange, etc.) was printed straight to
+  // the badge under each task, underscores and all.
+  //
+  // FLAG PARA CJ: este mapa ya le faltaban 'sound_match' y 'odd_one_out'
+  // desde antes de que empezara a tocar este archivo — no los agregué
+  // porque no formaba parte de lo pedido en su momento, pero un task de
+  // esos tipos va a mostrar el id crudo en vez de un label legible en
+  // este quiz. 'compare' y 'flashcard' fueron evaluados y descartados —
+  // ya no existen en el sistema, así que se quitaron de este mapa.
+  String _typeLabel(String type) {
+    const map = {
+      'image_select':         'Image Selection',
+      'image_select_reverse': 'Image Select Reverse',
+      'fill_blank':           'Fill the Blank',
+      'arrange':              'Arrange Words',
+      'complete_the_chat':    'Complete Chat',
+      'match':                'Match',
+      'reading':              'Reading',
+      'sentence_builder':     'Sentence Builder',
+      'repeat_after_me':      'Repeat After Me',
+      'listen_and_speak':     'Listen & Speak',
+    };
+    return map[type] ?? type;
+  }
+
+  // ─── Task display-text resolver ────────────────────────────────────────
+  // Mirrors task_list_screen.dart's _displayTitle(): 'title' is the
+  // mandatory field a teacher fills in per task and is what should
+  // identify it here. Falls back to 'question' (still valid for
+  // image_select / image_select_reverse / complete_the_chat, which use
+  // question as their natural label) and reading's nested data.title for
+  // tasks created before 'title' existed. Without this, every task type
+  // that never had a 'question' field (sentence_builder, arrange,
+  // fill_blank, match, listen_and_speak, repeat_after_me) always fell
+  // through to the literal string 'Untitled Task' here.
+  String _taskDisplayText(Map<String, dynamic> taskData) {
+    final title = taskData['title'] as String?;
+    if (title != null && title.trim().isNotEmpty) return title;
+
+    final type = taskData['type'] as String? ?? '';
+    if (type == 'reading') {
+      final inner = taskData['data'] as Map<String, dynamic>?;
+      final innerTitle = inner?['title'] as String?;
+      if (innerTitle != null && innerTitle.trim().isNotEmpty) return innerTitle;
+    }
+
+    final question = taskData['question'] as String?;
+    if (question != null && question.trim().isNotEmpty) return question;
+
+    return 'Untitled Task';
+  }
+
   Future<void> _loadActivitiesAndTasks() async {
     try {
       setState(() => isLoading = true);
@@ -85,9 +147,13 @@ class _CreatePersonalizedLessonQuizScreenState
         for (final taskDoc in tasksSnapshot.docs) {
           final taskData = taskDoc.data() as Map<String, dynamic>;
           tasks.add({
-            'id':       taskDoc.id,
-            'question': taskData['question'] ?? 'Untitled Task',
-            'type':     taskData['type'] ?? '',
+            'id':          taskDoc.id,
+            // Kept the key name 'question' so the rest of this file (and
+            // _buildActivityCard's task['question'] read below) doesn't
+            // need to change — but the VALUE now comes from the resolver
+            // above instead of only ever reading taskData['question'].
+            'question':    _taskDisplayText(taskData),
+            'type':        taskData['type'] ?? '',
           });
         }
         activityTasks[activityId] = tasks;
@@ -167,7 +233,7 @@ class _CreatePersonalizedLessonQuizScreenState
         );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Quiz updated successfully'), backgroundColor: Colors.green),
+            const SnackBar(content: Text('Quiz updated successfully'), backgroundColor: AppColors.success),
           );
           Navigator.pop(context);
         }
@@ -185,14 +251,14 @@ class _CreatePersonalizedLessonQuizScreenState
         );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('✅ Quiz "$title" created successfully'), backgroundColor: Colors.green),
+            SnackBar(content: Text('Quiz "$title" created successfully'), backgroundColor: AppColors.success),
           );
           Navigator.pop(context);
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger));
       }
     } finally {
       if (mounted) setState(() => isSaving = false);
@@ -212,36 +278,36 @@ class _CreatePersonalizedLessonQuizScreenState
     final c = widget.groupColor;
 
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
-      appBar: AppBar(
-        backgroundColor: c,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: Text(
-          widget.isEditing ? 'Edit Lesson Quiz' : 'Create Lesson Quiz',
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(right: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-              child: Text(
-                '${selectedQuestionIds.length} selected',
-                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-            ),
+      backgroundColor: AppColors.scaffoldBackground,
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: widget.isEditing ? 'Edit Lesson Quiz' : 'Create Lesson Quiz',
+            color: c,
           ),
-        ],
-      ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+          Expanded(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Selection counter chip ───────────────────────────────
+                  // Replaces the AppBar's "N selected" pill.
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+                      child: Text(
+                        '${selectedQuestionIds.length} selected',
+                        style: TextStyle(color: c, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+
                   // ── Title ────────────────────────────────────────────────
                   TextFormField(
                     controller: _titleController,
@@ -249,47 +315,47 @@ class _CreatePersonalizedLessonQuizScreenState
                       labelText: 'Quiz Title',
                       hintText: 'e.g., Lesson 1 Reinforcement Quiz',
                       prefixIcon: Icon(Icons.quiz_outlined, color: c),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c, width: 2)),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md), borderSide: BorderSide(color: AppColors.divider)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md), borderSide: BorderSide(color: c, width: 2)),
                       filled: true, fillColor: Colors.white,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.md),
 
                   // ── XP Reward ─────────────────────────────────────────────
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(color: Colors.amber.withOpacity(0.06), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.amber.withOpacity(0.35))),
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                    decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.06), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.warning.withOpacity(0.35))),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [
-                        const Icon(Icons.star_rounded, color: Colors.amber, size: 18),
+                        const Icon(Icons.star_rounded, color: AppColors.warning, size: 18),
                         const SizedBox(width: 8),
                         const Text('XP Reward (practice)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                         const Spacer(),
-                        Text('$_xpReward XP', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.amber)),
+                        Text('$_xpReward XP', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.warning)),
                       ]),
-                      Slider(value: _xpReward.toDouble(), min: 0, max: 10, divisions: 10, activeColor: Colors.amber, label: '$_xpReward XP', onChanged: (v) => setState(() => _xpReward = v.round())),
-                      const Text('Not graded — awarded on completion as practice bonus (max 10 XP)', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Slider(value: _xpReward.toDouble(), min: 0, max: 10, divisions: 10, activeColor: AppColors.warning, label: '$_xpReward XP', onChanged: (v) => setState(() => _xpReward = v.round())),
+                      const Text('Not graded — awarded on completion as practice bonus (max 10 XP)', style: TextStyle(fontSize: 11, color: AppColors.muted)),
                     ]),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.md),
 
                   // ── Info banner ───────────────────────────────────────────
                   Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(color: c.withOpacity(0.07), borderRadius: BorderRadius.circular(12), border: Border.all(color: c.withOpacity(0.2))),
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    decoration: BoxDecoration(color: c.withOpacity(0.07), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: c.withOpacity(0.2))),
                     child: Row(children: [
                       Icon(Icons.info_outline, color: c, size: 18),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text('Select tasks from your activities to include as reinforcement questions.', style: TextStyle(fontSize: 13, color: Colors.grey.shade700))),
+                      const SizedBox(width: AppSpacing.sm),
+                      const Expanded(child: Text('Select tasks from your activities to include as reinforcement questions.', style: TextStyle(fontSize: 13, color: Colors.black87))),
                     ]),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: AppSpacing.lg),
 
                   // ── Activities list header ────────────────────────────────
                   Row(children: [
-                    Text('Select Tasks', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
+                    const Text('Select Tasks', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -297,23 +363,23 @@ class _CreatePersonalizedLessonQuizScreenState
                       child: Text('${selectedQuestionIds.length} selected', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c)),
                     ),
                   ]),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.sm),
 
                   if (activities.isEmpty)
                     Padding(
                       padding: const EdgeInsets.all(40),
                       child: Column(children: [
-                        Icon(Icons.folder_open_outlined, size: 64, color: Colors.grey.shade300),
-                        const SizedBox(height: 16),
-                        Text('No activities found', style: TextStyle(fontSize: 15, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                        Icon(Icons.folder_open_outlined, size: 64, color: AppColors.divider),
+                        const SizedBox(height: AppSpacing.md),
+                        const Text('No activities found', style: TextStyle(fontSize: 15, color: AppColors.muted, fontWeight: FontWeight.w500)),
                         const SizedBox(height: 4),
-                        Text('Create activities in this lesson first', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
+                        const Text('Create activities in this lesson first', style: TextStyle(fontSize: 12, color: AppColors.muted)),
                       ]),
                     )
                   else
                     ...activities.map((activity) => _buildActivityCard(activity, c)),
 
-                  const SizedBox(height: 32),
+                  const SizedBox(height: AppSpacing.xl),
 
                   // ── Save button ───────────────────────────────────────────
                   SizedBox(
@@ -323,22 +389,25 @@ class _CreatePersonalizedLessonQuizScreenState
                       onPressed: isSaving ? null : _save,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: c,
-                        disabledBackgroundColor: Colors.grey.shade400,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        disabledBackgroundColor: AppColors.divider,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.lg)),
                         elevation: 0,
                       ),
                       child: isSaving
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: AppColors.onPrimary, strokeWidth: 2))
                           : Text(
                               widget.isEditing ? 'Save Changes' : 'Create Lesson Quiz',
-                              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                              style: const TextStyle(color: AppColors.onPrimary, fontSize: 16, fontWeight: FontWeight.bold),
                             ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.md),
                 ],
               ),
             ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -349,12 +418,12 @@ class _CreatePersonalizedLessonQuizScreenState
     final partialSelected = _isActivityPartiallySelected(activityId);
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: AppSpacing.md),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(
-          color: fullySelected ? c : (partialSelected ? c.withOpacity(0.4) : Colors.grey.shade200),
+          color: fullySelected ? c : (partialSelected ? c.withOpacity(0.4) : AppColors.divider),
           width: fullySelected ? 2 : 1.5,
         ),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 2))],
@@ -364,12 +433,12 @@ class _CreatePersonalizedLessonQuizScreenState
           // ── Activity header with checkbox ─────────────────────────────
           InkWell(
             onTap: () => _toggleActivity(activityId),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md)),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
               decoration: BoxDecoration(
                 color: fullySelected ? c.withOpacity(0.06) : Colors.grey.shade50,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md)),
               ),
               child: Row(children: [
                 // Custom checkbox indicator
@@ -381,19 +450,19 @@ class _CreatePersonalizedLessonQuizScreenState
                     border: Border.all(color: fullySelected ? c : Colors.grey.shade400, width: 2),
                   ),
                   child: fullySelected
-                      ? const Icon(Icons.check, size: 13, color: Colors.white)
+                      ? const Icon(Icons.check, size: 13, color: AppColors.onPrimary)
                       : partialSelected
                           ? Icon(Icons.remove, size: 13, color: c)
                           : null,
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(activity['title'] as String, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: fullySelected ? c : Colors.black87)),
-                    Text('${tasks.length} task${tasks.length != 1 ? 's' : ''}', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                    Text('${tasks.length} task${tasks.length != 1 ? 's' : ''}', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
                   ]),
                 ),
-                Icon(Icons.expand_more, color: Colors.grey.shade400, size: 18),
+                const Icon(Icons.expand_more, color: AppColors.muted, size: 18),
               ]),
             ),
           ),
@@ -402,7 +471,7 @@ class _CreatePersonalizedLessonQuizScreenState
           if (tasks.isNotEmpty) ...[
             Divider(height: 0, color: Colors.grey.shade100),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 8),
               child: Column(
                 children: tasks.map((task) {
                   final taskId    = task['id'] as String;
@@ -429,7 +498,7 @@ class _CreatePersonalizedLessonQuizScreenState
                             color: isSelected ? c : Colors.white,
                             border: Border.all(color: isSelected ? c : Colors.grey.shade400, width: 2),
                           ),
-                          child: isSelected ? const Icon(Icons.check, size: 11, color: Colors.white) : null,
+                          child: isSelected ? const Icon(Icons.check, size: 11, color: AppColors.onPrimary) : null,
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -439,7 +508,7 @@ class _CreatePersonalizedLessonQuizScreenState
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(4)),
-                              child: Text(taskType, style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                              child: Text(_typeLabel(taskType), style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
                             ),
                           ]),
                         ),

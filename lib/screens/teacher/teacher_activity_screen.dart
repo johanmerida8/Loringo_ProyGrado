@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_play_screen.dart';
 import 'package:loringo_app/screens/initials/quiz_lesson_play_screen.dart';
 import 'package:loringo_app/screens/initials/quiz_unit_play_screen.dart';
-import 'package:loringo_app/screens/teacher/task_list_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_task_editor_screen.dart';
 import 'package:lottie/lottie.dart';
 
 class TeacherActivityScreen extends StatefulWidget {
@@ -304,7 +304,7 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
             onPressed: () {
               Navigator.pop(context);
               Navigator.push(context, MaterialPageRoute(
-                builder: (_) => PersonalizedTaskListScreen(
+                builder: (_) => TeacherTaskEditorScreen(
                   groupId: widget.groupId,
                   contentId: item['contentId'],
                   unitId: item['unitId'],

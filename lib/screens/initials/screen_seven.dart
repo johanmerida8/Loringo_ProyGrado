@@ -1,16 +1,14 @@
 // screen_seven.dart
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-// import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
-import 'package:loringo_app/services/tts/tts_phonetic_service.dart';
+import 'package:loringo_app/services/tts/reading_tts_service.dart';
 
 enum _Phase { reading, questions }
 
@@ -24,6 +22,7 @@ class ScreenSeven extends StatefulWidget {
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
+  final bool isPracticeRound;
 
   const ScreenSeven({
     super.key,
@@ -36,6 +35,7 @@ class ScreenSeven extends StatefulWidget {
     required this.currentTaskNumber,
     required this.totalTasks,
     this.collectionName = 'content',
+    this.isPracticeRound = false,
   });
 
   @override
@@ -47,14 +47,14 @@ class _ScreenSevenState extends State<ScreenSeven>
   Map<String, dynamic>? _taskData;
   bool _loading = true;
 
-  final FlutterTts _tts = FlutterTts();
-  // Kept only for feedback sound effects (correct/incorrect chime) — no
-  // longer used for teacher voice recordings, since reading_task.dart no
-  // longer produces audioData/Cloudinary URLs.
-  // final AudioPlayer _feedbackPlayer = AudioPlayer();
-
+  bool _isLoadingAudio = false;
   bool _isSpeaking = false;
   bool _ttsCompleted = false;
+
+  // Word highlight: index into ReadingTtsService.currentWords of the word
+  // currently being spoken, or -1 if none/not tracked for this text.
+  int _highlightWordIndex = -1;
+  StreamSubscription<Duration>? _positionSub;
 
   _Phase _phase = _Phase.reading;
   int _currentPage = 0;
@@ -89,78 +89,42 @@ class _ScreenSevenState extends State<ScreenSeven>
     _pulseAnim = Tween<double>(begin: 0.82, end: 1.18).animate(
         CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
-    _initTts();
+    // Tracks playback position to figure out which word is currently
+    // being spoken, using the timings ReadingTtsService returns
+    // alongside the audio.
+    _positionSub = ReadingTtsService.positionStream.listen((position) {
+      if (!mounted || !_isSpeaking) return;
+      final ms = position.inMilliseconds;
+      final words = ReadingTtsService.currentWords;
+      int newIndex = -1;
+      for (int i = 0; i < words.length; i++) {
+        if (ms >= words[i].startMs && ms < words[i].endMs) {
+          newIndex = i;
+          break;
+        }
+      }
+      if (newIndex != _highlightWordIndex) {
+        setState(() => _highlightWordIndex = newIndex);
+      }
+    });
+
     _loadTask();
   }
 
   @override
   void dispose() {
-    _tts.stop();
-    // _feedbackPlayer.dispose();
+    _positionSub?.cancel();
+    ReadingTtsService.stop();
     _fadeCtrl.dispose();
     _pulseCtrl.dispose();
     _pageController.dispose();
     super.dispose();
   }
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
-  // en-GB / rate 0.45 / pitch 1.1 — matches the teacher-facing preview in
-  // reading_task.dart, so what the teacher hears there is what students
-  // hear here.
-
-  Future<void> _initTts() async {
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.45);
-    await _tts.setPitch(1.1);
-
-    // Same shared corrections used in the teacher preview — keeps
-    // pronunciation consistent between what the teacher heard while writing
-    // and what the student actually hears.
-    await TtsPhoneticService.instance.load();
-
-    try {
-      final voices = await _tts.getVoices;
-      if (voices != null) {
-        const preferredVoices = [
-          'en-gb-x-gbb-network', 'en-gb-language', 'en-gb'
-        ];
-        for (final name in preferredVoices) {
-          final match = (voices as List).firstWhere(
-            (v) => (v['name'] as String? ?? '').toLowerCase().contains(name),
-            orElse: () => null,
-          );
-          if (match != null) {
-            await _tts.setVoice(match);
-            break;
-          }
-        }
-      }
-    } catch (_) {}
-
-    _tts.setStartHandler(() {
-      if (mounted) setState(() => _isSpeaking = true);
-    });
-    _tts.setCompletionHandler(() {
-      if (mounted) {
-        setState(() {
-          _isSpeaking = false;
-          _ttsCompleted = true;
-        });
-        _tryAutoAdvance();
-      }
-    });
-    _tts.setCancelHandler(() {
-      if (mounted) setState(() => _isSpeaking = false);
-    });
-    _tts.setErrorHandler((_) {
-      if (mounted) setState(() => _isSpeaking = false);
-    });
-  }
-
   void _tryAutoAdvance() {
-    if (_phase != _Phase.reading || _currentPage <= 0) return;
-    final contentIdx = _currentPage - 1;
-    if (contentIdx < _pages.length - 1) {
+    if (_phase != _Phase.reading) return;
+    final totalPages = 1 + _pages.length;
+    if (_currentPage < totalPages - 1) {
       Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted && _phase == _Phase.reading) {
           _pageController.nextPage(
@@ -172,32 +136,79 @@ class _ScreenSevenState extends State<ScreenSeven>
     }
   }
 
-  // ── Speak (TTS only) ───────────────────────────────────────────────────────
-
   Future<void> _speak(String text) async {
     if (text.isEmpty) return;
-    await _tts.stop();
-    if (mounted) {
-      setState(() {
-        _isSpeaking = true;
-        _ttsCompleted = false;
-      });
+    setState(() {
+      _isLoadingAudio = true;
+      _isSpeaking = false;
+      _ttsCompleted = false;
+      _highlightWordIndex = -1;
+    });
+
+    final success = await ReadingTtsService.speak(
+      text,
+      onAudioReady: () {
+        if (!mounted) return;
+        setState(() {
+          _isLoadingAudio = false;
+          _isSpeaking = true;
+        });
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _isLoadingAudio = false;
+      _isSpeaking = false;
+      _ttsCompleted = success;
+      _highlightWordIndex = -1;
+    });
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              "Couldn't play narration -- check your connection and try again."),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
     }
-    final spokenText = TtsPhoneticService.instance.applyFixes(text);
-    await _tts.speak(spokenText);
+
+    _tryAutoAdvance();
   }
 
   Future<void> _stopTts() async {
-    await _tts.stop();
-    if (mounted) setState(() => _isSpeaking = false);
+    await ReadingTtsService.stop();
+    if (mounted) {
+      setState(() {
+        _isLoadingAudio = false;
+        _isSpeaking = false;
+        _highlightWordIndex = -1;
+      });
+    }
+  }
+
+  void _toggleSpeed() {
+    final next = ReadingTtsService.speed == ReadingSpeed.normal
+        ? ReadingSpeed.slow
+        : ReadingSpeed.normal;
+    ReadingTtsService.setSpeed(next);
+    setState(() {});
+
+    final currentText = _currentPage == 0
+        ? _title
+        : (_currentPage - 1 < _pages.length ? _pages[_currentPage - 1] : '');
+    if (currentText.isNotEmpty) _speak(currentText);
+
+    ReadingTtsService.prefetchPages(_pages);
   }
 
   Future<void> _handleClose() async {
     final shouldExit = await confirmExitTask(context);
     if (shouldExit && context.mounted) Navigator.pop(context);
   }
-
-  // ── Data ──────────────────────────────────────────────────────────────────
 
   Future<void> _loadTask() async {
     try {
@@ -215,6 +226,15 @@ class _ScreenSevenState extends State<ScreenSeven>
           _loading = false;
           _currentPage = 0;
         });
+
+        if (_pages.isNotEmpty && _phase == _Phase.reading) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _phase == _Phase.reading && _currentPage == 0) {
+              _speak(_title);
+            }
+          });
+          ReadingTtsService.prefetchPages(_pages);
+        }
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
@@ -236,10 +256,6 @@ class _ScreenSevenState extends State<ScreenSeven>
           ? _pages[_currentPage - 1]
           : '';
 
-  // 'title' is the canonical field, written by the current editor inside
-  // data. Falls back to the legacy top-level 'question' field for tasks
-  // created before this field existed, so old content still shows its title
-  // instead of the generic "Reading Passage" placeholder.
   String get _title {
     final data = _taskData?['data'] as Map<String, dynamic>?;
     final dataTitle = data?['title'] as String?;
@@ -268,8 +284,6 @@ class _ScreenSevenState extends State<ScreenSeven>
     });
   }
 
-  // ── Answer handling ───────────────────────────────────────────────────────
-
   void _selectAnswer(int index) async {
     if (_answered || _feedbackShown) return;
     _stopTts();
@@ -288,16 +302,11 @@ class _ScreenSevenState extends State<ScreenSeven>
     TaskResultSheet.show(
       context,
       isCorrect: isCorrect,
+      isPracticeRound: widget.isPracticeRound,
       buttonLabel: _currentQ < _questions.length - 1 ? 'CONTINUE' : 'FINISH',
-      // initialChildSize: 0.42,
-      // maxChildSize: 0.6,
       onContinue: _continueToNextQuestion,
     );
   }
-
-  // void _playFeedbackSound(bool correct) {
-  //   FeedbackSoundService.instance.playResult(correct);
-  // }
 
   void _continueToNextQuestion() {
     if (_currentQ < _questions.length - 1) {
@@ -316,52 +325,6 @@ class _ScreenSevenState extends State<ScreenSeven>
       widget.onTaskComplete(pass, _correctCount, wrong);
     }
   }
-
-  // void _showResultSheet(bool correct) {
-  //   showModalBottomSheet(
-  //     context: context,
-  //     backgroundColor: Colors.transparent,
-  //     isDismissible: false,
-  //     enableDrag: false,
-  //     isScrollControlled: true,
-  //     builder: (_) => DraggableScrollableSheet(
-  //       initialChildSize: 0.42, maxChildSize: 0.6, minChildSize: 0.42,
-  //       builder: (_, __) => Container(
-  //         padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-  //         decoration: const BoxDecoration(
-  //           color: Colors.white,
-  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-  //         ),
-  //         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-  //           Container(width: 40, height: 4,
-  //               decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
-  //           const SizedBox(height: 8),
-  //           Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
-  //           const SizedBox(height: 16),
-  //           SizedBox(
-  //             width: double.infinity,
-  //             child: ElevatedButton(
-  //               onPressed: () { Navigator.pop(context); _continueToNextQuestion(); },
-  //               style: ElevatedButton.styleFrom(
-  //                 backgroundColor: correct ? _green : Colors.orange,
-  //                 padding: const EdgeInsets.symmetric(vertical: 16),
-  //                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  //                 elevation: 5,
-  //               ),
-  //               child: Text(
-  //                 _currentQ < _questions.length - 1 ? 'CONTINUE' : 'FINISH',
-  //                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-  //               ),
-  //             ),
-  //           ),
-  //         ]),
-  //       ),
-  //     ),
-  //   );
-  // }
-
-  // ── Main build ────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -389,15 +352,16 @@ class _ScreenSevenState extends State<ScreenSeven>
         )),
       );
     }
-    return Scaffold(
-      backgroundColor: const Color(0xFFF3FBF3),
-      body: SafeArea(
-        child: _phase == _Phase.reading ? _buildReadingPhase() : _buildQuestionsPhase(),
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF3FBF3),
+        body: SafeArea(
+          child: _phase == _Phase.reading ? _buildReadingPhase() : _buildQuestionsPhase(),
+        ),
       ),
     );
   }
-
-  // ── Phase 1: Reading ──────────────────────────────────────────────────────
 
   Widget _buildReadingPhase() {
     final totalPages = 1 + _pages.length;
@@ -409,7 +373,13 @@ class _ScreenSevenState extends State<ScreenSeven>
           onPageChanged: (index) {
             setState(() => _currentPage = index);
             _stopTts();
-            if (index > 0) {
+            if (index == 0) {
+              Future.delayed(const Duration(milliseconds: 300), () {
+                if (mounted && _phase == _Phase.reading && _currentPage == 0) {
+                  _speak(_title);
+                }
+              });
+            } else {
               final contentIdx = index - 1;
               if (contentIdx < _pages.length) {
                 Future.delayed(const Duration(milliseconds: 300), () {
@@ -435,7 +405,89 @@ class _ScreenSevenState extends State<ScreenSeven>
             ),
           ),
         ),
+        Positioned(
+          top: 16, right: 16,
+          child: GestureDetector(
+            onTap: _toggleSpeed,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8)],
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(
+                  ReadingTtsService.speed == ReadingSpeed.slow
+                      ? Icons.slow_motion_video_rounded
+                      : Icons.speed_rounded,
+                  size: 18,
+                  color: _green,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  ReadingTtsService.speed == ReadingSpeed.slow ? 'Slow' : 'Normal',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _green),
+                ),
+              ]),
+            ),
+          ),
+        ),
       ]),
+    );
+  }
+
+  /// Builds the page text with the currently-spoken word highlighted.
+  /// Always renders through the same RichText/TextSpan tree -- even when
+  /// nothing is highlighted -- so the base text style (weight, size,
+  /// height) never changes between "no word active" and "word active"
+  /// states. Previously this fell back to a plain Text() widget when
+  /// _highlightWordIndex was -1, which used a different style resolution
+  /// path than the RichText branch and made the whole line visibly
+  /// flip between two different font weights/thicknesses every time
+  /// highlighting turned on/off -- that flicker, not the highlight
+  /// color itself, was the "stutter"/"thin vs bold" effect.
+  static const TextStyle _pageTextStyle = TextStyle(
+    fontSize: 18,
+    height: 1.8,
+    color: Colors.black87,
+    letterSpacing: 0.3,
+    fontWeight: FontWeight.normal,
+  );
+
+  Widget _buildHighlightedText(String pageText) {
+    final words = ReadingTtsService.currentWords;
+
+    if (words.isEmpty) {
+      return Text(pageText, style: _pageTextStyle, textAlign: TextAlign.center);
+    }
+
+    final spans = <TextSpan>[];
+    int searchStart = 0;
+    for (int i = 0; i < words.length; i++) {
+      final word = words[i].text;
+      final matchIdx = pageText.indexOf(word, searchStart);
+      if (matchIdx < 0) continue;
+
+      if (matchIdx > searchStart) {
+        spans.add(TextSpan(text: pageText.substring(searchStart, matchIdx)));
+      }
+      final isActive = _isSpeaking && i == _highlightWordIndex;
+      spans.add(TextSpan(
+        text: word,
+        style: isActive
+            ? TextStyle(backgroundColor: _green.withOpacity(0.25), color: const Color(0xFF1B5E20))
+            : null,
+      ));
+      searchStart = matchIdx + word.length;
+    }
+    if (searchStart < pageText.length) {
+      spans.add(TextSpan(text: pageText.substring(searchStart)));
+    }
+
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(style: _pageTextStyle, children: spans),
     );
   }
 
@@ -462,15 +514,12 @@ class _ScreenSevenState extends State<ScreenSeven>
                     child: const Icon(Icons.menu_book_rounded, size: 80, color: _green),
                   ),
                   const SizedBox(height: 40),
-                  Text(_title,
-                      style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold,
-                          color: Colors.black87, letterSpacing: 1, height: 1.3),
-                      textAlign: TextAlign.center),
+                  _buildHighlightedText(_title),
                   const SizedBox(height: 20),
                   Container(width: 60, height: 3,
                       decoration: BoxDecoration(color: _green, borderRadius: BorderRadius.circular(2))),
                   const SizedBox(height: 16),
-                  Text('Tap the play button to start reading',
+                  Text('Listen -- the story starts automatically',
                       style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
                 ] else ...[
                   Container(
@@ -481,21 +530,34 @@ class _ScreenSevenState extends State<ScreenSeven>
                         style: const TextStyle(fontSize: 14, color: _green, fontWeight: FontWeight.w600)),
                   ),
                   const SizedBox(height: 32),
-                  Text(pageText,
-                      style: const TextStyle(fontSize: 18, height: 1.8,
-                          color: Colors.black87, letterSpacing: 0.3),
-                      textAlign: TextAlign.center),
+                  _buildHighlightedText(pageText),
                 ],
               ],
             ),
           ),
         ),
 
-        // Play / stop floating button
+        if (_isLoadingAudio)
+          Positioned(
+            bottom: 92, right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Preparing narration...',
+                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+
         Positioned(
           bottom: 24, right: 24,
           child: GestureDetector(
             onTap: () {
+              if (_isLoadingAudio) return;
               if (_isSpeaking) {
                 _stopTts();
               } else {
@@ -505,32 +567,46 @@ class _ScreenSevenState extends State<ScreenSeven>
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              width: _isSpeaking ? 50 : 56,
-              height: _isSpeaking ? 50 : 56,
+              width: (_isSpeaking || _isLoadingAudio) ? 50 : 56,
+              height: (_isSpeaking || _isLoadingAudio) ? 50 : 56,
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: _isSpeaking
-                    ? [Colors.orange.shade400, Colors.orange.shade600]
-                    : [_green, _green.withOpacity(0.8)]),
+                gradient: LinearGradient(colors: _isLoadingAudio
+                    ? [Colors.blueGrey.shade300, Colors.blueGrey.shade400]
+                    : _isSpeaking
+                        ? [Colors.orange.shade400, Colors.orange.shade600]
+                        : [_green, _green.withOpacity(0.8)]),
                 shape: BoxShape.circle,
                 boxShadow: [BoxShadow(
-                    color: (_isSpeaking ? Colors.orange : _green).withOpacity(0.3),
+                    color: (_isLoadingAudio
+                            ? Colors.blueGrey
+                            : _isSpeaking ? Colors.orange : _green)
+                        .withOpacity(0.3),
                     blurRadius: 12, offset: const Offset(0, 4))],
               ),
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
-                child: _isSpeaking
-                    ? ScaleTransition(
-                        scale: _pulseAnim,
-                        child: const Icon(Icons.graphic_eq_rounded,
-                            key: ValueKey('speaking'), color: Colors.white, size: 28))
-                    : const Icon(Icons.play_arrow_rounded,
-                        key: ValueKey('play'), color: Colors.white, size: 30),
+                child: _isLoadingAudio
+                    ? const SizedBox(
+                        key: ValueKey('loading'),
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : _isSpeaking
+                        ? ScaleTransition(
+                            scale: _pulseAnim,
+                            child: const Icon(Icons.graphic_eq_rounded,
+                                key: ValueKey('speaking'), color: Colors.white, size: 28))
+                        : const Icon(Icons.play_arrow_rounded,
+                            key: ValueKey('play'), color: Colors.white, size: 30),
               ),
             ),
           ),
         ),
 
-        // Answer Questions button — last content page only
         if (!isTitlePage && contentIdx == _pages.length - 1)
           Positioned(
             bottom: 24, left: 0, right: 0,
@@ -559,8 +635,6 @@ class _ScreenSevenState extends State<ScreenSeven>
       ]),
     );
   }
-
-  // ── Phase 2: Questions ────────────────────────────────────────────────────
 
   Widget _buildQuestionsPhase() {
     if (_questions.isEmpty) {

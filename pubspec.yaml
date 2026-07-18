@@ -66,6 +66,7 @@ dependencies:
   record: ^6.2.1
   audioplayers: ^6.7.1
   cloud_functions: ^6.3.3
+  flutter_edge_tts: ^0.0.2
   
 dev_dependencies:
   flutter_test:

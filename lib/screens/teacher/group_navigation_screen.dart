@@ -128,6 +128,25 @@ class _TeacherGroupDetailsScreenState
       _settingsYear   != _originalYear ||
       _settingsColor.value != _originalColor.value;
 
+  /// Same duplicate-name rule as group creation (see CreateGroupModal in
+  /// teacher_home_screen.dart): no two groups belonging to this teacher
+  /// may share a name, case-insensitive, regardless of academic year.
+  /// The only difference here is scope — this group's own document must
+  /// be excluded from the comparison, otherwise renaming would always
+  /// "collide" with itself.
+  Future<bool> _nameAlreadyExistsElsewhere(String name, String teacherId) async {
+    final normalized = name.trim().toLowerCase();
+    final snap = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .where('teacherId', isEqualTo: teacherId)
+        .get();
+    return snap.docs.any((doc) {
+      if (doc.id == widget.groupId) return false;
+      final existingName = (doc.data()['name'] as String? ?? '').trim().toLowerCase();
+      return existingName == normalized;
+    });
+  }
+
   Future<void> _saveGroupSettings() async {
     final name = _settingsNameController.text.trim();
     if (name.isEmpty) return;
@@ -138,7 +157,24 @@ class _TeacherGroupDetailsScreenState
       ));
       return;
     }
+
+    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    if (teacherId == null) return;
+
     setState(() => _savingSettings = true);
+
+    final duplicate = await _nameAlreadyExistsElsewhere(name, teacherId);
+    if (duplicate) {
+      if (mounted) {
+        setState(() => _savingSettings = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('You already have a group named "$name". Choose a different name.'),
+          backgroundColor: AppColors.danger,
+        ));
+      }
+      return;
+    }
+
     final colorHex =
         '#${_settingsColor.value.toRadixString(16).substring(2).toUpperCase()}';
     try {

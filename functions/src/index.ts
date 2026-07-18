@@ -19,3 +19,4 @@ export * from "./notifications";
 export * from "./email";
 export * from "./resetPassword";
 export * from "./moderateImage";
+export * from "./generateReadingAudio";

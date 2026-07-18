@@ -2,7 +2,26 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/create_lesson_quiz_screen.dart';
 import 'package:loringo_app/screens/teacher/create_unit_quiz_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
+
+// ── QuizManagementScreen ────────────────────────────────────────────────────
+//
+// NOTE: previously had a Scaffold.appBar (solid `groupColor` bar) plus a
+// mix of hardcoded Colors.red/blue/amber/purple scattered across the type
+// banner, badges and stat chips — inconsistent with the rest of the
+// content hierarchy (which uses TeacherScreenHeader, no AppBar) and with
+// the "use AppColors tokens exclusively" rule. Both are fixed here:
+//   • AppBar removed → TeacherScreenHeader, matching Unit/Lesson/Activity/
+//     Task editor screens and the flat "My Groups" look.
+//   • Every hardcoded color replaced with an AppColors token, card shadow
+//     replaced with AppShadows.card. The two semantic states this screen
+//     needs (graded/unit-test vs practice/lesson-quiz) are expressed with
+//     AppColors.danger and AppColors.info respectively — danger for
+//     "graded, counts toward reports" carries the right visual weight
+//     without introducing a new ad-hoc color, and info is already the
+//     palette's designated "informational/practice" hue.
 
 enum QuizManagementType { lesson, unit }
 
@@ -50,65 +69,71 @@ class QuizManagementScreen extends StatelessWidget {
         : db.getUnitQuizzesStream(contentId, unitId);
 
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
-      appBar: AppBar(
-        backgroundColor: groupColor,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_screenTitle, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-            Text(title, style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 13)),
-          ],
-        ),
-      ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: stream,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      backgroundColor: AppColors.scaffoldBackground,
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: _screenTitle,
+            subtitle: title,
+            color: groupColor,
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: stream,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-          final quizzes = snapshot.data!.docs;
+                final quizzes = snapshot.data!.docs;
 
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
-            children: [
-              // ── Type explanation banner ──────────────────────────────────
-              _TypeBanner(isLesson: _isLesson, color: groupColor),
-              const SizedBox(height: 20),
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md, AppSpacing.sm, AppSpacing.md, 100),
+                  children: [
+                    // ── Type explanation banner ──────────────────────────
+                    _TypeBanner(isLesson: _isLesson, color: groupColor),
+                    const SizedBox(height: AppSpacing.lg),
 
-              if (quizzes.isEmpty)
-                _EmptyState(label: _emptyLabel, subtitle: _emptySubtitle, icon: _isLesson ? Icons.quiz_outlined : Icons.assignment_outlined, color: groupColor)
-              else ...[
-                Text(
-                  '${quizzes.length} ${quizzes.length == 1 ? 'quiz' : 'quizzes'} created',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 12),
-                ...quizzes.map((doc) => _QuizCard(
-                  doc: doc,
-                  type: type,
-                  groupId: groupId,
-                  contentId: contentId,
-                  unitId: unitId,
-                  lessonId: lessonId,
-                  groupColor: groupColor,
-                  db: db,
-                )),
-              ],
-            ],
-          );
-        },
+                    if (quizzes.isEmpty)
+                      _EmptyState(
+                        label: _emptyLabel,
+                        subtitle: _emptySubtitle,
+                        icon: _isLesson ? Icons.quiz_outlined : Icons.assignment_outlined,
+                        color: groupColor,
+                      )
+                    else ...[
+                      Text(
+                        '${quizzes.length} ${quizzes.length == 1 ? 'quiz' : 'quizzes'} created',
+                        style: const TextStyle(
+                            fontSize: 13, color: AppColors.muted, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      ...quizzes.map((doc) => _QuizCard(
+                        doc: doc,
+                        type: type,
+                        groupId: groupId,
+                        contentId: contentId,
+                        unitId: unitId,
+                        lessonId: lessonId,
+                        groupColor: groupColor,
+                        db: db,
+                      )),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: groupColor,
         elevation: 3,
-        icon: const Icon(Icons.add, color: Colors.white),
+        icon: const Icon(Icons.add, color: AppColors.onPrimary),
         label: Text(
           _isLesson ? 'New Lesson Quiz' : 'New Unit Test',
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
         ),
         onPressed: () => _navigateToCreate(context, db),
       ),
@@ -144,10 +169,10 @@ class _TypeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: color.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(color: color.withOpacity(0.2)),
       ),
       child: Row(children: [
@@ -156,7 +181,7 @@ class _TypeBanner extends StatelessWidget {
           decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
           child: Icon(isLesson ? Icons.quiz_outlined : Icons.assignment_outlined, color: color, size: 22),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: AppSpacing.md),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
@@ -168,7 +193,7 @@ class _TypeBanner extends StatelessWidget {
               isLesson
                   ? 'Not graded — reuses your activity tasks as reinforcement. Awards up to 10 XP on completion.'
                   : 'Graded exam — teacher-written multiple choice questions. Score reported to parents. Awards up to 100 XP on passing.',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.4),
+              style: const TextStyle(fontSize: 12, color: AppColors.muted, height: 1.4),
             ),
           ]),
         ),
@@ -198,15 +223,18 @@ class _EmptyState extends StatelessWidget {
             decoration: BoxDecoration(color: color.withOpacity(0.08), shape: BoxShape.circle),
             child: Icon(icon, size: 52, color: color.withOpacity(0.5)),
           ),
-          const SizedBox(height: 20),
-          Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 17, color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.lg),
+          Text(label, textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 17, color: Colors.black87, fontWeight: FontWeight.w600)),
+          const SizedBox(height: AppSpacing.sm),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(subtitle, textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: Colors.grey.shade500, height: 1.4)),
+            child: Text(subtitle, textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: AppColors.muted, height: 1.4)),
           ),
-          const SizedBox(height: 8),
-          Text('Tap the button below to create one', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
+          const SizedBox(height: AppSpacing.sm),
+          const Text('Tap the button below to create one',
+              style: TextStyle(fontSize: 12, color: AppColors.muted)),
         ],
       ),
     );
@@ -245,22 +273,26 @@ class _QuizCard extends StatelessWidget {
         ? (data['questionIds'] as List?)?.length ?? 0
         : (data['totalQuestions'] as num?)?.toInt() ?? 0;
 
+    // Semantic color for graded vs practice — danger carries the visual
+    // weight of "counts toward a report", info marks "practice only".
+    final typeColor = isGraded ? AppColors.danger : AppColors.info;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: AppSpacing.md),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(color: groupColor.withOpacity(0.15), width: 1.5),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: AppShadows.card,
       ),
       child: Column(
         children: [
           // ── Header ─────────────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, 10, AppSpacing.sm),
             decoration: BoxDecoration(
               color: groupColor.withOpacity(0.05),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md)),
               border: Border(bottom: BorderSide(color: groupColor.withOpacity(0.1))),
             ),
             child: Row(children: [
@@ -269,7 +301,7 @@ class _QuizCard extends StatelessWidget {
                 decoration: BoxDecoration(color: groupColor.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
                 child: Icon(isGraded ? Icons.assignment_outlined : Icons.quiz_outlined, color: groupColor, size: 20),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
@@ -277,12 +309,12 @@ class _QuizCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
-                      color: isGraded ? Colors.red.withOpacity(0.08) : Colors.blue.withOpacity(0.08),
+                      color: typeColor.withOpacity(0.08),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
                       isGraded ? 'Graded · Unit Test' : 'Practice · Lesson Quiz',
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: isGraded ? Colors.red.shade700 : Colors.blue.shade700),
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: typeColor),
                     ),
                   ),
                 ]),
@@ -298,7 +330,7 @@ class _QuizCard extends StatelessWidget {
               const SizedBox(width: 4),
               // Delete button
               IconButton(
-                icon: Icon(Icons.delete_outline, color: Colors.red.shade400, size: 20),
+                icon: const Icon(Icons.delete_outline, color: AppColors.danger, size: 20),
                 tooltip: 'Delete',
                 onPressed: () => _confirmDelete(context),
                 padding: const EdgeInsets.all(6),
@@ -309,14 +341,14 @@ class _QuizCard extends StatelessWidget {
 
           // ── Stats row ──────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
             child: Row(children: [
               _StatChip(icon: Icons.help_outline, label: '$qCount questions', color: groupColor),
               const SizedBox(width: 8),
-              _StatChip(icon: Icons.star_rounded, label: '$xp XP', color: Colors.amber.shade700),
+              _StatChip(icon: Icons.star_rounded, label: '$xp XP', color: AppColors.warning),
               if (isGraded) ...[
                 const SizedBox(width: 8),
-                _StatChip(icon: Icons.check_circle_outline, label: 'Pass: $passing/$qCount', color: Colors.green.shade700),
+                _StatChip(icon: Icons.check_circle_outline, label: 'Pass: $passing/$qCount', color: AppColors.success),
               ],
             ]),
           ),
@@ -352,14 +384,14 @@ class _QuizCard extends StatelessWidget {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.lg)),
         title: const Text('Delete Quiz', style: TextStyle(fontWeight: FontWeight.bold)),
         content: const Text('This quiz will be permanently deleted. This cannot be undone.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
             child: const Text('Delete', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
@@ -376,7 +408,7 @@ class _QuizCard extends StatelessWidget {
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Quiz deleted'), backgroundColor: Colors.red),
+          const SnackBar(content: Text('Quiz deleted'), backgroundColor: AppColors.danger),
         );
       }
     } catch (e) {

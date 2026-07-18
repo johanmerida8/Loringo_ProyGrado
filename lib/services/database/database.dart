@@ -388,7 +388,7 @@ class Database {
       personalizedContent.where('assignedTo', arrayContains: groupId).snapshots();
   
   Stream<QuerySnapshot> getTeacherContentStream(String teacherId) =>
-      personalizedContent.where('teacherId', isEqualTo: teacherId).orderBy('createdAt', descending: true).snapshots();
+      personalizedContent.where('teacherId', isEqualTo: teacherId).orderBy('order').snapshots();
   
   Future<void> assignContentToGroup({required String contentId, required String groupId}) =>
       personalizedContent.doc(contentId).update({'assignedTo': FieldValue.arrayUnion([groupId]), 'assignedAt': FieldValue.serverTimestamp()});
@@ -413,7 +413,36 @@ class Database {
         'updatedAt': FieldValue.serverTimestamp(),
       });
   
-  Future<void> deletePersonalizedContent(String contentId) => personalizedContent.doc(contentId).delete();
+  /// Deletes a content item, then closes the gap left in the teacher's
+  /// content sequence: every other content belonging to the same teacher
+  /// with a higher 'order' gets shifted down by 1 (e.g. 1,2,3,4 minus
+  /// item 2 becomes 1,2,3, not 1,3,4). Sibling scope is teacherId, not
+  /// assignedTo — a content can be assigned to multiple groups, but it
+  /// only ever has one position in its owning teacher's list.
+  Future<void> deletePersonalizedContent(String contentId) async {
+    final doc = await personalizedContent.doc(contentId).get();
+    if (!doc.exists) return;
+    final data = doc.data() as Map<String, dynamic>;
+    final teacherId = data['teacherId'] as String?;
+    final deletedOrder = data['order'] as int?;
+
+    await personalizedContent.doc(contentId).delete();
+
+    if (teacherId == null || deletedOrder == null) return;
+
+    final siblingsAfter = await personalizedContent
+        .where('teacherId', isEqualTo: teacherId)
+        .where('order', isGreaterThan: deletedOrder)
+        .get();
+    if (siblingsAfter.docs.isEmpty) return;
+
+    final batch = _db.batch();
+    for (final sibling in siblingsAfter.docs) {
+      final currentOrder = (sibling.data() as Map<String, dynamic>)['order'] as int? ?? 0;
+      batch.update(sibling.reference, {'order': currentOrder - 1});
+    }
+    await batch.commit();
+  }
 
   // =========================
   // UNITS / LESSONS / ACTIVITIES / TASKS
@@ -434,7 +463,31 @@ class Database {
   Future<void> updatePersonalizedUnit({required String groupId, required String contentId, required String unitId, required String title, required int order}) =>
       personalizedUnits(contentId).doc(unitId).update({'title': title, 'order': order});
   
-  Future<void> deletePersonalizedUnit(String groupId, String contentId, String unitId) => personalizedUnits(contentId).doc(unitId).delete();
+  /// Deletes a unit, then closes the gap in that content's unit sequence
+  /// (siblings scoped to the same contentId). See
+  /// deletePersonalizedContent for the general pattern this follows.
+  Future<void> deletePersonalizedUnit(String groupId, String contentId, String unitId) async {
+    final ref = personalizedUnits(contentId).doc(unitId);
+    final doc = await ref.get();
+    if (!doc.exists) return;
+    final deletedOrder = (doc.data() as Map<String, dynamic>)['order'] as int?;
+
+    await ref.delete();
+
+    if (deletedOrder == null) return;
+
+    final siblingsAfter = await personalizedUnits(contentId)
+        .where('order', isGreaterThan: deletedOrder)
+        .get();
+    if (siblingsAfter.docs.isEmpty) return;
+
+    final batch = _db.batch();
+    for (final sibling in siblingsAfter.docs) {
+      final currentOrder = (sibling.data() as Map<String, dynamic>)['order'] as int? ?? 0;
+      batch.update(sibling.reference, {'order': currentOrder - 1});
+    }
+    await batch.commit();
+  }
 
   Future<void> createPersonalizedLesson({required String groupId, required String contentId, required String unitId, required String lessonId, required String title, required int order}) =>
       personalizedLessons(contentId, unitId).doc(lessonId).set({'title': title, 'order': order, 'createdAt': FieldValue.serverTimestamp()});
@@ -446,7 +499,31 @@ class Database {
   Future<void> updatePersonalizedLesson({required String groupId, required String contentId, required String unitId, required String lessonId, required String title, required int order}) =>
       personalizedLessons(contentId, unitId).doc(lessonId).update({'title': title, 'order': order});
   
-  Future<void> deletePersonalizedLesson(String groupId, String contentId, String unitId, String lessonId) => personalizedLessons(contentId, unitId).doc(lessonId).delete();
+  /// Deletes a lesson, then closes the gap in that unit's lesson sequence
+  /// (siblings scoped to the same contentId + unitId). See
+  /// deletePersonalizedContent for the general pattern this follows.
+  Future<void> deletePersonalizedLesson(String groupId, String contentId, String unitId, String lessonId) async {
+    final ref = personalizedLessons(contentId, unitId).doc(lessonId);
+    final doc = await ref.get();
+    if (!doc.exists) return;
+    final deletedOrder = (doc.data() as Map<String, dynamic>)['order'] as int?;
+
+    await ref.delete();
+
+    if (deletedOrder == null) return;
+
+    final siblingsAfter = await personalizedLessons(contentId, unitId)
+        .where('order', isGreaterThan: deletedOrder)
+        .get();
+    if (siblingsAfter.docs.isEmpty) return;
+
+    final batch = _db.batch();
+    for (final sibling in siblingsAfter.docs) {
+      final currentOrder = (sibling.data() as Map<String, dynamic>)['order'] as int? ?? 0;
+      batch.update(sibling.reference, {'order': currentOrder - 1});
+    }
+    await batch.commit();
+  }
 
   Future<void> createPersonalizedActivity({
     required String groupId,
@@ -495,8 +572,65 @@ class Database {
         'difficulty': difficulty ?? 'easy',
       });
   
-  Future<void> deletePersonalizedActivity(String groupId, String contentId, String unitId, String lessonId, String activityId) =>
-      personalizedActivities(contentId, unitId, lessonId).doc(activityId).delete();
+  /// Deletes an activity, then:
+  /// 1. Closes the gap in that lesson's activity sequence (siblings
+  ///    scoped to the same contentId + unitId + lessonId) — same pattern
+  ///    as the other delete* methods.
+  /// 2. If the deleted activity was the chain's entry point
+  ///    (requiredActivityId == null / "Always Unlocked"), whichever
+  ///    activity had this one as ITS requiredActivityId inherits null,
+  ///    becoming the new entry point. Without this, that dependent
+  ///    activity would be left pointing at a deleted doc — effectively
+  ///    unreachable, since nothing can ever satisfy a prerequisite that
+  ///    no longer exists.
+  ///
+  ///    This only ever applies going one link forward: if the deleted
+  ///    activity itself required something further back in the chain
+  ///    (i.e. it was NOT the entry point), nothing here needs fixing —
+  ///    every other activity's prerequisite still points at a document
+  ///    that still exists. Only the entry-point case creates a dangling
+  ///    reference.
+  ///
+  ///    In the rare case where more than one activity ended up pointing
+  ///    at the deleted entry point (only possible from data created
+  ///    before the one-entry-point validation existed), only the first
+  ///    match found is promoted to null; any others are left as-is —
+  ///    picking a "correct" one among several isn't a decision this
+  ///    method should make silently.
+  Future<void> deletePersonalizedActivity(String groupId, String contentId, String unitId, String lessonId, String activityId) async {
+    final ref = personalizedActivities(contentId, unitId, lessonId).doc(activityId);
+    final doc = await ref.get();
+    if (!doc.exists) return;
+    final data = doc.data() as Map<String, dynamic>;
+    final deletedOrder = data['order'] as int?;
+    final wasEntryPoint = data['requiredActivityId'] == null;
+
+    await ref.delete();
+
+    if (wasEntryPoint) {
+      final dependent = await personalizedActivities(contentId, unitId, lessonId)
+          .where('requiredActivityId', isEqualTo: activityId)
+          .limit(1)
+          .get();
+      if (dependent.docs.isNotEmpty) {
+        await dependent.docs.first.reference.update({'requiredActivityId': null});
+      }
+    }
+
+    if (deletedOrder == null) return;
+
+    final siblingsAfter = await personalizedActivities(contentId, unitId, lessonId)
+        .where('order', isGreaterThan: deletedOrder)
+        .get();
+    if (siblingsAfter.docs.isEmpty) return;
+
+    final batch = _db.batch();
+    for (final sibling in siblingsAfter.docs) {
+      final currentOrder = (sibling.data() as Map<String, dynamic>)['order'] as int? ?? 0;
+      batch.update(sibling.reference, {'order': currentOrder - 1});
+    }
+    await batch.commit();
+  }
 
   Future<void> createPersonalizedTask({
     required String groupId,
@@ -506,24 +640,26 @@ class Database {
     required String activityId,
     required String taskId,
     required String type,
+    required String title,
     required String question,
     required int order,
     required Map<String, dynamic> data,
   }) =>
       personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).set({
         'type': type,
+        'title': title,
         'question': question,
         'order': order,
         'data': data,
         'createdAt': FieldValue.serverTimestamp(),
       });
-  
+
   Future<QuerySnapshot> getPersonalizedTasks(String groupId, String contentId, String unitId, String lessonId, String activityId) =>
       personalizedTasks(contentId, unitId, lessonId, activityId).orderBy('order').get();
-  
+
   Stream<QuerySnapshot> getPersonalizedTasksStream(String groupId, String contentId, String unitId, String lessonId, String activityId) =>
       personalizedTasks(contentId, unitId, lessonId, activityId).orderBy('order').snapshots();
-  
+
   Future<void> updatePersonalizedTask({
     required String groupId,
     required String contentId,
@@ -532,19 +668,45 @@ class Database {
     required String activityId,
     required String taskId,
     required String type,
+    required String title,
     required String question,
     required int order,
     required Map<String, dynamic> data,
   }) =>
       personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).update({
         'type': type,
+        'title': title,
         'question': question,
         'order': order,
         'data': data,
       });
-  
-  Future<void> deletePersonalizedTask(String groupId, String contentId, String unitId, String lessonId, String activityId, String taskId) =>
-      personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId).delete();
+
+  /// Deletes a task, then closes the gap in that activity's task sequence
+  /// (siblings scoped to the same contentId + unitId + lessonId +
+  /// activityId). See deletePersonalizedContent for the general pattern
+  /// this follows.
+  Future<void> deletePersonalizedTask(String groupId, String contentId, String unitId, String lessonId, String activityId, String taskId) async {
+    final ref = personalizedTasks(contentId, unitId, lessonId, activityId).doc(taskId);
+    final doc = await ref.get();
+    if (!doc.exists) return;
+    final deletedOrder = (doc.data() as Map<String, dynamic>)['order'] as int?;
+
+    await ref.delete();
+
+    if (deletedOrder == null) return;
+
+    final siblingsAfter = await personalizedTasks(contentId, unitId, lessonId, activityId)
+        .where('order', isGreaterThan: deletedOrder)
+        .get();
+    if (siblingsAfter.docs.isEmpty) return;
+
+    final batch = _db.batch();
+    for (final sibling in siblingsAfter.docs) {
+      final currentOrder = (sibling.data() as Map<String, dynamic>)['order'] as int? ?? 0;
+      batch.update(sibling.reference, {'order': currentOrder - 1});
+    }
+    await batch.commit();
+  }
 
   // =========================
   // ACTIVITY TASKS

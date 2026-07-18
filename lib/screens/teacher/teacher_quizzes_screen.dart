@@ -1,4 +1,10 @@
 // teacher_quizzes_screen.dart
+//
+// Sin cambios respecto a tu versión original: ya delega correctamente a
+// QuizzesTab sin AppBar propio. Se incluye aquí solo para que el set de
+// archivos de esta entrega quede completo y no haya que ir a buscarlo por
+// separado.
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/group_details/quizzes_tab.dart';

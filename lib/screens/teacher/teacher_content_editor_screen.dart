@@ -1,17 +1,40 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/teacher/content_details_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_unit_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/create_content_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_confirm_dialog.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/content/content_assignment_guard.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-// ── TeacherContentScreen ──────────────────────────────────────────────────────
+// ── TeacherContentEditorScreen ─────────────────────────────────────────────
 // Lista de todos los contenidos del docente, sin estados de aprobación
+//
+// NOTE: this screen previously had its own Scaffold.appBar (a solid green
+// bar) plus a separate colored stats strip below it. Both are removed here
+// to match the flat, no-AppBar look applied across the rest of the content
+// hierarchy (Unit/Lesson/Activity/Task editor screens) — this is the entry
+// point of that hierarchy, so it needs the same treatment, not an
+// exception. TeacherScreenHeader replaces the AppBar; the "N Total
+// Content" badge that used to live inside the green strip now sits as a
+// plain inline chip directly under the header, on the scaffold background.
+//
+// ASSIGNMENT SAFETY: teachers can build content incrementally and assign
+// it as soon as it has anything usable — there is no completeness gate.
+// A teacher is expected to start with one Unit and one Lesson, publish it,
+// and keep adding more over time, including after a group is already
+// using it. The only thing this screen still guards is the assign sheet's
+// per-group checkbox: ContentAssignmentGuard disables unchecking a group
+// that already has recorded student progress for this content (hard
+// block, no override path — see content_assignment_guard.dart). That
+// guard is scoped per (contentId, groupId) pair, so a content already in
+// progress with one group can still be freely assigned to or unassigned
+// from a different, parallel group with no progress of its own.
 
-class TeacherContentScreen extends StatelessWidget {
-  const TeacherContentScreen({super.key});
+class TeacherContentEditorScreen extends StatelessWidget {
+  const TeacherContentEditorScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -32,14 +55,7 @@ class _Body extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F7),
-      appBar: AppBar(
-        backgroundColor: _green,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text('My Content',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
-      ),
+      backgroundColor: AppColors.scaffoldBackground,
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: _green,
         foregroundColor: Colors.white,
@@ -48,71 +64,75 @@ class _Body extends StatelessWidget {
         onPressed: () => Navigator.push(context,
             MaterialPageRoute(builder: (_) => const CreatePersonalizedContentScreen())),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: Database().getTeacherContentStream(teacherId),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: _green));
-          }
-          final docs = snapshot.data?.docs ?? [];
+      body: Column(
+        children: [
+          const TeacherScreenHeader(
+            title: 'My Content',
+            color: _green,
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: Database().getTeacherContentStream(teacherId),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: _green));
+                }
+                final docs = snapshot.data?.docs ?? [];
 
-          if (docs.isEmpty) {
-            return _EmptyState(onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const CreatePersonalizedContentScreen())));
-          }
+                if (docs.isEmpty) {
+                  return _EmptyState(onTap: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const CreatePersonalizedContentScreen())));
+                }
 
-          return CustomScrollView(
-            slivers: [
-              // ── Stats header ───────────────────────────────────────────
-              SliverToBoxAdapter(
-                child: Container(
-                  color: _green,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                  child: Row(children: [
-                    _statBadge('${docs.length}', 'Total Content', Colors.white, _green),
-                  ]),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Container(
-                  height: 20,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF5F5F7),
-                    borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(20), topRight: Radius.circular(20)),
-                  ),
-                ),
-              ),
+                return CustomScrollView(
+                  slivers: [
+                    // ── Stats badge ────────────────────────────────────
+                    // Was previously a colored strip (Container(color:
+                    // _green, ...)); now a plain inline chip sitting on
+                    // the scaffold background, consistent with the
+                    // no-AppBar/no-colored-bar rule.
+                    // SliverToBoxAdapter(
+                    //   child: Padding(
+                    //     padding: const EdgeInsets.fromLTRB(
+                    //         AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+                    //     child: Row(children: [
+                    //       _statBadge('${docs.length}', 'Total Content'),
+                    //     ]),
+                    //   ),
+                    // ),
 
-              // ── Content list ──────────────────────────────────────────
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final doc = docs[index];
-                      return _ContentCard(doc: doc, teacherId: teacherId);
-                    },
-                    childCount: docs.length,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+                    // ── Content list ──────────────────────────────────
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final doc = docs[index];
+                            return _ContentCard(doc: doc, teacherId: teacherId);
+                          },
+                          childCount: docs.length,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  static Widget _statBadge(String value, String label, Color bg, Color fg) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-    decoration: BoxDecoration(color: bg.withOpacity(0.25), borderRadius: BorderRadius.circular(20)),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Text(value, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-      const SizedBox(width: 5),
-      Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
-    ]),
-  );
+  // static Widget _statBadge(String value, String label) => Container(
+  //   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+  //   decoration: BoxDecoration(color: AppColors.primarySoft(0.1), borderRadius: BorderRadius.circular(20)),
+  //   child: Row(mainAxisSize: MainAxisSize.min, children: [
+  //     Text(value, style: const TextStyle(color: _green, fontWeight: FontWeight.bold, fontSize: 15)),
+  //     const SizedBox(width: 5),
+  //     Text(label, style: TextStyle(color: _green.withOpacity(0.75), fontSize: 11)),
+  //   ]),
+  // );
 }
 
 // ── Content card ──────────────────────────────────────────────────────────────
@@ -126,17 +146,17 @@ class _ContentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final data       = doc.data() as Map<String, dynamic>;
-    final title      = data['title']    as String? ?? 'Untitled';
-    final ageGroup   = data['ageGroup'] as String? ?? '';
-    final desc       = data['description'] as String? ?? '';
-    final assignedTo = (data['assignedTo'] as List?)?.cast<String>() ?? [];
-    final initial    = title.isNotEmpty ? title[0].toUpperCase() : '#';
+    final data        = doc.data() as Map<String, dynamic>;
+    final title       = data['title']    as String? ?? 'Untitled';
+    final ageGroup    = data['ageGroup'] as String? ?? '';
+    final desc        = data['description'] as String? ?? '';
+    final assignedTo  = (data['assignedTo'] as List?)?.cast<String>() ?? [];
+    final initial     = title.isNotEmpty ? title[0].toUpperCase() : '#';
 
     return GestureDetector(
       onTap: () => Navigator.push(context, 
         MaterialPageRoute(
-          builder: (_) => PersonalizedContentDetailsScreen(
+          builder: (_) => TeacherUnitEditorScreen(
             groupId: '', 
             contentId: doc.id,
             contentTitle: title, 
@@ -186,7 +206,7 @@ class _ContentCard extends StatelessWidget {
                 onSelected: (v) {
                   if (v == 'edit')   _edit(context, data);
                   if (v == 'delete') _delete(context, title);
-                  if (v == 'assign') _assign(context, assignedTo);
+                  if (v == 'assign') _onAssignTapped(context, assignedTo);
                 },
                 itemBuilder: (_) => [
                   const PopupMenuItem(value: 'assign',
@@ -210,7 +230,7 @@ class _ContentCard extends StatelessWidget {
             // ── Footer (group chip) ─────────────────────────────────────
             const SizedBox(height: 12),
             GestureDetector(
-              onTap: () => _assign(context, assignedTo),
+              onTap: () => _onAssignTapped(context, assignedTo),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
@@ -257,7 +277,22 @@ class _ContentCard extends StatelessWidget {
     }
   }
 
-  void _assign(BuildContext context, List<String> current) =>
+  // ── Assign flow entry point ────────────────────────────────────────────
+  // IMPORTANT: this always opens the assign sheet, regardless of whether
+  // the content is complete. Completeness only gates ADDING a new group
+  // assignment — it must never hide or block access to groups the content
+  // is already assigned to. An earlier version of this screen ran the
+  // completeness check here and refused to open the sheet at all when the
+  // content was incomplete, which meant a teacher with partially-finished
+  // content (e.g. Unit 2 still missing its Unit Test) couldn't even SEE
+  // which groups it was already assigned to. That's a strictly worse bug
+  // than an incomplete content being assignable — a teacher must always be
+  // able to inspect and manage existing assignments.
+  void _onAssignTapped(BuildContext context, List<String> current) {
+    _openAssignSheet(context, current);
+  }
+
+  void _openAssignSheet(BuildContext context, List<String> current) =>
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -301,6 +336,16 @@ class _EmptyState extends StatelessWidget {
 }
 
 // ── Assign group sheet ────────────────────────────────────────────────────────
+//
+// This sheet always shows the content's current assignments and lets the
+// teacher freely add or remove groups. The only restriction is student
+// progress: a group checkbox is disabled (locked) if ContentAssignmentGuard
+// finds existing student progress for that content+group pair — hard
+// block, no override path (see content_assignment_guard.dart for the
+// rationale). This guard is scoped per (contentId, groupId), so the same
+// content already in progress with one group (e.g. a section that started
+// the unit) stays freely assignable to a parallel group with no progress
+// of its own.
 
 class _AssignSheet extends StatefulWidget {
   const _AssignSheet({required this.contentId, required this.current});
@@ -312,6 +357,7 @@ class _AssignSheet extends StatefulWidget {
 class _AssignSheetState extends State<_AssignSheet> {
   late Set<String> _sel;
   List<Map<String, dynamic>> _groups = [];
+  Set<String> _lockedGroupIds = {};
   bool _loading = true, _saving = false;
 
   @override
@@ -324,10 +370,30 @@ class _AssignSheetState extends State<_AssignSheet> {
   Future<void> _load() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
+
     final s = await FirebaseFirestore.instance
         .collection('teacherGroups').where('teacherId', isEqualTo: uid).get();
+    final groups = s.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+
+    // Only groups currently assigned to this content can possibly have
+    // student progress against it — no point checking groups that were
+    // never assigned. Cast is safe: 'id' is always a String, set above.
+    final assignedGroupIds = groups
+        .map((g) => g['id'] as String)
+        .where((id) => widget.current.contains(id))
+        .toList();
+
+    final locked = assignedGroupIds.isEmpty
+        ? <String>{}
+        : await ContentAssignmentGuard(Database()).lockedGroupIds(
+            contentId: widget.contentId,
+            groupIds: assignedGroupIds,
+          );
+
+    if (!mounted) return;
     setState(() {
-      _groups = s.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      _groups = groups;
+      _lockedGroupIds = locked;
       _loading = false;
     });
   }
@@ -371,14 +437,39 @@ class _AssignSheetState extends State<_AssignSheet> {
         else ..._groups.map((g) {
           final id = g['id'] as String;
           final name = g['name'] as String? ?? 'Group';
-          return CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(g['groupCode'] as String? ?? '',
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            activeColor: AppColors.primary,
-            value: _sel.contains(id),
-            onChanged: (v) => setState(() => v! ? _sel.add(id) : _sel.remove(id)),
+          final isLocked = _lockedGroupIds.contains(id);
+
+          return Opacity(
+            opacity: isLocked ? 0.6 : 1.0,
+            child: CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Row(children: [
+                Flexible(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w600))),
+                if (isLocked) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.lock_outline, size: 14, color: Colors.grey.shade600),
+                ],
+              ]),
+              subtitle: Text(
+                isLocked
+                    ? 'Students already have progress — can\'t be unassigned'
+                    : (g['groupCode'] as String? ?? ''),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isLocked ? Colors.orange.shade800 : Colors.grey,
+                  fontWeight: isLocked ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+              activeColor: AppColors.primary,
+              value: _sel.contains(id),
+              // Locked groups can never be unchecked. The onChanged
+              // callback itself blocks any attempt to remove a locked
+              // group from the selection — the tile stays visible either
+              // way, it just stops responding to taps.
+              onChanged: isLocked
+                  ? null
+                  : (v) => setState(() => v! ? _sel.add(id) : _sel.remove(id)),
+            ),
           );
         }),
         const SizedBox(height: 16),

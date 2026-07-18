@@ -1,17 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:loringo_app/components/wave_form.dart';
+import 'package:loringo_app/components/auth_layout.dart';
 import 'package:loringo_app/screens/initials/confirm_reset_password_screen.dart';
 import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-
-// ─── Same gradient + bottom colour as the entire auth flow ───────────────────
-const _kTopGradient = LinearGradient(
-  colors: [Color(0xFFF6E96B), Color(0xFFBEDC74), Color(0xFFA2CA71)],
-  begin: Alignment.topCenter,
-  end: Alignment.bottomCenter,
-);
-const _kBottomColor = Color(0xFFF2F8F2);
 
 class OTPScreen extends StatefulWidget {
   final String email;
@@ -82,32 +74,22 @@ class _OTPScreenState extends State<OTPScreen> {
   }
 
   void _fillCode(String digits) {
-    // TEMP DEBUG
-    debugPrint('DEBUG _fillCode called with: "$digits" (length: ${digits.length})');
     for (int i = 0; i < 6 && i < digits.length; i++) {
       _controllers[i].text = digits[i];
-      debugPrint('DEBUG set controller[$i].text = "${digits[i]}"');
     }
     setState(() {});
     _focusNodes[5].requestFocus();
-    // TEMP DEBUG — check right after fill
-    for (int i = 0; i < _controllers.length; i++) {
-      debugPrint('DEBUG AFTER FILL controller[$i].text = "${_controllers[i].text}"');
-    }
   }
 
   Future<void> _tryAutoPaste() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final text = data?.text?.trim() ?? '';
-      debugPrint('DEBUG _tryAutoPaste clipboard raw: "$text"');
       if (RegExp(r'^\d{6}$').hasMatch(text)) {
         _fillCode(text);
         _snack('Code pasted automatically', color: AppColors.success);
       }
-    } catch (e) {
-      debugPrint('DEBUG _tryAutoPaste error: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -115,26 +97,19 @@ class _OTPScreenState extends State<OTPScreen> {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final raw = data?.text?.replaceAll(RegExp(r'\s+'), '') ?? '';
       final digits = raw.replaceAll(RegExp(r'\D'), '');
-      debugPrint('DEBUG _pasteFromClipboard raw: "$raw" digits: "$digits"');
       if (digits.length >= 6) {
         _fillCode(digits.substring(0, 6));
         _snack('Code pasted', color: AppColors.success);
       } else {
         _snack('Clipboard doesn\'t contain a valid code', color: AppColors.warning);
       }
-    } catch (e) {
-      debugPrint('DEBUG _pasteFromClipboard error: $e');
+    } catch (_) {
       _snack('Could not paste code');
     }
   }
 
   Future<void> _verifyOTP() async {
     final code = _otpValue;
-    // TEMP DEBUG
-    debugPrint('DEBUG _verifyOTP code = "$code" (length: ${code.length})');
-    for (int i = 0; i < _controllers.length; i++) {
-      debugPrint('DEBUG VERIFY controller[$i].text = "${_controllers[i].text}"');
-    }
     if (code.length != 6) {
       _snack('Please enter all 6 digits', color: AppColors.warning);
       return;
@@ -193,220 +168,115 @@ class _OTPScreenState extends State<OTPScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final screenH = MediaQuery.of(context).size.height;
-    final heroH = screenH * 0.40;
-
-    return Scaffold(
-      backgroundColor: _kBottomColor,
-      body: Stack(
+    return AuthLayout(
+      mobileHeroFraction: 0.40,
+      heroVisual: Image.asset(
+        'assets/images/loro-llave.png',
+        width: 110,
+        height: 145,
+        fit: BoxFit.contain,
+      ),
+      title: 'Check your email',
+      subtitle: 'Enter the 6-digit code we sent',
+      form: Column(
         children: [
-          Container(color: _kBottomColor),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: heroH + 20,
-            child: Container(
-              decoration: const BoxDecoration(gradient: _kTopGradient),
-              child: SafeArea(
-                bottom: false,
-                child: Column(
+          Text(
+            'Code sent to',
+            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            widget.email,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: AppColors.primaryDark,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: List.generate(6, (i) => _OTPBox(
+              key: ValueKey('otp_box_$i'),
+              controller: _controllers[i],
+              focusNode: _focusNodes[i],
+              keyListenerFocusNode: _keyListenerNodes[i],
+              onChanged: (v) {
+                if (v.isNotEmpty && i < 5) {
+                  _focusNodes[i + 1].requestFocus();
+                } else if (v.isEmpty && i > 0) {
+                  _focusNodes[i - 1].requestFocus();
+                }
+              },
+              onBackspace: () {
+                if (_controllers[i].text.isEmpty && i > 0) {
+                  _focusNodes[i - 1].requestFocus();
+                  _controllers[i - 1].clear();
+                }
+              },
+            )),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          TextButton.icon(
+            onPressed: _pasteFromClipboard,
+            icon: const Icon(Icons.content_paste_rounded, size: 18),
+            label: const Text('Paste code'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              textStyle:
+                  const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          ElevatedButton(
+            onPressed: _isLoading ? null : _verifyOTP,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              disabledBackgroundColor: AppColors.primaryLight,
+              minimumSize: const Size.fromHeight(52),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadii.md)),
+              elevation: 0,
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text('Verify Code', style: AppText.button),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _canResend
+              ? Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Spacer(),
-                    Container(
-                      width: 100,
-                      height: 100,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.25),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.mark_email_read_rounded,
-                        size: 52,
-                        color: Color(0xFF2E6B30),
+                    Text(
+                      'Didn\'t receive it? ',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                    ),
+                    GestureDetector(
+                      onTap: _resendOTP,
+                      child: const Text(
+                        'Resend',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          decoration: TextDecoration.underline,
+                          decorationColor: AppColors.primary,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.md),
-                    const Text(
-                      'Check your email',
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF2E6B30),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                    const Text(
-                      'Enter the 6-digit code we sent',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFF3D7A3F),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const Spacer(),
                   ],
+                )
+              : Text(
+                  'Resend code in $_remainingTime seconds',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                 ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: heroH - 8,
-            left: 0,
-            right: 0,
-            child: const WaveDivider(
-              color: _kBottomColor,
-              height: 54,
-              waveIntensity: 1.0,
-            ),
-          ),
-          Positioned(
-            top: heroH + 20,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: AppSpacing.lg),
-                    Container(
-                      padding: const EdgeInsets.all(AppSpacing.lg),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(AppRadii.lg + 4),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withOpacity(0.08),
-                            blurRadius: 20,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            'Code sent to',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            widget.email,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primaryDark,
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.lg),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: List.generate(6, (i) => _OTPBox(
-                              key: ValueKey('otp_box_$i'),
-                              controller: _controllers[i],
-                              focusNode: _focusNodes[i],
-                              keyListenerFocusNode: _keyListenerNodes[i],
-                              onChanged: (v) {
-                                if (v.isNotEmpty && i < 5) {
-                                  _focusNodes[i + 1].requestFocus();
-                                } else if (v.isEmpty && i > 0) {
-                                  _focusNodes[i - 1].requestFocus();
-                                }
-                              },
-                              onBackspace: () {
-                                if (_controllers[i].text.isEmpty && i > 0) {
-                                  _focusNodes[i - 1].requestFocus();
-                                  _controllers[i - 1].clear();
-                                }
-                              },
-                            )),
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                          TextButton.icon(
-                            onPressed: _pasteFromClipboard,
-                            icon: const Icon(Icons.content_paste_rounded,
-                                size: 18),
-                            label: const Text('Paste code'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.primary,
-                              textStyle: const TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 14),
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
-                          ElevatedButton(
-                            onPressed: _isLoading ? null : _verifyOTP,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: AppColors.onPrimary,
-                              disabledBackgroundColor: AppColors.primaryLight,
-                              minimumSize: const Size.fromHeight(52),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(AppRadii.md)),
-                              elevation: 0,
-                            ),
-                            child: _isLoading
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white),
-                                  )
-                                : const Text('Verify Code',
-                                    style: AppText.button),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
-                          _canResend
-                              ? Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Didn\'t receive it? ',
-                                      style: TextStyle(
-                                          color: AppColors.textSecondary,
-                                          fontSize: 14),
-                                    ),
-                                    GestureDetector(
-                                      onTap: _resendOTP,
-                                      child: const Text(
-                                        'Resend',
-                                        style: TextStyle(
-                                          color: AppColors.primary,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                          decoration:
-                                              TextDecoration.underline,
-                                          decorationColor: AppColors.primary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              : Text(
-                                  'Resend code in $_remainingTime seconds',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 14),
-                                ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.xl * 2),
-                  ],
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -467,8 +337,7 @@ class _OTPBox extends StatelessWidget {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppRadii.md),
-              borderSide:
-                  const BorderSide(color: AppColors.primary, width: 2),
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
             ),
           ),
           onChanged: onChanged,

@@ -1,13 +1,13 @@
-// lesson_list_screen.dart
+// teacher_lesson_editor_screen.dart
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/teacher/activity_list_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_activity_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/create_lesson_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
-import 'package:loringo_app/screens/teacher/widgets/hierarchy_breadcrumb.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-class PersonalizedLessonListScreen extends StatefulWidget {
+class TeacherLessonEditorScreen extends StatefulWidget {
   final String groupId;
   final String contentId;
   final String unitId;
@@ -15,7 +15,7 @@ class PersonalizedLessonListScreen extends StatefulWidget {
   final Color  groupColor;
   final List<String> ancestorTrail;
 
-  const PersonalizedLessonListScreen({
+  const TeacherLessonEditorScreen({
     super.key,
     required this.groupId,
     required this.contentId,
@@ -26,12 +26,12 @@ class PersonalizedLessonListScreen extends StatefulWidget {
   });
 
   @override
-  State<PersonalizedLessonListScreen> createState() =>
-      _PersonalizedLessonListScreenState();
+  State<TeacherLessonEditorScreen> createState() =>
+      _TeacherLessonEditorScreenState();
 }
 
-class _PersonalizedLessonListScreenState
-    extends State<PersonalizedLessonListScreen> {
+class _TeacherLessonEditorScreenState
+    extends State<TeacherLessonEditorScreen> {
   final Database db = Database();
 
   Future<void> _deleteLesson(String lessonId, String title) async {
@@ -100,31 +100,24 @@ class _PersonalizedLessonListScreenState
   @override
   Widget build(BuildContext context) {
     final c = widget.groupColor;
-    final breadcrumb = [...widget.ancestorTrail, widget.unitTitle];
+
+    // NOTE: ancestorTrail is still accepted and threaded through to the
+    // activity editor screen below (so the chain isn't broken for callers
+    // that pass it), but it's no longer rendered here — the breadcrumb UI
+    // was removed. If nothing downstream ends up reading it, it can be
+    // dropped from the constructor in a follow-up pass; left in for now to
+    // keep this change scoped to header/breadcrumb removal and the rename.
 
     return Scaffold(
+      // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader.
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: c,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(widget.unitTitle,
-                style: const TextStyle(
-                    color: AppColors.onPrimary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 17)),
-            const Text('Lessons',
-                style: TextStyle(color: Colors.white70, fontSize: 12)),
-          ],
-        ),
-      ),
       body: Column(
         children: [
-          HierarchyBreadcrumb(items: breadcrumb, color: c),
+          TeacherScreenHeader(
+            title: widget.unitTitle,
+            subtitle: 'Lessons',
+            color: c,
+          ),
           Expanded(
             child: StreamBuilder(
               stream: db.getPersonalizedLessonsStream(
@@ -157,7 +150,10 @@ class _PersonalizedLessonListScreenState
                 }
 
                 return ListView.builder(
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  // Bottom padding leaves room so the FAB doesn't cover
+                  // the last card in the list.
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md, AppSpacing.md, AppSpacing.md, 100),
                   itemCount: lessons.length,
                   itemBuilder: (context, i) {
                     final doc   = lessons[i];
@@ -173,14 +169,14 @@ class _PersonalizedLessonListScreenState
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => PersonalizedActivityListScreen(
+                          builder: (_) => TeacherActivityEditorScreen(
                             groupId:       widget.groupId,
                             contentId:     widget.contentId,
                             unitId:        widget.unitId,
                             lessonId:      doc.id,
                             lessonTitle:   title,
                             groupColor:    c,
-                            ancestorTrail: breadcrumb,
+                            ancestorTrail: [...widget.ancestorTrail, widget.unitTitle],
                           ),
                         ),
                       ),

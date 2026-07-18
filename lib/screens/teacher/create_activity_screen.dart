@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -37,10 +38,21 @@ class _CreatePersonalizedActivityScreenState
   final Database db = Database();
 
   late TextEditingController titleController;
+  // 'order' is a positional/technical field, not something a teacher
+  // should type by hand — a free-text order let the sequence get gaps or
+  // duplicates (e.g. 1, 3 with nothing as 2). It's kept as a controller
+  // internally only because the rest of this screen's save logic already
+  // reads its .text; there is no visible field bound to it anymore.
+  // - Creating: always set to existingActivities.length + 1 (append to
+  //   the end of the lesson's activity list).
+  // - Editing: preserved as-is from existingData — this screen never
+  //   changes an existing activity's position. Reordering belongs to a
+  //   future drag-and-drop affordance on the list screen, not here.
   late TextEditingController orderController;
   late TextEditingController xpBaseController;
 
   bool isLoading = false;
+  bool _activitiesLoaded = false;
   String? requiredActivityId;
   String difficulty = 'easy';
   List<Map<String, dynamic>> existingActivities = [];
@@ -87,15 +99,18 @@ class _CreatePersonalizedActivityScreenState
                   'id': doc.id,
                   'title': doc.data()['title'] ?? 'Untitled',
                   'order': doc.data()['order'] ?? 0,
+                  'requiredActivityId': doc.data()['requiredActivityId'],
                 })
             .toList();
+        _activitiesLoaded = true;
       });
 
-      if (!_isEditing && orderController.text.isEmpty) {
+      if (!_isEditing) {
         orderController.text = (snapshot.docs.length + 1).toString();
       }
     } catch (e) {
       debugPrint('Error loading activities: $e');
+      if (mounted) setState(() => _activitiesLoaded = true);
     }
   }
 
@@ -138,8 +153,50 @@ class _CreatePersonalizedActivityScreenState
     }
   }
 
+  /// Validates the one remaining invariant that keeps the activity unlock
+  /// chain coherent within a lesson, before anything is written to
+  /// Firestore: only one activity per lesson may be the entry point
+  /// (requiredActivityId == null / "Always Unlocked"). Two entry points
+  /// would mean two activities both start immediately unlocked with no
+  /// way to tell which one the teacher meant to be first.
+  ///
+  /// The previous 'order' duplicate check was removed along with the
+  /// Display Order field itself — order is now always derived (append-
+  /// on-create, preserved-on-edit), so a duplicate can no longer occur
+  /// from this screen.
+  ///
+  /// Returns a user-facing error string naming the conflicting activity,
+  /// or null if the check passes. existingActivities already excludes
+  /// the activity currently being edited (see _loadExistingActivities),
+  /// so a direct comparison is safe — no need to skip self-matches here.
+  String? _validateChainIntegrity() {
+    if (requiredActivityId == null) {
+      final otherEntryPoint = existingActivities.cast<Map<String, dynamic>?>().firstWhere(
+            (a) => a!['requiredActivityId'] == null,
+            orElse: () => null,
+          );
+      if (otherEntryPoint != null) {
+        return '"${otherEntryPoint['title']}" is already set to Always '
+            'Unlocked. Only one activity per lesson can be the starting '
+            'point — pick it as this activity\'s prerequisite instead, or '
+            'change "${otherEntryPoint['title']}" first.';
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final chainError = _validateChainIntegrity();
+    if (chainError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(chainError), backgroundColor: AppColors.danger),
+      );
+      return;
+    }
+
     setState(() => isLoading = true);
 
     try {
@@ -160,12 +217,10 @@ class _CreatePersonalizedActivityScreenState
         );
       } else {
         final origTitle = widget.existingData?['title'] as String? ?? '';
-        final origOrder = widget.existingData?['order']?.toString() ?? '';
         final origXp = widget.existingData?['xpBase']?.toString() ?? '10';
         final origRequired = widget.existingData?['requiredActivityId'] as String?;
         final noChanges =
             titleController.text.trim() == origTitle &&
-            orderController.text.trim() == origOrder &&
             xpBaseController.text.trim() == origXp &&
             requiredActivityId == origRequired;
         if (noChanges) {
@@ -218,136 +273,126 @@ class _CreatePersonalizedActivityScreenState
         : null;
 
     return Scaffold(
+      // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader.
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: _c,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: Text(_isEditing ? 'Edit Activity' : 'Create Activity', style: AppText.appBarTitle),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CreateFormBanner(
-                color: _c,
-                icon: Icons.movie_creation_outlined,
-                label: _isEditing ? 'Editing Activity' : 'New Activity',
-                description: 'Groups multiple tasks together',
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Activity Title'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: titleController,
-                color: _c,
-                icon: Icons.title,
-                hint: 'e.g. Listening Exercise',
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter a title' : null,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Display Order'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: orderController,
-                color: _c,
-                icon: Icons.sort,
-                hint: '1, 2, 3…',
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'Please enter an order number';
-                  if (int.tryParse(v.trim()) == null) return 'Please enter a valid number';
-                  return null;
-                },
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Base XP Reward'),
-              const SizedBox(height: AppSpacing.sm),
-              CreateFormField(
-                controller: xpBaseController,
-                color: _c,
-                icon: Icons.stars,
-                hint: 'e.g. 25',
-                helperText: 'Points earned upon completion (0–50)',
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'Please enter base XP';
-                  final xp = int.tryParse(v.trim());
-                  if (xp == null) return 'Please enter a valid number';
-                  if (xp < 0 || xp > 50) return 'XP must be between 0 and 50';
-                  return null;
-                },
-              ),
-              const SizedBox(height: AppSpacing.sm),
-
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: diffColor.withOpacity(0.1),
-                  borderRadius: AppRadii.mdAll,
-                  border: Border.all(color: diffColor.withOpacity(0.3)),
-                ),
-                child: Row(children: [
-                  Icon(
-                    difficulty == 'easy'
-                        ? Icons.trending_down
-                        : difficulty == 'medium'
-                            ? Icons.trending_flat
-                            : Icons.trending_up,
-                    color: diffColor,
-                    size: 20,
-                  ),
-                  const SizedBox(width: AppSpacing.md),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Difficulty Level', style: AppText.caption),
-                      const SizedBox(height: 2),
-                      Text(_getDifficultyLabel(difficulty),
-                          style: TextStyle(fontSize: 14, color: diffColor, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ]),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-
-              const CreateFormLabel('Prerequisites'),
-              const SizedBox(height: AppSpacing.sm),
-              DropdownButtonFormField<String>(
-                value: safeValue,
-                isExpanded: true,
-                decoration: AppInput.decoration(
-                  accent: _c,
-                  hint: 'Select activity to unlock this one',
-                  icon: Icons.lock_outline,
-                  helper: 'Leave empty if this is the first activity',
-                ),
-                items: [
-                  const DropdownMenuItem<String>(value: null, child: Text('None (Always Unlocked)')),
-                  ...existingActivities.map((activity) => DropdownMenuItem<String>(
-                        value: activity['id'],
-                        child: Text('${activity['order']}. ${activity['title']}', overflow: TextOverflow.ellipsis),
-                      )),
-                ],
-                onChanged: (value) => setState(() => requiredActivityId = value),
-              ),
-              const SizedBox(height: AppSpacing.xl),
-
-              CreateFormSubmitButton(
-                color: _c,
-                label: _isEditing ? 'UPDATE ACTIVITY' : 'CREATE ACTIVITY',
-                isLoading: isLoading,
-                onPressed: _submit,
-              ),
-            ],
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: _isEditing ? 'Edit Activity' : 'Create Activity',
+            color: _c,
           ),
-        ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CreateFormBanner(
+                      color: _c,
+                      icon: Icons.movie_creation_outlined,
+                      label: _isEditing ? 'Editing Activity' : 'New Activity',
+                      description: 'Groups multiple tasks together',
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Activity Title'),
+                    const SizedBox(height: AppSpacing.sm),
+                    CreateFormField(
+                      controller: titleController,
+                      color: _c,
+                      icon: Icons.title,
+                      hint: 'e.g. Listening Exercise',
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter a title' : null,
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Base XP Reward'),
+                    const SizedBox(height: AppSpacing.sm),
+                    CreateFormField(
+                      controller: xpBaseController,
+                      color: _c,
+                      icon: Icons.stars,
+                      hint: 'e.g. 25',
+                      helperText: 'Points earned upon completion (0–50)',
+                      keyboardType: TextInputType.number,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return 'Please enter base XP';
+                        final xp = int.tryParse(v.trim());
+                        if (xp == null) return 'Please enter a valid number';
+                        if (xp < 0 || xp > 50) return 'XP must be between 0 and 50';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+
+                    Container(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: diffColor.withOpacity(0.1),
+                        borderRadius: AppRadii.mdAll,
+                        border: Border.all(color: diffColor.withOpacity(0.3)),
+                      ),
+                      child: Row(children: [
+                        Icon(
+                          difficulty == 'easy'
+                              ? Icons.trending_down
+                              : difficulty == 'medium'
+                                  ? Icons.trending_flat
+                                  : Icons.trending_up,
+                          color: diffColor,
+                          size: 20,
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Difficulty Level', style: AppText.caption),
+                            const SizedBox(height: 2),
+                            Text(_getDifficultyLabel(difficulty),
+                                style: TextStyle(fontSize: 14, color: diffColor, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ]),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    const CreateFormLabel('Prerequisites'),
+                    const SizedBox(height: AppSpacing.sm),
+                    DropdownButtonFormField<String>(
+                      value: safeValue,
+                      isExpanded: true,
+                      decoration: AppInput.decoration(
+                        accent: _c,
+                        hint: 'Select activity to unlock this one',
+                        icon: Icons.lock_outline,
+                        helper: 'Leave empty if this is the first activity',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String>(value: null, child: Text('None (Always Unlocked)')),
+                        ...existingActivities.map((activity) => DropdownMenuItem<String>(
+                              value: activity['id'],
+                              child: Text('${activity['order']}. ${activity['title']}', overflow: TextOverflow.ellipsis),
+                            )),
+                      ],
+                      onChanged: (value) => setState(() => requiredActivityId = value),
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+
+                    CreateFormSubmitButton(
+                      color: _c,
+                      label: _isEditing ? 'UPDATE ACTIVITY' : 'CREATE ACTIVITY',
+                      isLoading: isLoading || !_activitiesLoaded,
+                      onPressed: _submit,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

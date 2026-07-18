@@ -47,6 +47,18 @@ class _StudentProgressDashboardState
   }
 
   Future<void> _loadData() async {
+    // Guards every setState() below. _loadData is a long chain of awaited
+    // Firestore calls (several nested Future.wait blocks) — if the user
+    // navigates away from this screen while any of those are still in
+    // flight, this State object gets disposed but the async function
+    // keeps running to completion. Without checking `mounted` before each
+    // setState(), the eventual setState() call after that point throws
+    // "setState() called after dispose()" — exactly the crash in the
+    // logs, hitting both the success-path setState (~line 199) and the
+    // catch-path setState. Checking `mounted` right before each call is
+    // the standard fix: skip the state update entirely once the widget
+    // is gone, since there's nothing left to update.
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -185,6 +197,12 @@ class _StudentProgressDashboardState
         rawProgress[studentId] = RawProgress(xp: xp, byUnit: byUnit);
       }));
 
+      // Long async chain finished — re-check mounted before touching
+      // instance state or calling setState. _buildStats() itself also
+      // calls setState() internally, so it must not run on a disposed
+      // widget either; see the mounted guard added inside it below.
+      if (!mounted) return;
+
       if (_selectedUnit != null &&
           !units.any((u) => u.unitId == _selectedUnit!.unitId)) {
         _selectedUnit = null;
@@ -196,6 +214,7 @@ class _StudentProgressDashboardState
 
       setState(() => _loading = false);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -204,6 +223,13 @@ class _StudentProgressDashboardState
   }
 
   void _buildStats() {
+    // Called both from _loadData() (already mounted-guarded above) and
+    // from _unitChip()'s onTap (always mounted, since it only fires from
+    // a live gesture on an on-screen widget) — guarding here too makes
+    // this method safe to call from either place without relying on the
+    // caller to remember.
+    if (!mounted) return;
+
     final targetUnits = _selectedUnit != null ? [_selectedUnit!] : _units;
 
     final stats = widget.students.map((s) {

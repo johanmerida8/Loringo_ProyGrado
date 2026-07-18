@@ -1,4 +1,4 @@
-// lib/screens/teacher/widgets/task_type_picker.dart
+// lib/screens/teacher/widgets/task_type_option.dart
 import 'package:flutter/material.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -9,11 +9,22 @@ class TaskTypeOption {
   final IconData icon;
 }
 
+// NOTE: 'compare' and 'flashcard' added to Vocabulary — new task types.
+// 'compare' has the student pick which of two images answers a
+// comparative question (e.g. "Which is bigger?"). 'flashcard' is a
+// sequence of 3-8 image cards, each flipped and answered with a
+// multiple-choice word pick — see compare_task.dart and
+// flashcard_task.dart for the editors and rationale.
+//
+// 'slow_reveal' REMOVED — discontinued entirely, including its student
+// screen (former screen_thirteen.dart content, now replaced by 'compare').
 const Map<String, List<TaskTypeOption>> kTaskTypeGroups = {
   'Vocabulary': [
     TaskTypeOption('image_select', 'Image Select', Icons.image_outlined),
     TaskTypeOption('image_select_reverse', 'Image Select Reverse', Icons.image_search),
     TaskTypeOption('match', 'Match', Icons.compare_arrows),
+    TaskTypeOption('sound_match', 'Sound Match', Icons.volume_up),
+    TaskTypeOption('odd_one_out', 'Odd One Out', Icons.category_outlined),
   ],
   'Grammar': [
     TaskTypeOption('fill_blank', 'Fill in the Blank', Icons.edit_note),

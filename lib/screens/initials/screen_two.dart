@@ -3,17 +3,19 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:just_audio/just_audio.dart';
+// import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-import 'package:lottie/lottie.dart';
+// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
-// ── Data model for one conversation turn ────────────────────────────────────
+// -- Data model for one conversation turn ------------------------------------
 class _Turn {
   final String bubbleEn;        // original English bubble text
   final List<Map<String, dynamic>> options; // {textEn, isCorrect}
@@ -34,6 +36,7 @@ class ScreenTwo extends StatefulWidget {
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
+  final bool isPracticeRound;
 
   const ScreenTwo({
     super.key,
@@ -46,13 +49,14 @@ class ScreenTwo extends StatefulWidget {
     required this.currentTaskNumber,
     required this.totalTasks,
     this.collectionName = 'content',
+    this.isPracticeRound = false,
   });
 
   @override
   State<ScreenTwo> createState() => _ScreenTwoState();
 }
 
-class _ScreenTwoState extends State<ScreenTwo> {
+class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
   // final AudioPlayer _player = AudioPlayer();
   final FlutterTts _tts = FlutterTts();
 
@@ -65,7 +69,7 @@ class _ScreenTwoState extends State<ScreenTwo> {
   // The reply selected for the current turn
   String _selectedReply = '';
 
-  // History: list of {bubble, chosenReply, correct} — shown as a chat log above
+  // History: list of {bubble, chosenReply, correct} -- shown as a chat log above
   final List<Map<String, dynamic>> _history = [];
 
   // Overall correctness tracking
@@ -137,6 +141,16 @@ class _ScreenTwoState extends State<ScreenTwo> {
       }
 
       setState(() => _isLoading = false);
+
+      // Auto-speak the first turn's bubble as soon as the task is
+      // ready, same auto-play pattern used in screen_seven for reading
+      // -- the teacher's line reads itself instead of requiring a
+      // manual tap on the speaker icon first.
+      if (_turns.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _speak(_turns[_currentTurn].bubbleEn);
+        });
+      }
     } catch (e) {
       debugPrint('ScreenTwo ERROR: $e');
       setState(() => _isLoading = false);
@@ -159,9 +173,25 @@ class _ScreenTwoState extends State<ScreenTwo> {
       orElse: () => {'textEn': '', 'isCorrect': false},
     )['isCorrect'] == true;
 
-    if (correct) _correctCount++; else _wrongCount++;
-
     TaskFeedback.fire(correct);
+
+    // Soft wrong answer on this turn, attempts left -> retry the SAME
+    // turn (clear the reply choice only) without touching _history,
+    // _correctCount/_wrongCount, or advancing _currentTurn. Nothing is
+    // scored for this turn until a hard result is reached.
+    if (!correct &&
+        offerRetry(
+          context: context,
+          onRetry: () => setState(() => _selectedReply = ''),
+        )) {
+      return;
+    }
+
+    if (correct) _correctCount++; else _wrongCount++;
+    // Attempts for this turn are done (correct, or wrong with none
+    // left) -- reset the counter so the NEXT turn gets its own fresh 2
+    // attempts instead of inheriting whatever was left on this one.
+    resetAttempts();
 
     _history.add({
       'bubbleEn': turn.bubbleEn,
@@ -174,9 +204,8 @@ class _ScreenTwoState extends State<ScreenTwo> {
     TaskResultSheet.show(
       context,
       isCorrect: correct,
+      isPracticeRound: widget.isPracticeRound,
       buttonLabel: isLastTurn ? 'Finish' : 'Continue',
-      // initialChildSize: 0.38,
-      // maxChildSize: 0.55,
       onContinue: () {
         if (isLastTurn) {
           final overallCorrect = _correctCount > _wrongCount;
@@ -186,64 +215,17 @@ class _ScreenTwoState extends State<ScreenTwo> {
             _currentTurn++;
             _selectedReply = '';
           });
+          // Auto-speak the new turn's bubble right after advancing --
+          // same reasoning as the first-turn auto-speak in _fetchTask,
+          // just deferred a frame so it fires once the new bubble is
+          // actually built/on screen.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _speak(_turns[_currentTurn].bubbleEn);
+          });
         }
       },
     );
   }
-
-  // void _showTurnFeedback(bool correct) {
-  //   final isLastTurn = _currentTurn == _turns.length - 1;
-
-  //   showModalBottomSheet(
-  //     context: context,
-  //     backgroundColor: Colors.transparent,
-  //     isScrollControlled: true,
-  //     isDismissible: false,
-  //     enableDrag: false,
-  //     builder: (_) => DraggableScrollableSheet(
-  //       initialChildSize: 0.38,
-  //       maxChildSize: 0.55,
-  //       builder: (_, __) => Container(
-  //         padding: const EdgeInsets.all(20),
-  //         decoration: const BoxDecoration(
-  //           color: Colors.white,
-  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-  //         ),
-  //         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-  //           Lottie.asset(correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json', height: 120),
-  //           const SizedBox(height: 12),
-  //           SizedBox(
-  //             width: double.infinity,
-  //             child: ElevatedButton(
-  //               onPressed: () {
-  //                 Navigator.pop(context);
-  //                 if (isLastTurn) {
-  //                   final overallCorrect = _correctCount > _wrongCount;
-  //                   widget.onTaskComplete(overallCorrect);
-  //                 } else {
-  //                   setState(() {
-  //                     _currentTurn++;
-  //                     _selectedReply = '';
-  //                   });
-  //                 }
-  //               },
-  //               style: ElevatedButton.styleFrom(
-  //                 backgroundColor: correct ? _green : Colors.orange,
-  //                 padding: const EdgeInsets.symmetric(vertical: 14),
-  //                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  //               ),
-  //               child: Text(
-  //                 isLastTurn ? 'Finish' : 'Continue',
-  //                 style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold, letterSpacing: 1.1),
-  //               ),
-  //             ),
-  //           ),
-  //         ]),
-  //       ),
-  //     ),
-  //   );
-  // }
 
   Widget _buildHistory() {
     if (_history.isEmpty) return const SizedBox.shrink();
@@ -375,88 +357,91 @@ class _ScreenTwoState extends State<ScreenTwo> {
 
     final currentTurnData = _turns[_currentTurn];
 
-    return Scaffold(
-      body: Container(
-        decoration: grad,
-        child: SafeArea(
-          child: ResponsiveActivityShell(
-            child: Column(children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                child: Row(children: [
-                  IconButton(icon: const Icon(Icons.close, color: Colors.black87, size: 28), onPressed: _handleClose),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.all(Radius.circular(30)),
-                      child: LinearProgressIndicator(
-                        value: (widget.currentTaskNumber + (_currentTurn / _turns.length)) / widget.totalTasks,
-                        backgroundColor: Colors.blueGrey,
-                        valueColor: const AlwaysStoppedAnimation<Color>(_green),
-                        minHeight: 8,
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: _green.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-                      child: Text('${_currentTurn + 1}/${_turns.length}', style: const TextStyle(fontSize: 11, color: _green, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ]),
-              ),
-            
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    _buildHistory(),
-                    _buildBubble(currentTurnData.bubbleEn),
-                    const SizedBox(height: 20),
-            
-                    Row(children: [
-                      Expanded(child: Divider(color: Colors.grey.shade300)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Text(
-                          'Your reply',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
+        body: Container(
+          decoration: grad,
+          child: SafeArea(
+            child: ResponsiveActivityShell(
+              child: Column(children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  child: Row(children: [
+                    IconButton(icon: const Icon(Icons.close, color: Colors.black87, size: 28), onPressed: _handleClose),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.all(Radius.circular(30)),
+                        child: LinearProgressIndicator(
+                          value: (widget.currentTaskNumber + (_currentTurn / _turns.length)) / widget.totalTasks,
+                          backgroundColor: Colors.blueGrey,
+                          valueColor: const AlwaysStoppedAnimation<Color>(_green),
+                          minHeight: 8,
                         ),
                       ),
-                      Expanded(child: Divider(color: Colors.grey.shade300)),
-                    ]),
-                    const SizedBox(height: 12),
-            
-                    ...currentTurnData.options.map((opt) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _buildReplyOption(opt['textEn'] as String),
-                    )),
-            
-                    const SizedBox(height: 8),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: _green.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+                        child: Text('${_currentTurn + 1}/${_turns.length}', style: const TextStyle(fontSize: 11, color: _green, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
                   ]),
                 ),
-              ),
-            
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _selectedReply.isEmpty ? null : _checkCurrentTurn,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _green,
-                      padding: const EdgeInsets.symmetric(vertical: 17),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: const Text(
-                      'Check',
-                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+              
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _buildHistory(),
+                      _buildBubble(currentTurnData.bubbleEn),
+                      const SizedBox(height: 20),
+              
+                      Row(children: [
+                        Expanded(child: Divider(color: Colors.grey.shade300)),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Text(
+                            'Your reply',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        Expanded(child: Divider(color: Colors.grey.shade300)),
+                      ]),
+                      const SizedBox(height: 12),
+              
+                      ...currentTurnData.options.map((opt) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _buildReplyOption(opt['textEn'] as String),
+                      )),
+              
+                      const SizedBox(height: 8),
+                    ]),
+                  ),
+                ),
+              
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _selectedReply.isEmpty ? null : _checkCurrentTurn,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _green,
+                        padding: const EdgeInsets.symmetric(vertical: 17),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: const Text(
+                        'Check',
+                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ]),
+              ]),
+            ),
           ),
         ),
       ),

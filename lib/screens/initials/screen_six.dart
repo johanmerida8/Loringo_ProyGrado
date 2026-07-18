@@ -2,14 +2,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-import 'package:lottie/lottie.dart';
+// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 
 // ── Data model for one match pair ─────────────────────────────────────────────
@@ -37,6 +38,14 @@ class ScreenSix extends StatefulWidget {
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
+  // Accepted for constructor symmetry with the other 9 task screens
+  // (ActivityPlayScreen passes this uniformly to all of them), but
+  // unused here: a wrong tap in this match game just un-selects after a
+  // brief flash rather than ending the task, so this screen can never
+  // actually be answered "wrong" in the sense ActivityPlayScreen's
+  // review round cares about — it never lands in wrongTaskIds, so it
+  // can never be replayed as a practice round in the first place.
+  final bool isPracticeRound;
 
   const ScreenSix({
     super.key,
@@ -49,6 +58,7 @@ class ScreenSix extends StatefulWidget {
     required this.currentTaskNumber,
     required this.totalTasks,
     this.collectionName = 'content',
+    this.isPracticeRound = false,
   });
 
   @override
@@ -281,8 +291,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
           TaskResultSheet.show(
             context,
             isCorrect: true,
-            // initialChildSize: 0.4,
-            // maxChildSize: 0.55,
             onContinue: () => widget.onTaskComplete(true),
           );
         });
@@ -306,57 +314,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
       });
     }
   }
-
-  // void _playSound(bool correct) {
-  //   FeedbackSoundService.instance.playResult(correct);
-  // }
-
-  // void _showResultSheet(bool correct) {
-  //   showModalBottomSheet(
-  //     context: context,
-  //     backgroundColor: Colors.transparent,
-  //     isScrollControlled: true,
-  //     isDismissible: false,
-  //     enableDrag: false,
-  //     builder: (_) => DraggableScrollableSheet(
-  //       initialChildSize: 0.4,
-  //       maxChildSize: 0.55,
-  //       builder: (_, __) => Container(
-  //         padding: const EdgeInsets.all(24),
-  //         decoration: const BoxDecoration(
-  //           color: Colors.white,
-  //           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-  //           boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, offset: Offset(0, -5))],
-  //         ),
-  //         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-  //           Lottie.asset(
-  //             correct ? 'assets/animation/correct.json' : 'assets/animation/fail.json',
-  //             height: 120,
-  //           ),
-  //           const SizedBox(height: 16),
-  //           SizedBox(
-  //             width: double.infinity,
-  //             child: ElevatedButton(
-  //               onPressed: () {
-  //                 Navigator.pop(context);
-  //                 widget.onTaskComplete(correct);
-  //               },
-  //               style: ElevatedButton.styleFrom(
-  //                 backgroundColor: correct ? _green : Colors.orange,
-  //                 padding: const EdgeInsets.symmetric(vertical: 16),
-  //                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-  //               ),
-  //               child: Text(
-  //                 correct ? 'Continue' : 'Try Again',
-  //                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-  //               ),
-  //             ),
-  //           ),
-  //         ]),
-  //       ),
-  //     ),
-  //   );
-  // }
 
   // ── Tile color helper ─────────────────────────────────────────────────────
   ({Color bg, Color border, Color text}) _tileColors(int pairId, bool isLeft) {
@@ -580,118 +537,121 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     final totalPairs = _pairs.length;
     final isImageMode = _mode == 'image';
 
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFE8F5E9), Colors.white],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFFE8F5E9), Colors.white],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: ResponsiveActivityShell(
-            child: Column(
-              children: [
-                // Header with progress
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                  child: Row(children: [
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.black87, size: 28),
-                      onPressed: _handleClose,
-                    ),
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.all(Radius.circular(30)),
-                        child: LinearProgressIndicator(
-                          value: progressValue,
-                          backgroundColor: Colors.blueGrey,
-                          valueColor: const AlwaysStoppedAnimation<Color>(_green),
-                          minHeight: 8,
+          child: SafeArea(
+            child: ResponsiveActivityShell(
+              child: Column(
+                children: [
+                  // Header with progress
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    child: Row(children: [
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.black87, size: 28),
+                        onPressed: _handleClose,
+                      ),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: const BorderRadius.all(Radius.circular(30)),
+                          child: LinearProgressIndicator(
+                            value: progressValue,
+                            backgroundColor: Colors.blueGrey,
+                            valueColor: const AlwaysStoppedAnimation<Color>(_green),
+                            minHeight: 8,
+                          ),
                         ),
                       ),
-                    ),
-                  ]),
-                ),
-            
-                // Title and counter
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Match the pairs',
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: _green.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: _green.withOpacity(0.3)),
-                        ),
-                        child: Text(
-                          '$matchedCount / $totalPairs',
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _green),
-                        ),
-                      ),
-                    ],
+                    ]),
                   ),
-                ),
-                const SizedBox(height: 8),
-            
-                // Column headers
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Row(children: [
-                    Expanded(
-                      child: Center(
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.flag, size: 14, color: _green),
-                          const SizedBox(width: 4),
-                          Text('English', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
-                        ]),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Center(
-                        child: isImageMode
-                            ? Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.image_outlined, size: 14, color: Colors.purple.shade400),
-                                const SizedBox(width: 4),
-                                Text('Image', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
-                              ])
-                            : Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.flag, size: 14, color: Colors.orange),
-                                const SizedBox(width: 4),
-                                Text(_userLang, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
-                              ]),
-                      ),
-                    ),
-                  ]),
-                ),
-                const SizedBox(height: 8),
-            
-                // Two‑column scrollable area
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+              
+                  // Title and counter
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Expanded(child: SingleChildScrollView(child: Column(children: _leftCol.map(_buildLeftTile).toList()))),
-                        const SizedBox(width: 16),
-                        Expanded(child: SingleChildScrollView(child: Column(children: _rightCol.map(_buildRightTile).toList()))),
+                        Text(
+                          'Match the pairs',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: _green.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: _green.withOpacity(0.3)),
+                          ),
+                          child: Text(
+                            '$matchedCount / $totalPairs',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _green),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                ),
-            
-                const SizedBox(height: 20),
-              ],
+                  const SizedBox(height: 8),
+              
+                  // Column headers
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(children: [
+                      Expanded(
+                        child: Center(
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(Icons.flag, size: 14, color: _green),
+                            const SizedBox(width: 4),
+                            Text('English', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                          ]),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Center(
+                          child: isImageMode
+                              ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Icon(Icons.image_outlined, size: 14, color: Colors.purple.shade400),
+                                  const SizedBox(width: 4),
+                                  Text('Image', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                                ])
+                              : Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Icon(Icons.flag, size: 14, color: Colors.orange),
+                                  const SizedBox(width: 4),
+                                  Text(_userLang, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                                ]),
+                        ),
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(height: 8),
+              
+                  // Two‑column scrollable area
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: SingleChildScrollView(child: Column(children: _leftCol.map(_buildLeftTile).toList()))),
+                          const SizedBox(width: 16),
+                          Expanded(child: SingleChildScrollView(child: Column(children: _rightCol.map(_buildRightTile).toList()))),
+                        ],
+                      ),
+                    ),
+                  ),
+              
+                  const SizedBox(height: 20),
+                ],
+              ),
             ),
           ),
         ),

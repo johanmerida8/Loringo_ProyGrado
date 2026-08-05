@@ -1,6 +1,7 @@
 // task_batch_review_screen.dart
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_task_editor_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -75,6 +76,15 @@ class TaskBatchReviewScreen extends StatefulWidget {
   /// else about the review/definition process is identical either way.
   final bool isGenerated;
 
+  /// True only when the activity itself hasn't been written to Firestore
+  /// yet. When true, the bottom button doesn't write anything here at
+  /// all — it hands the defined batch back via
+  /// Navigator.pop(context, results) for create_activity_screen.dart's
+  /// "CREATE ACTIVITY" button to write, together with the activity
+  /// itself, in one place. When false (the activity already exists),
+  /// this screen writes the batch directly, as it always has.
+  final bool isPendingActivity;
+
   const TaskBatchReviewScreen({
     super.key,
     required this.groupId,
@@ -85,6 +95,7 @@ class TaskBatchReviewScreen extends StatefulWidget {
     required this.groupColor,
     required this.types,
     required this.isGenerated,
+    this.isPendingActivity = false,
   });
 
   @override
@@ -171,10 +182,13 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
 
   bool get _allDefined => _slots.every((s) => s.isDefined);
 
-  Future<void> _createAll() async {
-    if (!_allDefined) return;
-    setState(() => _isSaving = true);
-
+  /// Writes every defined slot to Firestore. Only called when the
+  /// activity already exists (widget.isPendingActivity is false) —
+  /// otherwise _saveAndFinish() bubbles the batch back up instead of
+  /// writing anything here. Returns whether it succeeded; on failure
+  /// it's already shown the error snackbar, so callers just need to bail
+  /// out.
+  Future<bool> _persistSlots() async {
     try {
       int order = _startingOrder;
       for (final slot in _slots) {
@@ -196,17 +210,7 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
         );
         order++;
       }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${_slots.length} tasks created successfully!'),
-            backgroundColor: AppColors.success,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        Navigator.pop(context); // back to task list
-      }
+      return true;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -217,9 +221,42 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
           ),
         );
       }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
+      return false;
     }
+  }
+
+  /// Bottom button. Two entirely different behaviors depending on
+  /// widget.isPendingActivity:
+  ///  - Activity already exists: writes this batch directly (as always),
+  ///    then walks back to TeacherTaskEditorScreen (the task list).
+  ///  - Activity is still pending: writes nothing — just hands the
+  ///    defined batch back via Navigator.pop(context, results), for
+  ///    create_activity_screen.dart's "CREATE ACTIVITY" button (reached
+  ///    once TaskTypeSelectorScreen/TeacherTaskEditorScreen bubble this
+  ///    same result further up) to write everything together.
+  Future<void> _saveAndFinish() async {
+    if (!_allDefined || _isSaving) return;
+
+    if (widget.isPendingActivity) {
+      Navigator.pop(context, _slots.map((s) => s.result!).toList());
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    final ok = await _persistSlots();
+    if (ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${_slots.length} tasks created successfully!'),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.of(context)
+          .popUntil((route) => route.settings.name == kTeacherTaskEditorRoute);
+      return;
+    }
+    if (mounted) setState(() => _isSaving = false);
   }
 
   @override
@@ -257,7 +294,6 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
                 return Container(
                   margin: const EdgeInsets.only(bottom: AppSpacing.sm),
                   decoration: BoxDecoration(
-                    color: Colors.white,
                     borderRadius: BorderRadius.circular(AppRadii.md),
                     border: Border.all(
                       color: slot.isDefined
@@ -272,50 +308,63 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
                       ),
                     ],
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md, vertical: 4),
-                    leading: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: (slot.isDefined ? _c : Colors.grey)
-                            .withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(AppRadii.md),
+                  // ListTile paints its background/ink splashes on the
+                  // nearest Material ancestor. The Container above used to
+                  // carry the white fill itself, which sat between the
+                  // ListTile and that ancestor and made both invisible
+                  // ("ListTile background color or ink splashes may be
+                  // invisible" framework warning). Moving the fill onto a
+                  // Material that directly wraps the ListTile makes IT the
+                  // nearest ancestor, so there's nothing in between.
+                  child: Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(AppRadii.md),
+                    clipBehavior: Clip.antiAlias,
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md, vertical: 4),
+                      leading: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: (slot.isDefined ? _c : Colors.grey)
+                              .withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(AppRadii.md),
+                        ),
+                        child: Icon(typeIcon(slot.type),
+                            color: slot.isDefined ? _c : Colors.grey.shade500),
                       ),
-                      child: Icon(typeIcon(slot.type),
-                          color: slot.isDefined ? _c : Colors.grey.shade500),
-                    ),
-                    title: Text(
-                      slot.isDefined
-                          ? slot.result!.title
-                          : '${slot.order}. ${typeLabel(slot.type)}',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      slot.isDefined
-                          ? typeLabel(slot.type)
-                          : 'Not defined yet — tap to configure',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: slot.isDefined
-                            ? Colors.grey[600]
-                            : Colors.orange.shade700,
-                      ),
-                    ),
-                    trailing: IconButton(
-                      icon: Icon(
+                      title: Text(
                         slot.isDefined
-                            ? Icons.check_circle
-                            : Icons.remove_red_eye_outlined,
-                        color: slot.isDefined ? AppColors.success : _c,
+                            ? slot.result!.title
+                            : '${slot.order}. ${typeLabel(slot.type)}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      onPressed: () => _defineSlot(i),
+                      subtitle: Text(
+                        slot.isDefined
+                            ? typeLabel(slot.type)
+                            : 'Not defined yet — tap to configure',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: slot.isDefined
+                              ? Colors.grey[600]
+                              : Colors.orange.shade700,
+                        ),
+                      ),
+                      trailing: IconButton(
+                        icon: Icon(
+                          slot.isDefined
+                              ? Icons.check_circle
+                              : Icons.remove_red_eye_outlined,
+                          color: slot.isDefined ? AppColors.success : _c,
+                        ),
+                        onPressed: () => _defineSlot(i),
+                      ),
+                      onTap: () => _defineSlot(i),
                     ),
-                    onTap: () => _defineSlot(i),
                   ),
                 );
               },
@@ -326,13 +375,14 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
           child: SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: (_allDefined && !_isSaving) ? _createAll : null,
+              onPressed: (_allDefined && !_isSaving) ? _saveAndFinish : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: _c,
+                foregroundColor: AppColors.onPrimary,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 disabledBackgroundColor: Colors.grey.shade300,
                 shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(AppRadii.md)),
+                    borderRadius: BorderRadius.circular(AppRadii.md)),
               ),
               child: _isSaving
                   ? const SizedBox(
@@ -342,11 +392,10 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
                           strokeWidth: 2, color: Colors.white),
                     )
                   : Text(
-                      _allDefined
-                          ? 'Create ${_slots.length} Tasks'
-                          : 'Define all tasks to continue',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
+                      !_allDefined
+                          ? 'Define all tasks to continue'
+                          : (widget.isPendingActivity ? 'Continue' : 'Save'),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
             ),
           ),

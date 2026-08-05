@@ -1,6 +1,6 @@
 // screen_three.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -14,6 +14,9 @@ import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 // import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
 class ScreenThree extends StatefulWidget {
   final String contentId;
@@ -21,7 +24,13 @@ class ScreenThree extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect)? onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'arrange', 'studentOrder': [word, ...],
+  // 'correctOrder': [word, ...]} — full word sequences so the review
+  // screen can render both sentences side by side (or diffed) exactly
+  // as the student built it vs. the expected answer.
+  final TaskCompleteCallback? onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -68,25 +77,23 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
 
   Future<void> _setUp() async {
     // await _initTranslator();
-    await _initializeTts();
+    // await _initializeTts();
     await _fetchTask();
   }
 
-  Future<void> _initializeTts() async {
-    try {
-      await flutterTts.setSpeechRate(0.5);
-      await flutterTts.setPitch(1.0);
-      await flutterTts.setLanguage('en-GB');
-    } catch (e) {
-      debugPrint('Error initializing TTS: $e');
-    }
-  }
+  // Future<void> _initializeTts() async {
+  //   try {
+  //     await flutterTts.setSpeechRate(0.5);
+  //     await flutterTts.setPitch(1.0);
+  //     await flutterTts.setLanguage('en-GB');
+  //   } catch (e) {
+  //     debugPrint('Error initializing TTS: $e');
+  //   }
+  // }
 
   @override
   void dispose() {
-    translator?.close(); // ✅ Safe close
-    // player.dispose();
-    flutterTts.stop();
+    TaskTtsService.stop();
     super.dispose();
   }
 
@@ -128,14 +135,7 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
   }
 
   Future<void> _speak(String text) async {
-    if (text.isNotEmpty) {
-      try {
-        await flutterTts.setLanguage('en-GB');
-        await flutterTts.speak(text);
-      } catch (e) {
-        debugPrint('Error speaking: $e');
-      }
-    }
+    if (text.isNotEmpty) await TaskTtsService.speak(text, voice: TtsVoiceDefaults.defaultEnglish);
   }
 
   void _selectWord(Map<String, String> word) {
@@ -194,7 +194,11 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
         // Both correct and (hard) wrong now advance — ActivityPlayScreen
         // queues wrong tasks for a practice round at the end instead of
         // this screen retrying in place.
-        widget.onTaskComplete?.call(isCorrect);
+        widget.onTaskComplete?.call(isCorrect, {
+          'type': 'arrange',
+          'studentOrder': selected,
+          'correctOrder': answerEn,
+        });
       },
     );
   }

@@ -42,6 +42,15 @@ class AppColors {
   /// Informational banners and hints.
   static const Color info = Color(0xFF42A5F5);
 
+  /// Secondary accent, distinct from [info] — used when a screen already
+  /// uses info for one setting/card and needs a visually separate accent
+  /// for another (e.g. Quiz creation: Passing Score uses info, Maximum
+  /// Attempts uses accent, so the two cards don't visually merge into one
+  /// block). Purple was the ad-hoc literal used before this token existed;
+  /// kept the same hue so no existing screen changes appearance, just
+  /// stops using a raw Color.
+  static const Color accent = Color(0xFF9C6ADE);
+
   // Surfaces & text ---------------------------------------------------------
 
   /// Text / icons on top of [primary] (and on any saturated surface).

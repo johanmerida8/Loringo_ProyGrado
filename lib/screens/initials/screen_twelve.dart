@@ -9,6 +9,7 @@ import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 
 /// ODD ONE OUT
 /// Always 4 options. 3 belong to the shown category, 1 doesn't — the
@@ -21,7 +22,15 @@ class ScreenTwelve extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect)? onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'odd_one_out', 'category': <shown
+  // category label>, 'selectedIndex': <index the student tapped>,
+  // 'correctIndex': <the actual odd one out index>}. Kept as indices
+  // (rather than text labels) since these options are images without a
+  // reliable text field — the review screen renders the actual images
+  // by index instead.
+  final TaskCompleteCallback? onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -121,7 +130,12 @@ class _ScreenTwelveState extends State<ScreenTwelve> with RetryableTask {
       isCorrect: isCorrect,
       isPracticeRound: widget.isPracticeRound,
       onContinue: () {
-        widget.onTaskComplete?.call(isCorrect);
+        widget.onTaskComplete?.call(isCorrect, {
+          'type': 'odd_one_out',
+          'category': category,
+          'selectedIndex': selectedIndex,
+          'correctIndex': oddIndex,
+        });
       },
     );
   }

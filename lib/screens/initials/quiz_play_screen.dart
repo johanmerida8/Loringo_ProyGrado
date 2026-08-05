@@ -1,10 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-class UnitQuizPlayScreen extends StatefulWidget {
+class QuizPlayScreen extends StatefulWidget {
   final String contentId;
   final String unitId;
   final String quizId;
@@ -13,7 +12,7 @@ class UnitQuizPlayScreen extends StatefulWidget {
   final String studentName;
   final bool isPreview;
 
-  const UnitQuizPlayScreen({
+  const QuizPlayScreen({
     super.key,
     required this.contentId,
     required this.unitId,
@@ -25,26 +24,33 @@ class UnitQuizPlayScreen extends StatefulWidget {
   });
 
   @override
-  State<UnitQuizPlayScreen> createState() => _UnitQuizPlayScreenState();
+  State<QuizPlayScreen> createState() => _QuizPlayScreenState();
 }
 
-class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
+class _QuizPlayScreenState extends State<QuizPlayScreen> {
   final Database _db = Database();
-  
+
   late Future<Map<String, dynamic>> _quizDataFuture;
   final Map<String, int?> _selectedAnswers = {};
   final PageController _pageController = PageController();
   int _currentPage = 0;
   bool _isSubmitting = false;
-  String _unitTitle = '';
 
   // Cached data after loading
   int _totalQuestions = 0;
   List<Map<String, dynamic>> _questions = [];
   int _xpReward = 0;
   int _passingScore = 0;
-  
-  // NEW: Attempts tracking variables
+
+  /// True when this quiz's scope is 'lesson' — read from the quiz doc in
+  /// _loadQuizData. Drives every branch that skips the graded-Unit-Quiz
+  /// UI/gating: no Passing Score display, no attempts cap, always
+  /// retakeable, neutral "Complete!" result copy.
+  bool _isLessonScope = false;
+
+  // Attempts tracking — only meaningful for scope: 'unit'. For scope:
+  // 'lesson' these are loaded/displayed but never gate anything (see
+  // _canRetake and _buildQuestionChip).
   int _maxAttempts = 0;
   int _attemptsUsed = 0;
   int _attemptsRemaining = 0;
@@ -60,6 +66,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
         _xpReward = data['xpReward'];
         _passingScore = data['passingScore'];
         _maxAttempts = data['maxAttempts'];
+        _isLessonScope = data['isLessonScope'] as bool? ?? false;
       });
 
       // Load attempts info if not in preview mode
@@ -76,22 +83,26 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
   Future<void> _loadAttemptsInfo() async {
     try {
       final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
-      
+
       debugPrint('_loadAttemptsInfo - _maxAttempts: $_maxAttempts');
-      
+
       if (progressDoc.exists) {
         final data = progressDoc.data() as Map<String, dynamic>;
-        _attemptsUsed = data['attempts'] as int? ?? 1;
-        debugPrint('   attempts from Firestore: ${data['attempts']}');
+        _attemptsUsed = data['totalAttempts'] as int? ?? 1;
+        debugPrint('   attempts from Firestore: ${data['totalAttempts']}');
       } else {
         _attemptsUsed = 0;
         debugPrint('   No progress document');
       }
 
-      // Calculate remaining attempts using the current _maxAttempts
+      // Calculate remaining attempts using the current _maxAttempts.
+      // Meaningless for scope: 'lesson' (maxAttempts is the fixed 99
+      // sentinel there) but harmless to compute either way — the UI
+      // simply never displays it for that scope (see
+      // _buildQuestionChip).
       _attemptsRemaining = _maxAttempts - _attemptsUsed;
       if (_attemptsRemaining < 0) _attemptsRemaining = 0;
-      
+
       debugPrint('   _attemptsUsed: $_attemptsUsed');
       debugPrint('   _attemptsRemaining: $_attemptsRemaining');
 
@@ -103,26 +114,22 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
   }
 
   Future<Map<String, dynamic>> _loadQuizData() async {
-    final quizDoc = await _db.getPersonalizedUnitQuiz(widget.quizId);
-    
+    final quizDoc = await _db.getQuiz(widget.quizId);
+
     if (!quizDoc.exists) throw Exception('Quiz not found');
-    
+
     final quizData = quizDoc.data() as Map<String, dynamic>;
-    
-    // Get max attempts from quiz data (default to 3)
+    final isLessonScope = (quizData['scope'] as String? ?? 'unit') == 'lesson';
+
+    // Get max attempts from quiz data (default to 0). For scope:
+    // 'lesson' this is the fixed 99 sentinel create_quiz_screen.dart
+    // writes — not read as a real cap anywhere in this file anymore.
     final maxAttempts = (quizData['maxAttempts'] as num?)?.toInt() ?? 0;
 
     _maxAttempts = maxAttempts;
-    
-    try {
-      final unitDoc = await _db.personalizedUnits(widget.contentId).doc(widget.unitId).get();
-      _unitTitle = (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? widget.quizTitle;
-    } catch (_) {
-      _unitTitle = widget.quizTitle;
-    }
-    
-    final questionsSnapshot = await _db.getUnitQuizQuestions(widget.quizId);
-    
+
+    final questionsSnapshot = await _db.getQuizQuestions(widget.quizId);
+
     final questions = questionsSnapshot.docs.map((doc) {
       final d = doc.data() as Map<String, dynamic>;
       return {
@@ -132,7 +139,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
         'correctIndex': (d['correctIndex'] as num?)?.toInt() ?? 0,
       };
     }).toList();
-    
+
     return {
       'title': quizData['title'] ?? widget.quizTitle,
       'passingScore': (quizData['passingScore'] as num?)?.toInt() ?? 1,
@@ -140,6 +147,7 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
       'totalQuestions': questions.length,
       'questions': questions,
       'maxAttempts': maxAttempts,
+      'isLessonScope': isLessonScope,
     };
   }
 
@@ -165,17 +173,21 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     }
   }
 
-  // Check if student can retake
+  /// Check if student can retake. For scope: 'lesson' this is
+  /// unconditionally true outside preview mode — Lesson Quiz is
+  /// ungraded, so there is no "already passed" or "attempts exhausted"
+  /// state to check for. scope: 'unit' logic is unchanged.
   Future<bool> _canRetake() async {
     if (widget.isPreview) return false;
     if (widget.studentId == null) return false;
-    
+
+    if (_isLessonScope) return true;
+
     final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
     if (!progressDoc.exists) return true; // first attempt
-    
+
     final data = progressDoc.data() as Map<String, dynamic>?;
-    final attemptsUsed = data?['attempts'] as int? ?? 1;
-    final isCompleted = data?['isCompleted'] as bool? ?? false;
+    final attemptsUsed = data?['totalAttempts'] as int? ?? 1;
     final passed = data?['passed'] as bool? ?? false;
     final reportGenerated = data?['reportGenerated'] as bool? ?? false;
 
@@ -184,12 +196,24 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
 
     // If already passed, no need to retake
     if (passed) return false;
-    
-    // If the quiz is marked as completed (regardless of pass/fail), 
-    // student cannot retake - it's done
-    if (isCompleted) return false;
-    
-    // Only allow retake if attempts remaining and not completed
+
+    // BUGFIX: this used to also check `if (isCompleted) return false;`
+    // here, reading Database.saveQuizCompletion's 'isCompleted' field.
+    // That field is set to true on EVERY submitted attempt — passed or
+    // failed, first try or a later one — it only means "an attempt has
+    // been recorded," not "no attempts remain." So after a first FAILED
+    // attempt (isCompleted: true, passed: false), this check fired
+    // before the actual attempts-remaining check below ever ran,
+    // permanently blocking retakes for a student who still had budget
+    // left — exactly the "You have already completed this quiz" message
+    // seen after a legitimate second try with 2/3 attempts still
+    // available.
+    //
+    // The real "have attempts run out" check is the attemptsUsed <
+    // _maxAttempts comparison below — that's the only thing this method
+    // needs to gate on once passed/reportGenerated are ruled out.
+
+    // Only allow retake if attempts remaining
     return attemptsUsed < _maxAttempts;
   }
 
@@ -208,31 +232,39 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
       return;
     }
 
-    // Check if student can take this quiz
+    // Check if student can take this quiz. For scope: 'lesson',
+    // _canRetake always returns true outside preview, so this branch is
+    // effectively unreachable for Lesson Quiz — kept as-is since it's
+    // still the correct gate for scope: 'unit'.
     final canRetake = await _canRetake();
     if (!canRetake && !widget.isPreview) {
       // Get more details about why they can't retake
       final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
       String message = 'You cannot take this quiz.';
-      
+
       if (progressDoc.exists) {
         final data = progressDoc.data() as Map<String, dynamic>;
-        final isCompleted = data['isCompleted'] as bool? ?? false;
         final passed = data['passed'] as bool? ?? false;
-        final attemptsUsed = data['attempts'] as int? ?? 0;
+        final attemptsUsed = data['totalAttempts'] as int? ?? 0;
         final reportGenerated = data['reportGenerated'] as bool? ?? false;
-        
+
+        // BUGFIX: dropped the standalone `isCompleted` branch that used
+        // to sit here — see _canRetake's doc comment above for why
+        // 'isCompleted' (true on every submitted attempt, pass or fail)
+        // was never a valid signal for "no attempts left." The real
+        // reasons _canRetake can return false are, in order: a report
+        // was already generated, the student already passed, or
+        // attempts are exhausted — this message now mirrors exactly
+        // those three checks.
         if (reportGenerated) {
           message = 'This quiz has already been reviewed and reported.';
         } else if (passed) {
           message = 'You have already passed this quiz.';
-        } else if (isCompleted) {
-          message = 'You have already completed this quiz.';
         } else if (attemptsUsed >= _maxAttempts) {
           message = 'You have used all $_maxAttempts attempts for this quiz.';
         }
       }
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
@@ -252,11 +284,15 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     }
 
     final scorePercent = (correctCount / totalQ * 100).round();
-    final passed = correctCount >= passingScore;
-    final stars = scorePercent >= 90 ? 3 : scorePercent >= 70 ? 2 : 1;
-    
+    // scope: 'lesson' has no passing threshold — always counts as
+    // passed client-side too, mirroring the server-side force in
+    // database.dart's saveQuizCompletion. This keeps showRetake/result
+    // copy below consistent with what actually gets persisted instead
+    // of computing a "passed" value that's about to be overridden.
+    final passed = _isLessonScope ? true : correctCount >= passingScore;
+
     int xpEarned = 0;
-    
+
     // Declare these variables outside the try block
     int currentAttemptCount = 0;
     int remainingAttempts = 0;
@@ -264,20 +300,23 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     if (!widget.isPreview && widget.studentId != null) {
       try {
         final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
-        
-        final wasCompleted = progressDoc.exists && 
+
+        final wasCompleted = progressDoc.exists &&
             (progressDoc.data() as Map<String, dynamic>?)?['isCompleted'] == true;
-        
+
         // Get previous score and attempts
         int previousScore = -1;
         if (progressDoc.exists) {
           final data = progressDoc.data() as Map<String, dynamic>;
-          previousScore = data['score'] as int? ?? -1;
-          currentAttemptCount = data['attempts'] as int? ?? 0;
+          previousScore = data['correctAnswers'] as int? ?? -1;
+          currentAttemptCount = data['totalAttempts'] as int? ?? 0;
         }
-        
+
         // ============================================================
-        // XP CALCULATION
+        // XP CALCULATION (informational only for scope: 'lesson' — see
+        // below; saveQuizCompletion recomputes the real value there
+        // from the quiz's configured xpReward vs first-attempt-or-retry,
+        // ignoring whatever is calculated here for that scope).
         // ============================================================
         if (!wasCompleted && passed) {
           // First time passing: award XP based on percentage correct
@@ -296,43 +335,56 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
         } else {
           debugPrint('No XP earned - wasCompleted: $wasCompleted, passed: $passed, correctCount: $correctCount, previousScore: $previousScore');
         }
-        
-        debugPrint('Saving quiz completion with xpEarned: $xpEarned');
-        
+
+        debugPrint('Saving quiz completion with xpEarned: $xpEarned (informational for lesson scope — server recomputes)');
+
+        // isClosedAfterAttempts: for scope: 'lesson' this is irrelevant
+        // to gating (there's no cap to exhaust and _canRetake always
+        // returns true), but still computed the same way for scope:
+        // 'unit', which is what actually uses it.
+        final newAttemptsUsedForClose = currentAttemptCount + 1;
+        final bool shouldCloseAfterThisAttempt =
+            _isLessonScope || passed || newAttemptsUsedForClose >= _maxAttempts;
+
+        final answers = <Map<String, dynamic>>[
+          for (int i = 0; i < _questions.length; i++)
+            {
+              'questionIndex': i,
+              'selectedIndex': _selectedAnswers[i.toString()],
+              'correctIndex': _questions[i]['correctIndex'],
+              'isCorrect': _selectedAnswers[i.toString()] == _questions[i]['correctIndex'],
+            },
+        ];
+
         await _db.saveQuizCompletion(
           studentId: widget.studentId!,
           quizId: widget.quizId,
           contentId: widget.contentId,
           unitId: widget.unitId,
-          score: correctCount,
+          correctAnswers: correctCount,
           totalQuestions: totalQ,
-          stars: stars,
+          answers: answers,
           xpEarned: xpEarned,
-          updateBestOnly: wasCompleted,
-          unitTitle: _unitTitle,
-          generateReport: false,
-          reportType: 'unit',
-          studentName: widget.studentName,
           passed: passed,
-          isClosedAfterAttempts: true,
+          isClosedAfterAttempts: shouldCloseAfterThisAttempt,
         );
 
-        await _saveStudentAnswers();
-        
         // Update attempts remaining after save
         await _loadAttemptsInfo();
       } catch (e) {
-        debugPrint('Error saving unit quiz progress: $e');
+        debugPrint('Error saving quiz progress: $e');
       }
     }
 
     setState(() => _isSubmitting = false);
     if (!mounted) return;
 
-    // Calculate remaining attempts
+    // Calculate remaining attempts — meaningless for scope: 'lesson'
+    // (retries are unconditionally allowed regardless of this number),
+    // still used for scope: 'unit' below.
     final newAttemptsUsed = currentAttemptCount + 1;
     remainingAttempts = _maxAttempts - newAttemptsUsed;
-    
+
     debugPrint('   Submit Quiz - Attempts Calculation:');
     debugPrint('   currentAttemptCount: $currentAttemptCount');
     debugPrint('   newAttemptsUsed: $newAttemptsUsed');
@@ -340,40 +392,65 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
     debugPrint('   remainingAttempts: $remainingAttempts');
     debugPrint('   Final xpEarned being passed to ActivityCompleteScreen: $xpEarned');
 
-    // Only show retake button if:
-    // 1. Quiz was NOT passed AND
-    // 2. There are remaining attempts
-    final bool showRetake = !passed && remainingAttempts > 0;
+    // scope: 'lesson' always offers retake (ungraded, no attempts cap).
+    // scope: 'unit' keeps the original rule: only if not passed AND
+    // attempts remain.
+    final bool showRetake = _isLessonScope || (!passed && remainingAttempts > 0);
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => ActivityCompleteScreen(
-          screenTitle: passed ? 'Quiz Passed! 🎉' : 'Quiz Complete',
+          // scope: 'lesson' always shows a neutral "Complete!" — there
+          // is no passing/failing state to celebrate or soften.
+          screenTitle: _isLessonScope
+              ? 'Complete! 🎉'
+              : (passed ? 'Quiz Passed! 🎉' : 'Quiz Complete'),
           activityTitle: widget.quizTitle,
           scorePercent: scorePercent,
           correctAnswers: correctCount,
           wrongAnswers: totalQ - correctCount,
           xpEarned: xpEarned,
-          isGraded: true,
-          onRetake: showRetake ? _onRetakeQuiz : null,  // Only show retake if not passed AND attempts remain
-          attemptsRemaining: remainingAttempts > 0 ? remainingAttempts : 0,
-          maxAttempts: _maxAttempts,
+          isGraded: !_isLessonScope,
+          onRetake: showRetake ? (ctx) => _onRetakeQuiz(ctx) : null,
+          attemptsRemaining: _isLessonScope ? 0 : (remainingAttempts > 0 ? remainingAttempts : 0),
+          maxAttempts: _isLessonScope ? 0 : _maxAttempts,
         ),
       ),
     );
   }
 
-  void _onRetakeQuiz() {
-    // Reset selected answers
+  // BUGFIX (part 2): this method used to navigate via its OWN
+  // `context` (Navigator.of(context) with no argument, implicitly using
+  // _QuizPlayScreenState's context). That context belongs to the OLD
+  // QuizPlayScreen instance — the one ActivityCompleteScreen replaced
+  // via pushReplacement when the quiz was submitted. Flutter's State
+  // object survives for a moment after its widget leaves the tree
+  // (that's why this method could still be *called* at all, as a
+  // stored callback on ActivityCompleteScreen), but its BuildContext is
+  // already unmounted by the time the "Try Again" button is tapped —
+  // State.context throws "This widget has been unmounted" the instant
+  // anything reads it, which is exactly the assertion in the trace.
+  //
+  // Part 1 of this bugfix (removing the stray jumpToPage call) fixed
+  // the crash that happened on the FIRST line of this method; this is
+  // the crash that was waiting on the NEXT line once that one was
+  // cleared — same root cause (using a dead instance's context),
+  // different statement.
+  //
+  // Fix: take the caller's BuildContext as a parameter instead of
+  // reading `this.context`. The caller is
+  // ActivityCompleteScreen._onRetake(), which passes ITS OWN context —
+  // that screen is the one actually mounted and visible when the
+  // button is tapped, so navigating from there is always valid.
+  void _onRetakeQuiz(BuildContext callerContext) {
     _selectedAnswers.clear();
     _currentPage = 0;
-    _pageController.jumpToPage(0);
-    
+
     // Use pushReplacement to replace the completion screen with a fresh quiz screen
-    Navigator.of(context).pushReplacement(
+    Navigator.of(callerContext).pushReplacement(
       MaterialPageRoute(
-        builder: (context) => UnitQuizPlayScreen(
+        builder: (context) => QuizPlayScreen(
           contentId: widget.contentId,
           unitId: widget.unitId,
           quizId: widget.quizId,
@@ -385,62 +462,6 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
       ),
     );
   }
-
-  Future<void> _saveStudentAnswers() async {
-    try {
-      final answers = <Map<String, dynamic>>[];
-      for (int i = 0; i < _questions.length; i++) {
-        answers.add({
-          'questionIndex': i,
-          'selectedIndex': _selectedAnswers[i.toString()],
-          'correctIndex': _questions[i]['correctIndex'],
-          'isCorrect': _selectedAnswers[i.toString()] == _questions[i]['correctIndex'],
-        });
-      }
-      
-      await _db.studentProgress(widget.studentId!)
-          .doc(widget.quizId)
-          .set({
-            'answers': answers,
-            'completedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-    } catch (e) {
-      debugPrint('Error saving student answers: $e');
-    }
-  }
-
-  // NEW: Build attempts remaining indicator for header
-  // Widget _buildAttemptsRemaining() {
-  //   if (widget.isPreview || _isLoadingAttempts) {
-  //     return const SizedBox.shrink();
-  //   }
-    
-  //   final remaining = _maxAttempts - _attemptsUsed;
-  //   final color = remaining > 0 ? Colors.blue : Colors.red;
-    
-  //   return Container(
-  //     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-  //     decoration: BoxDecoration(
-  //       color: color.withOpacity(0.1),
-  //       borderRadius: BorderRadius.circular(12),
-  //     ),
-  //     child: Row(
-  //       mainAxisSize: MainAxisSize.min,
-  //       children: [
-  //         Icon(
-  //           remaining > 0 ? Icons.refresh_rounded : Icons.warning_amber_rounded,
-  //           size: 14,
-  //           color: color,
-  //         ),
-  //         const SizedBox(width: 4),
-  //         Text(
-  //           'Attempts: $remaining/$_maxAttempts',
-  //           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
 
   @override
   Widget build(BuildContext context) {
@@ -491,20 +512,22 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
                   children: [
                     // Question and attempts combined
                     _buildQuestionChip(),
-                    
+
                     // XP reward
                     _buildInfoChip(
                       text: '$_xpReward XP',
                       icon: Icons.star_rounded,
                       color: Colors.amber,
                     ),
-                    
-                    // Passing score
-                    _buildInfoChip(
-                      text: 'Pass: $_passingScore/$_totalQuestions',
-                      icon: Icons.check_circle_outline,
-                      color: AppColors.success,
-                    ),
+
+                    // Passing score — Unit Quiz only. Lesson Quiz has no
+                    // threshold to show.
+                    if (!_isLessonScope)
+                      _buildInfoChip(
+                        text: 'Pass: $_passingScore/$_totalQuestions',
+                        icon: Icons.check_circle_outline,
+                        color: AppColors.success,
+                      ),
                   ],
                 ),
               ),
@@ -598,10 +621,13 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
   Widget _buildQuestionChip() {
     final primary = AppColors.primary;
 
-    final showAttempts = !widget.isPreview && 
+    // Attempts pip only makes sense for scope: 'unit' — Lesson Quiz has
+    // no real cap to show (maxAttempts is the fixed 99 sentinel there).
+    final showAttempts = !widget.isPreview &&
         !_isLoadingAttempts &&
+        !_isLessonScope &&
         _maxAttempts > 1;
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -637,8 +663,8 @@ class _UnitQuizPlayScreenState extends State<UnitQuizPlayScreen> {
                 Text(
                   '${_attemptsRemaining}/$_maxAttempts',
                   style: TextStyle(
-                    fontSize: 11, 
-                    fontWeight: FontWeight.w500, 
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
                     color: _attemptsRemaining > 0 ? Colors.blue : Colors.red,
                   ),
                 ),

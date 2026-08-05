@@ -9,11 +9,13 @@ import 'package:loringo_app/screens/teacher/widgets/teacher_image_tile.dart';
 // ── TeacherViewImagesScreen ───────────────────────────────────────────────────
 
 class TeacherViewImagesScreen extends StatefulWidget {
+  final String ownerId;
   final String categoryId;
   final String categoryName;
 
   const TeacherViewImagesScreen(
       {super.key,
+      required this.ownerId,
       required this.categoryId,
       required this.categoryName});
 
@@ -91,6 +93,7 @@ class _TeacherViewImagesScreenState
         context,
         MaterialPageRoute(
             builder: (_) => TeacherUploadImageScreen(
+                ownerId:      widget.ownerId,
                 categoryId:   widget.categoryId,
                 categoryName: widget.categoryName)));
 
@@ -110,7 +113,7 @@ class _TeacherViewImagesScreenState
     setState(() => isLoading = true);
     try {
       final fetched =
-          await _db.getImagesByCategory(widget.categoryId);
+          await _db.getImagesByCategory(widget.ownerId, widget.categoryId);
       setState(() {
         images    = fetched;
         isLoading = false;
@@ -164,7 +167,7 @@ class _TeacherViewImagesScreenState
       }
       return;
     }
-    await _db.deleteImage(widget.categoryId, imageId);
+    await _db.deleteImage(widget.ownerId, widget.categoryId, imageId);
     if (mounted) {
       _showSuccessSnackBar(context, 'Image deleted');
       _loadImages();

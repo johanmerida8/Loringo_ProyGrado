@@ -3,13 +3,53 @@ import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-// NOTE: previously had a Scaffold.appBar (solid `groupColor` bar with a
-// "N Q" pill in actions:). Replaced with TeacherScreenHeader to match the
-// rest of the hierarchy. Also replaced every hardcoded Colors.* with
-// AppColors tokens (blue → AppColors.info, purple → left as a deliberate
-// distinct accent for the Attempts card since neither AppColors.info nor
-// AppColors.warning read correctly there — FLAGGED below for CJ to confirm
-// or pick a token).
+class CreateQuizScreen extends StatefulWidget {
+  final String groupId;
+  final String contentId;
+  final String unitId;
+  final Color groupColor;
+
+  /// 'unit' or 'lesson'. Defaults to 'unit' to preserve every existing
+  /// call site's behavior without requiring changes at the call site.
+  final String scope;
+
+  /// Required when scope == 'lesson' — which Lesson this quiz evaluates.
+  /// Ignored (and should be left null) when scope == 'unit'.
+  final String? lessonId;
+
+  /// Unit or Lesson title, passed through so the Quiz Title field can be
+  /// pre-filled with "<name> Quiz" on create. Purely a starting
+  /// suggestion — the field stays editable and this has no effect once
+  /// isEditing is true (existingData's saved title wins).
+  final String? destinationTitle;
+
+  // Edit mode
+  final String? quizId;
+  final Map<String, dynamic>? existingData;
+
+  const CreateQuizScreen({
+    super.key,
+    required this.groupId,
+    required this.contentId,
+    required this.unitId,
+    required this.groupColor,
+    this.scope = 'unit',
+    this.lessonId,
+    this.destinationTitle,
+    this.quizId,
+    this.existingData,
+  }) : assert(
+          scope != 'lesson' || lessonId != null,
+          'lessonId is required when scope is lesson',
+        );
+
+  bool get isEditing => quizId != null;
+  bool get isLessonScope => scope == 'lesson';
+
+  @override
+  State<CreateQuizScreen> createState() =>
+      _CreateQuizScreenState();
+}
 
 // ── Question model ────────────────────────────────────────────────────────────
 class _QuizQuestion {
@@ -30,40 +70,13 @@ class _QuizQuestion {
   }
 }
 
-class CreatePersonalizedUnitQuizScreen extends StatefulWidget {
-  final String groupId;
-  final String contentId;
-  final String unitId;
-  final Color groupColor;
-  // Edit mode
-  final String? quizId;
-  final Map<String, dynamic>? existingData;
-
-  const CreatePersonalizedUnitQuizScreen({
-    super.key,
-    required this.groupId,
-    required this.contentId,
-    required this.unitId,
-    required this.groupColor,
-    this.quizId,
-    this.existingData,
-  });
-
-  bool get isEditing => quizId != null;
-
-  @override
-  State<CreatePersonalizedUnitQuizScreen> createState() =>
-      _CreatePersonalizedUnitQuizScreenState();
-}
-
-class _CreatePersonalizedUnitQuizScreenState
-    extends State<CreatePersonalizedUnitQuizScreen> {
+class _CreateQuizScreenState
+    extends State<CreateQuizScreen> {
   final _formKey = GlobalKey<FormState>();
   final Database _db = Database();
-  final TextEditingController _titleCtrl = TextEditingController();
 
   int _passingScore = 1;
-  int _xpReward     = 50;
+  late int _xpReward;
 
   List<_QuizQuestion> _questions = [];
   bool _isLoadingQuestions = false;
@@ -71,31 +84,110 @@ class _CreatePersonalizedUnitQuizScreenState
 
   int _maxAttempts = 0;
 
+  /// Snapshot of the questions exactly as they came from Firestore, taken
+  /// once in _loadExistingQuestions before the user can touch anything —
+  /// used only by _hasChanges to tell a real edit apart from "opened the
+  /// screen and tapped Save without changing anything". Stays null for a
+  /// brand-new Quiz (isEditing == false), where every save is by
+  /// definition a change.
+  List<Map<String, dynamic>>? _originalQuestions;
+
+  /// Name of the Unit or Lesson this quiz is tied to, for display in
+  /// the read-only identity chip. On create this starts from
+  /// widget.destinationTitle (already known, no fetch needed); on edit
+  /// it's null until _loadDestinationName fills it in, since
+  /// destinationTitle is only ever passed by the picker flow, not by
+  /// the edit entry point in _QuizCard.
+  String? _destinationName;
+
+  /// 100 for scope: unit, 50 for scope: lesson. See class-level comment.
+  int get _maxXp => widget.isLessonScope ? 50 : 100;
+
   @override
   void initState() {
     super.initState();
 
-    if (widget.isEditing && widget.existingData != null) {
-      // Pre-fill header fields
-      _titleCtrl.text  = widget.existingData!['title'] as String? ?? '';
-      _passingScore    = (widget.existingData!['passingScore'] as num?)?.toInt() ?? 1;
-      _xpReward        = (widget.existingData!['xpReward'] as num?)?.toInt() ?? 50;
+    // Default XP reward scales with scope so a fresh Lesson Quiz doesn't
+    // start pre-filled with a value only valid for Unit Quiz.
+    _xpReward = widget.isLessonScope ? 25 : 50;
+    _destinationName = widget.destinationTitle;
 
-      // load attempts configuration
-      _maxAttempts = (widget.existingData!['maxAttempts'] as num?)?.toInt() ?? 0;
+    if (widget.isEditing && widget.existingData != null) {
+      // Pre-fill header fields — title intentionally NOT pre-filled here
+      // anymore; it's re-derived fresh at save time (see _resolveTitle),
+      // so whatever was stored before is irrelevant to this form.
+      // For lesson scope, passingScore/maxAttempts aren't shown or
+      // editable, so they're not read back from existingData here — the
+      // fixed sentinels in _save() are what get written on next save
+      // regardless of what an older graded Lesson Quiz doc had stored.
+      if (!widget.isLessonScope) {
+        _passingScore = (widget.existingData!['passingScore'] as num?)?.toInt() ?? 1;
+        _maxAttempts  = (widget.existingData!['maxAttempts'] as num?)?.toInt() ?? 0;
+      }
+      _xpReward = (widget.existingData!['xpReward'] as num?)?.toInt() ?? _xpReward;
 
       // Load questions from the subcollection
       _isLoadingQuestions = true;
       _loadExistingQuestions();
+
+      // Edit entry point (_QuizCard) doesn't pass destinationTitle —
+      // fetch it directly so the identity chip has something to show.
+      if (_destinationName == null) _loadDestinationName();
     } else {
-      // New quiz — start with 2 blank questions
+      // New quiz — start with 2 blank questions.
       _questions = [_QuizQuestion(), _QuizQuestion()];
+    }
+  }
+
+  /// Fetches the Unit/Lesson name for display only (the identity chip).
+  /// Only called when destinationTitle wasn't already provided (i.e. the
+  /// edit entry point). Separate from _resolveTitle because this sets
+  /// UI state via setState; _resolveTitle runs at save time and returns
+  /// its result directly instead.
+  Future<void> _loadDestinationName() async {
+    try {
+      String name;
+      if (widget.isLessonScope) {
+        final lessonDoc = await _db
+            .personalizedLessons(widget.contentId, widget.unitId)
+            .doc(widget.lessonId)
+            .get();
+        name = (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'this lesson';
+      } else {
+        final unitDoc = await _db.personalizedUnits(widget.contentId).doc(widget.unitId).get();
+        name = (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'this unit';
+      }
+      if (mounted) setState(() => _destinationName = name);
+    } catch (_) {
+      // Silent — the chip falls back to the generic "this unit/lesson"
+      // wording already baked into _buildSettingsCard's null-coalesce.
+    }
+  }
+
+  /// Derives the Quiz's stored title from the CURRENT Unit/Lesson name —
+  /// never typed by the teacher. Called at save time (both create and
+  /// edit) so the stored title stays in sync with whatever the Unit or
+  /// Lesson is named right now, even if it was renamed since this Quiz
+  /// was created. Falls back to a generic label if the Unit/Lesson doc
+  /// is missing (shouldn't happen in practice, but avoids a crash).
+  Future<String> _resolveTitle() async {
+    if (widget.isLessonScope) {
+      final lessonDoc = await _db
+          .personalizedLessons(widget.contentId, widget.unitId)
+          .doc(widget.lessonId)
+          .get();
+      final lessonName = (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'Lesson';
+      return '$lessonName — Lesson Quiz';
+    } else {
+      final unitDoc = await _db.personalizedUnits(widget.contentId).doc(widget.unitId).get();
+      final unitName = (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'Unit';
+      return '$unitName — Unit Test';
     }
   }
 
   Future<void> _loadExistingQuestions() async {
     try {
-      final snap = await _db.getUnitQuizQuestions(widget.quizId!);
+      final snap = await _db.getQuizQuestions(widget.quizId!);
 
       final loaded = snap.docs.map((doc) {
         final d = doc.data() as Map<String, dynamic>;
@@ -109,13 +201,27 @@ class _CreatePersonalizedUnitQuizScreenState
         );
       }).toList();
 
+      // Snapshot BEFORE the empty-fallback below — that fallback exists
+      // purely so the form has something to edit, it must not count as
+      // part of the original saved state.
+      _originalQuestions = loaded
+          .map((q) => {
+                'question': q.questionCtrl.text.trim(),
+                'options': q.optionCtrls.map((c) => c.text.trim()).toList(),
+                'correctIndex': q.correctIndex,
+              })
+          .toList();
+
       if (loaded.isEmpty) loaded.add(_QuizQuestion());
 
       setState(() {
         _questions          = loaded;
         _isLoadingQuestions = false;
-        // Re-clamp passing score now that we know question count
-        _passingScore = _passingScore.clamp(1, _questions.length);
+        // Re-clamp passing score now that we know question count —
+        // only meaningful for unit scope, where the field is shown.
+        if (!widget.isLessonScope) {
+          _passingScore = _passingScore.clamp(1, _questions.length);
+        }
       });
     } catch (e) {
       setState(() {
@@ -132,7 +238,6 @@ class _CreatePersonalizedUnitQuizScreenState
 
   @override
   void dispose() {
-    _titleCtrl.dispose();
     for (final q in _questions) q.dispose();
     super.dispose();
   }
@@ -148,19 +253,14 @@ class _CreatePersonalizedUnitQuizScreenState
       setState(() {
         _questions[index].dispose();
         _questions.removeAt(index);
-        _passingScore = _passingScore.clamp(1, _questions.length);
+        if (!widget.isLessonScope) {
+          _passingScore = _passingScore.clamp(1, _questions.length);
+        }
       });
     }
   }
 
   // ── Validation ─────────────────────────────────────────────────────────────
-
-  String? _validateTitle(String? v) {
-    if (v == null || v.trim().isEmpty) return 'Title is required';
-    if (v.trim().length < 3) return 'Title must be at least 3 characters';
-    if (v.trim().length > 80) return 'Title must be 80 characters or fewer';
-    return null;
-  }
 
   bool _validateQuestions() {
     for (int i = 0; i < _questions.length; i++) {
@@ -183,19 +283,66 @@ class _CreatePersonalizedUnitQuizScreenState
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
+  /// True if the form's current values differ from what was actually
+  /// loaded from Firestore for this Quiz. Always true when creating (there
+  /// is nothing to compare against). Compares every field updateQuiz would
+  /// otherwise unconditionally overwrite — title (re-derived from the
+  /// Unit/Lesson's current name, so a rename since this Quiz was last
+  /// saved counts as a change even if nothing in the form itself was
+  /// touched), passing score / XP / max attempts, and every question's
+  /// text, 4 options and correct answer, in order.
+  bool _hasChanges({
+    required String resolvedTitle,
+    required int effectivePassingScore,
+    required int effectiveMaxAttempts,
+    required List<Map<String, dynamic>> questionsList,
+  }) {
+    if (!widget.isEditing || widget.existingData == null) return true;
+    final original = widget.existingData!;
+
+    if (resolvedTitle != (original['title'] as String? ?? '')) return true;
+    if (effectivePassingScore != ((original['passingScore'] as num?)?.toInt() ?? 0)) {
+      return true;
+    }
+    if (_xpReward != ((original['xpReward'] as num?)?.toInt() ?? 0)) return true;
+    if (effectiveMaxAttempts != ((original['maxAttempts'] as num?)?.toInt() ?? 0)) {
+      return true;
+    }
+
+    final origQuestions = _originalQuestions ?? const [];
+    if (origQuestions.length != questionsList.length) return true;
+    for (var i = 0; i < origQuestions.length; i++) {
+      final a = origQuestions[i];
+      final b = questionsList[i];
+      if (a['question'] != b['question']) return true;
+      if (a['correctIndex'] != b['correctIndex']) return true;
+      final aOpts = List<String>.from(a['options'] as List);
+      final bOpts = List<String>.from(b['options'] as List);
+      if (aOpts.length != bOpts.length) return true;
+      for (var o = 0; o < aOpts.length; o++) {
+        if (aOpts[o] != bOpts[o]) return true;
+      }
+    }
+    return false;
+  }
+
   // ── Save ───────────────────────────────────────────────────────────────────
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (!_validateQuestions()) return;
 
-    if (_maxAttempts < 1 || _maxAttempts > 5) {
+    // Attempts validation only applies to Unit Quiz — Lesson Quiz never
+    // shows this field and always sends the fixed unlimited sentinel.
+    if (!widget.isLessonScope && (_maxAttempts < 1 || _maxAttempts > 5)) {
       _showSnack('Please set maximum attempts (1-5)', color: AppColors.warning);
       return;
     }
 
     setState(() => _isSaving = true);
     try {
+      final resolvedTitle = await _resolveTitle();
+
       final questionsList = _questions.asMap().entries.map((e) => {
         'question':     e.value.questionCtrl.text.trim(),
         'options':      e.value.optionCtrls.map((c) => c.text.trim()).toList(),
@@ -203,38 +350,76 @@ class _CreatePersonalizedUnitQuizScreenState
         'order':        e.key + 1,
       }).toList();
 
+      // Lesson Quiz is ungraded: passingScore is sent as "all questions"
+      // (irrelevant in practice — saveQuizCompletion no longer branches
+      // on it for lesson scope) and maxAttempts as a large fixed value
+      // since retries are unlimited by design. See class-level comment.
+      final effectivePassingScore = widget.isLessonScope ? questionsList.length : _passingScore;
+      final effectiveMaxAttempts  = widget.isLessonScope ? 99 : _maxAttempts;
+
       if (widget.isEditing) {
-        // Update: rewrite the whole quiz (header + questions subcollection)
-        await _db.updatePersonalizedUnitQuiz(
-          quizId: widget.quizId!, 
-          title: _titleCtrl.text.trim(), 
+        // Nothing to write if the form matches what's already saved —
+        // updateQuiz would otherwise unconditionally overwrite the
+        // top-level fields AND delete+recreate every question doc even
+        // when nothing actually changed.
+        if (!_hasChanges(
+          resolvedTitle: resolvedTitle,
+          effectivePassingScore: effectivePassingScore,
+          effectiveMaxAttempts: effectiveMaxAttempts,
+          questionsList: questionsList,
+        )) {
+          if (mounted) {
+            _showSnack('No changes made', color: AppColors.muted);
+            Navigator.pop(context);
+          }
+          return;
+        }
+
+        // scope/lessonId intentionally not passed — immutable post-creation.
+        // title re-derived above so editing an existing Quiz refreshes it
+        // to match the Unit/Lesson's current name.
+        await _db.updateQuiz(
+          quizId: widget.quizId!,
+          title: resolvedTitle,
           questions: questionsList,
-          passingScore: _passingScore, 
-          xpReward: _xpReward, 
-          maxAttempts: _maxAttempts,
+          passingScore: effectivePassingScore,
+          xpReward: _xpReward,
+          maxAttempts: effectiveMaxAttempts,
         );
         if (mounted) {
-          _showSnack('Unit quiz updated successfully', color: AppColors.success);
+          _showSnack(
+            widget.isLessonScope ? 'Lesson Quiz updated successfully' : 'Quiz updated successfully',
+            color: AppColors.success,
+          );
           Navigator.pop(context);
         }
       } else {
-        final quizId = 'unit_quiz_${DateTime.now().millisecondsSinceEpoch}';
-        await _db.createPersonalizedUnitQuiz(
+        final quizId = 'quiz_${DateTime.now().millisecondsSinceEpoch}';
+        await _db.createQuiz(
           contentId:    widget.contentId,
           unitId:       widget.unitId,
           quizId:       quizId,
-          title:        _titleCtrl.text.trim(),
+          title:        resolvedTitle,
           questions:    questionsList,
-          passingScore: _passingScore,
+          passingScore: effectivePassingScore,
           xpReward:     _xpReward,
-          maxAttempts: _maxAttempts,
+          maxAttempts:  effectiveMaxAttempts,
+          scope:        widget.scope,
+          lessonId:     widget.lessonId,
         );
         if (mounted) {
-          _showSnack('Unit quiz created successfully', color: AppColors.success);
+          _showSnack(
+            widget.isLessonScope ? 'Lesson Quiz created successfully' : 'Quiz created successfully',
+            color: AppColors.success,
+          );
           Navigator.pop(context);
         }
       }
     } catch (e) {
+      // Surfaces the one-per-target message from
+      // database.dart's _assertNoExistingQuiz as-is — it's already
+      // written to be teacher-readable ("This unit/lesson already has a
+      // Quiz...").
       _showSnack('Error: $e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -248,44 +433,66 @@ class _CreatePersonalizedUnitQuizScreenState
     final n = _questions.isEmpty ? 1 : _questions.length;
 
     return Column(children: [
-      // Title
-      TextFormField(
-        controller: _titleCtrl,
-        decoration: InputDecoration(
-          labelText: 'Quiz Title',
-          hintText: 'e.g., Unit 1 Final Test',
-          prefixIcon: Icon(Icons.assignment_outlined, color: c),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md), borderSide: const BorderSide(color: AppColors.divider)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md), borderSide: BorderSide(color: c, width: 2)),
-          filled: true, fillColor: Colors.white,
+      // Identity indicator — read-only, replaces the old free-text
+      // title field. The Quiz's title is derived automatically from
+      // the Unit/Lesson name (see _resolveTitle); showing it here as a
+      // non-editable chip confirms to the teacher what this Quiz is
+      // tied to without inviting them to type a name for it.
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+        decoration: BoxDecoration(
+          color: c.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(AppRadii.md),
+          border: Border.all(color: c.withOpacity(0.2)),
         ),
-        validator: _validateTitle,
+        child: Row(children: [
+          Icon(widget.isLessonScope ? Icons.bookmark_outline : Icons.layers_outlined, color: c, size: 18),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              widget.isLessonScope
+                  ? 'Lesson Quiz for: ${_destinationName ?? "this lesson"}'
+                  : 'Unit Test for: ${_destinationName ?? "this unit"}',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c),
+            ),
+          ),
+        ]),
       ),
       const SizedBox(height: AppSpacing.md),
 
-      // Passing score
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-        decoration: BoxDecoration(color: AppColors.info.withOpacity(0.05), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.info.withOpacity(0.3))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.trending_up, color: AppColors.info, size: 18),
-            const SizedBox(width: 8),
-            const Text('Passing Score', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-            const Spacer(),
-            RichText(text: TextSpan(children: [
-              TextSpan(text: '$_passingScore / $n', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.info)),
-              TextSpan(text: '  (${((_passingScore / n) * 100).round()}%)', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
-            ])),
+      // Passing score — Unit Quiz only. Lesson Quiz is ungraded, so this
+      // whole card is skipped for scope: lesson.
+      if (!widget.isLessonScope) ...[
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          decoration: BoxDecoration(color: AppColors.info.withOpacity(0.05), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.info.withOpacity(0.3))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.trending_up, color: AppColors.info, size: 18),
+              const SizedBox(width: 8),
+              const Text('Passing Score', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+              const Spacer(),
+              RichText(text: TextSpan(children: [
+                TextSpan(text: '$_passingScore / $n', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.info)),
+                TextSpan(text: '  (${((_passingScore / n) * 100).round()}%)', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+              ])),
+            ]),
+            Slider(value: _passingScore.toDouble(), min: 1, max: n.toDouble(), divisions: n > 1 ? n - 1 : 1, activeColor: AppColors.info, label: '$_passingScore / $n', onChanged: (v) => setState(() => _passingScore = v.round())),
+            const Text(
+              'Students must answer at least this many questions correctly to pass',
+              style: TextStyle(fontSize: 11, color: AppColors.muted),
+            ),
           ]),
-          Slider(value: _passingScore.toDouble(), min: 1, max: n.toDouble(), divisions: n > 1 ? n - 1 : 1, activeColor: AppColors.info, label: '$_passingScore / $n', onChanged: (v) => setState(() => _passingScore = v.round())),
-          Text('Students must answer at least $_passingScore out of $n questions correctly to pass', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-        ]),
-      ),
-      const SizedBox(height: AppSpacing.sm),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
 
-      // XP reward
+      // XP reward — max and default now derive from scope via _maxXp.
+      // For Lesson Quiz this is the ONLY setting shown besides the
+      // identity chip: no passing threshold, no attempts cap — just how
+      // much XP a first-time completion is worth (retries drop to a
+      // flat 5 XP, enforced in database.dart's saveQuizCompletion, same
+      // pattern as saveActivityCompletion already uses).
       Container(
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
         decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.06), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.warning.withOpacity(0.35))),
@@ -297,26 +504,31 @@ class _CreatePersonalizedUnitQuizScreenState
             const Spacer(),
             Text('$_xpReward XP', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.warning)),
           ]),
-          Slider(value: _xpReward.toDouble(), min: 0, max: 100, divisions: 20, activeColor: AppColors.warning, label: '$_xpReward XP', onChanged: (v) => setState(() => _xpReward = v.round())),
-          const Text('Awarded on passing this graded test (max 100 XP)', style: TextStyle(fontSize: 11, color: AppColors.muted)),
+          Slider(
+            value: _xpReward.toDouble().clamp(0, _maxXp.toDouble()),
+            min: 0,
+            max: _maxXp.toDouble(),
+            divisions: _maxXp ~/ 5,
+            activeColor: AppColors.warning,
+            label: '$_xpReward XP',
+            onChanged: (v) => setState(() => _xpReward = v.round()),
+          ),
+          Text(
+            widget.isLessonScope
+                ? 'Awarded on first completion (max $_maxXp XP). Retries after that earn a flat 5 XP only — no threshold to pass, just complete it.'
+                : 'Awarded on passing this graded test (max $_maxXp XP)',
+            style: const TextStyle(fontSize: 11, color: AppColors.muted),
+          ),
         ]),
       ),
     ]);
   }
 
-  // FLAG PARA CJ: el card de "Maximum Attempts" usaba Colors.purple como
-  // acento propio, distinto de info/warning/danger/success. No hay un
-  // token morado en el set de AppColors que rescaté de tu historial
-  // (primary/primaryLight/primaryDark/success/warning/danger/info). Lo
-  // dejé como Colors.purple literal por ahora — decime si querés que use
-  // AppColors.info en su lugar (quedaría igual al color de "Passing
-  // Score" arriba) o si preferís agregar un token nuevo tipo
-  // AppColors.accent a tu design system.
   Widget _buildAttemptsCard() {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: Colors.purple.withOpacity(0.05),
+        color: AppColors.accent.withOpacity(0.05),
         borderRadius: BorderRadius.circular(AppRadii.md),
       ),
       child: Column(
@@ -337,7 +549,7 @@ class _CreatePersonalizedUnitQuizScreenState
                       if (_maxAttempts > 1) _maxAttempts--;
                     }),
                     icon: const Icon(Icons.remove_circle_outline),
-                    color: Colors.purple,
+                    color: AppColors.accent,
                   ),
                   Container(
                     width: 60,
@@ -362,7 +574,7 @@ class _CreatePersonalizedUnitQuizScreenState
                       if (_maxAttempts < 5) _maxAttempts++;
                     }),
                     icon: const Icon(Icons.add_circle_outline),
-                    color: Colors.purple,
+                    color: AppColors.accent,
                   ),
                 ],
               ),
@@ -545,7 +757,9 @@ class _CreatePersonalizedUnitQuizScreenState
       body: Column(
         children: [
           TeacherScreenHeader(
-            title: widget.isEditing ? 'Edit Unit Quiz' : 'Create Unit Quiz',
+            title: widget.isEditing
+                ? (widget.isLessonScope ? 'Edit Lesson Quiz' : 'Edit Quiz')
+                : (widget.isLessonScope ? 'Create Lesson Quiz' : 'Create Quiz'),
             color: c,
           ),
           Expanded(
@@ -563,7 +777,6 @@ class _CreatePersonalizedUnitQuizScreenState
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // ── Question count chip ─────────────────────────
-                          // Replaces the AppBar's "N Q" pill.
                           Align(
                             alignment: Alignment.centerRight,
                             child: Container(
@@ -575,26 +788,44 @@ class _CreatePersonalizedUnitQuizScreenState
                           const SizedBox(height: AppSpacing.md),
 
                           _buildSettingsCard(),
-                          const SizedBox(height: AppSpacing.md),
-                          _buildAttemptsCard(),
+
+                          // Maximum Attempts card — Unit Quiz only.
+                          // Lesson Quiz retries are unconditionally
+                          // unlimited (see class-level comment), so this
+                          // entire card is skipped for scope: lesson.
+                          if (!widget.isLessonScope) ...[
+                            const SizedBox(height: AppSpacing.md),
+                            _buildAttemptsCard(),
+                          ],
                           const SizedBox(height: AppSpacing.xl),
 
-                          // Graded exam warning banner
+                          // Scope-dependent banner. Unit Quiz keeps the
+                          // original "graded exam, reported to parents"
+                          // wording. Lesson Quiz copy now reflects that
+                          // it's fully ungraded — no pass/fail, XP-only,
+                          // unlimited attempts with reduced XP after the
+                          // first completion.
                           Container(
                             padding: const EdgeInsets.all(AppSpacing.md),
                             decoration: BoxDecoration(
-                              color: AppColors.danger.withOpacity(0.07),
+                              color: (widget.isLessonScope ? AppColors.info : AppColors.danger).withOpacity(0.07),
                               borderRadius: BorderRadius.circular(AppRadii.md),
-                              border: Border.all(color: AppColors.danger.withOpacity(0.25)),
+                              border: Border.all(color: (widget.isLessonScope ? AppColors.info : AppColors.danger).withOpacity(0.25)),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.info_outline, color: AppColors.danger.withOpacity(0.85), size: 20),
+                                Icon(
+                                  widget.isLessonScope ? Icons.school_outlined : Icons.info_outline,
+                                  color: (widget.isLessonScope ? AppColors.info : AppColors.danger).withOpacity(0.85),
+                                  size: 20,
+                                ),
                                 const SizedBox(width: AppSpacing.sm),
-                                const Expanded(
+                                Expanded(
                                   child: Text(
-                                    'This is a graded exam. Scores will be reported to parents.',
-                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                    widget.isLessonScope
+                                        ? 'Ungraded check-in for this lesson. No pass/fail, doesn\'t block progress, not reported to parents — just XP for completing it. Students can retry anytime, but only the first completion earns full XP.'
+                                        : 'This is a graded exam. Scores will be reported to parents.',
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                                   ),
                                 ),
                               ],
@@ -666,7 +897,9 @@ class _CreatePersonalizedUnitQuizScreenState
                               child: _isSaving
                                   ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: AppColors.onPrimary, strokeWidth: 2))
                                   : Text(
-                                      widget.isEditing ? 'Save Changes' : 'Create Quiz',
+                                      widget.isEditing
+                                          ? 'Save Changes'
+                                          : (widget.isLessonScope ? 'Create Lesson Quiz' : 'Create Quiz'),
                                       style: const TextStyle(color: AppColors.onPrimary, fontSize: 16, fontWeight: FontWeight.bold),
                                     ),
                             ),

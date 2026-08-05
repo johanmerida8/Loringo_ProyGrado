@@ -305,7 +305,7 @@ class _ReadingTaskState extends State<ReadingTask>
 
   // -- TTS Preview (hear how this page will sound to students) -----------
 
-  bool get _isAnyPagePlaying => _previewPageIndex != null;
+  // bool get _isAnyPagePlaying => _previewPageIndex != null;
 
   Future<void> _playPreview(int idx) async {
     final text = _pageControllers[idx].text.trim();
@@ -324,7 +324,7 @@ class _ReadingTaskState extends State<ReadingTask>
       _previewStates[idx] = _previewStates[idx].copyWith(isPlaying: true, highlightIndex: -1);
     });
 
-    final success = await ReadingTtsService.speak(
+    final result = await ReadingTtsService.speak(
       text,
       onAudioReady: () {
         if (!mounted) return;
@@ -340,7 +340,7 @@ class _ReadingTaskState extends State<ReadingTask>
       _previewPageIndex = null;
     });
 
-    if (!success) {
+    if (result == SpeakResult.failed) {
       _showSnack('Could not play preview -- check your connection and try again.', isError: true);
     }
   }

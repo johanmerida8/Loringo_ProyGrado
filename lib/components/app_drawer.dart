@@ -212,16 +212,26 @@ class AppDrawer extends StatelessWidget {
       children: [
         _buildHeader(context),
         Expanded(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: navItems,
+          // Without this, nav item titles inherit the app's default
+          // Material text theme (an unstyled purple) instead of the
+          // Loringo palette — this is the one place that needs to
+          // override it since every screen's navItems just use plain
+          // ListTile/Text widgets.
+          child: ListTileTheme(
+            textColor: AppColors.textPrimary,
+            iconColor: AppColors.primary,
+            selectedColor: AppColors.primary,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              children: navItems,
+            ),
           ),
         ),
       ],
     );
 
     return wrapInDrawer
-        ? Drawer(backgroundColor: Colors.white, child: content)
+        ? Drawer(backgroundColor: AppColors.surface, child: content)
         : content;
   }
 }

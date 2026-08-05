@@ -9,6 +9,14 @@ class TaskTypeOption {
   final IconData icon;
 }
 
+/// Hard ceiling on how many tasks a single Activity may ever contain in
+/// total, across every batch (Generate or Add Task) plus any tasks added
+/// individually via Edit over time. Shared by teacher_task_editor_screen.dart
+/// (the running-total gate) and task_batch_review_screen.dart (computing
+/// how much room is left when a teacher chains multiple "Add more tasks"
+/// batches back to back).
+const int kMaxTasksPerActivity = 15;
+
 // NOTE: 'compare' and 'flashcard' added to Vocabulary — new task types.
 // 'compare' has the student pick which of two images answers a
 // comparative question (e.g. "Which is bigger?"). 'flashcard' is a

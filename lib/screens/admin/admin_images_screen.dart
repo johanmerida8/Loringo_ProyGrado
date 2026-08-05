@@ -139,7 +139,7 @@ class AdminImagesScreen extends StatelessWidget {
   }
 
   Future<void> _deleteCategory(BuildContext context, Database db,
-      String categoryId, String categoryName) async {
+      String ownerId, String categoryId, String categoryName) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -194,13 +194,13 @@ class AdminImagesScreen extends StatelessWidget {
     if (confirm != true || !context.mounted) return;
     try {
       final imageService = ImageService();
-      final images = await db.getImagesByCategory(categoryId);
+      final images = await db.getImagesByCategory(ownerId, categoryId);
       for (final img in images) {
         final pid = img['cloudinaryPublicId'] as String? ?? '';
         if (pid.isNotEmpty) await imageService.deleteImage(pid);
-        await db.deleteImage(categoryId, img['id'] as String);
+        await db.deleteImage(ownerId, categoryId, img['id'] as String);
       }
-      await db.deleteCategory(categoryId);
+      await db.deleteCategory(ownerId, categoryId);
       if (context.mounted) {
         _showSuccessSnackBar(context, '"$categoryName" deleted');
       }
@@ -321,6 +321,7 @@ class AdminImagesScreen extends StatelessWidget {
                           docs[i].data() as Map<String, dynamic>;
                       final name =
                           data['categoryName'] as String? ?? 'Unnamed';
+                      final ownerId = data['ownerId'] as String? ?? '';
                       final accent = _accentFor(name);
                       final initial =
                           name.isNotEmpty ? name[0].toUpperCase() : '#';
@@ -330,6 +331,7 @@ class AdminImagesScreen extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                                 builder: (_) => AdminViewImagesScreen(
+                                    ownerId: ownerId,
                                     categoryId: docs[i].id,
                                     categoryName: name))),
                         child: Container(
@@ -390,7 +392,7 @@ class AdminImagesScreen extends StatelessWidget {
                                   const SizedBox(height: 4),
                                   StreamBuilder<int>(
                                     stream: db.getImagesCountStream(
-                                        docs[i].id),
+                                        ownerId, docs[i].id),
                                     builder: (_, snap) {
                                       final count = snap.data ?? 0;
                                       return Container(
@@ -430,7 +432,7 @@ class AdminImagesScreen extends StatelessWidget {
                                 ])),
                             GestureDetector(
                               onTap: () => _deleteCategory(
-                                  context, db, docs[i].id, name),
+                                  context, db, ownerId, docs[i].id, name),
                               child: Container(
                                   padding: const EdgeInsets.all(
                                       AppSpacing.sm),

@@ -6,18 +6,25 @@ import 'package:loringo_app/components/notification_permission_card.dart';
 import 'package:loringo_app/components/notifications_badge.dart';
 import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/parent/child_report_detail_screen.dart';
+import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
 import 'package:loringo_app/screens/parent/parent_profile_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// The "Home" tab content for the parent role.
 ///
-/// Beyond the greeting + children preview, this now surfaces two things
-/// parents actually want at a glance:
-///  - an average-score progress ring across all children with reports
-///  - a "recent activity" feed of the latest report per child, newest
-///    first, so a parent immediately sees what happened lately instead
-///    of having to dig into Reports to find out.
+/// Deliberately scoped to the two things a parent actually opens this
+/// screen to do: **follow up** on whether their kids are keeping up with
+/// assigned work (Past Due / Due Today counts + a live list, sourced from
+/// Database.getChildActivityStatusList — the same method backing each
+/// child's dedicated Activities screen, so the numbers here always match
+/// what a parent finds when they tap in), and **check performance**
+/// (Skill Insights + Recent Activity, both report/score-driven). No
+/// generic vanity counts (child count, group count, overall average
+/// score) — if it doesn't help a parent decide whether to check in with
+/// a kid, it doesn't belong on this screen.
 class ParentHomeScreen extends StatelessWidget {
   final bool isWide;
   final String parentName;
@@ -68,22 +75,9 @@ class ParentHomeScreen extends StatelessWidget {
     return entries.take(5).toList();
   }
 
-  /// Average quiz score across every child's most recent report. Null
-  /// when nobody has a report yet, so the ring can show an empty state
-  /// instead of a misleading 0%.
-  double? get _averageScore {
-    final scores = childReports.values
-        .where((r) => r.isNotEmpty)
-        .map((r) => (r.first['quizPercent'] as num?)?.toDouble() ?? 0)
-        .toList();
-    if (scores.isEmpty) return null;
-    return scores.reduce((a, b) => a + b) / scores.length;
-  }
-
   @override
   Widget build(BuildContext context) {
     final activity = _recentActivity;
-    final avgScore = _averageScore;
 
     return SingleChildScrollView(
       child: Column(
@@ -144,33 +138,6 @@ class ParentHomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // ── Summary row: children / in groups / average score ring ──
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _summaryCard(
-                    icon: Icons.people_alt_rounded,
-                    label: 'Children',
-                    value: '${myChildren.length}',
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _summaryCard(
-                    icon: Icons.groups_rounded,
-                    label: 'In Groups',
-                    value:
-                        '${myChildren.where((c) => (c['groupId'] as String?)?.isNotEmpty == true).length}',
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(child: _averageScoreCard(avgScore)),
-              ],
-            ),
-          ),
-
           if (!kIsWeb)
             Consumer<NotificationProvider>(
               builder: (context, notificationProvider, child) {
@@ -186,6 +153,17 @@ class ParentHomeScreen extends StatelessWidget {
                 return const SizedBox.shrink();
               },
             ),
+
+          // ── Follow-ups: Past Due / Due Today counts + the list ──
+          // The first thing a parent sees below the greeting — this IS
+          // the "should I check in with my kid" answer, sourced from the
+          // same Database.getChildActivityStatusList() the per-child
+          // Activities screen uses, so the numbers here never disagree
+          // with what a parent finds after tapping in.
+          _FollowUpsSection(myChildren: myChildren, formatDate: formatDate),
+
+          // ── Task-type insights ──
+          _TaskInsightsSection(myChildren: myChildren),
 
           // ── Recent activity feed ──
           if (activity.isNotEmpty) ...[
@@ -349,55 +327,28 @@ class ParentHomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _averageScoreCard(double? avgScore) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-      decoration:
-          BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        children: [
-          SizedBox(
-            width: 44,
-            height: 44,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: CircularProgressIndicator(
-                    value: avgScore == null ? 0 : (avgScore / 100).clamp(0, 1),
-                    strokeWidth: 4,
-                    backgroundColor: AppColors.primarySoft(0.12),
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      avgScore == null
-                          ? Colors.grey.shade300
-                          : avgScore >= 80
-                              ? const Color(0xFF4CAF50)
-                              : (avgScore >= 60
-                                  ? const Color(0xFFFFC107)
-                                  : const Color(0xFFFF7043)),
-                    ),
-                  ),
-                ),
-                Icon(Icons.emoji_events_rounded,
-                    color: avgScore == null
-                        ? Colors.grey.shade300
-                        : AppColors.primary,
-                    size: 18),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(avgScore == null ? '—' : '${avgScore.round()}%',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const Text('Avg Score', style: TextStyle(fontSize: 11, color: Colors.grey)),
-        ],
-      ),
+  Widget _buildChildSummaryCard(Map<String, dynamic> child) {
+    final childId = child['id'] as String?;
+    final groupId = child['groupId'] as String?;
+    if (childId == null || groupId == null || groupId.isEmpty) {
+      return _childSummaryCardInner(child, overdueCount: 0);
+    }
+
+    // Inactivity signal, per the agreed definition: not idle-timer
+    // based, just "how many assigned activities are past due and still
+    // incomplete" — same Database method the Follow-ups section and the
+    // per-child Activities screen use, just reduced to a count here.
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: Database().getChildActivityStatusList(groupId: groupId, studentId: childId),
+      builder: (context, snapshot) {
+        final overdueCount =
+            (snapshot.data ?? const []).where((i) => i['status'] == 'past_due').length;
+        return _childSummaryCardInner(child, overdueCount: overdueCount);
+      },
     );
   }
 
-  Widget _buildChildSummaryCard(Map<String, dynamic> child) {
+  Widget _childSummaryCardInner(Map<String, dynamic> child, {required int overdueCount}) {
     final hasGroup = (child['groupId'] as String?)?.isNotEmpty == true;
     final avatarPath = child['avatar'] as String? ?? 'assets/avatars/panda.png';
     final childName = child['names'] as String? ?? 'Student';
@@ -444,9 +395,34 @@ class ParentHomeScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  childName,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        childName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    if (overdueCount > 0) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.danger.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '$overdueCount overdue',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.danger,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 Text(
                   hasGroup
@@ -460,28 +436,6 @@ class ParentHomeScreen extends StatelessWidget {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _summaryCard({required IconData icon, required String label, required String value}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-      decoration:
-          BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12)),
-            child: Icon(icon, color: AppColors.primary, size: 22),
-          ),
-          const SizedBox(height: 8),
-          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
         ],
       ),
     );
@@ -507,4 +461,415 @@ class _ActivityEntry {
   final Map<String, dynamic> child;
   final Map<String, dynamic> report;
   const _ActivityEntry({required this.child, required this.report});
+}
+
+// ── Follow-ups section: Past Due / Due Today counts + the list ─────────
+//
+// Single shared data source for this screen's whole "should I check in
+// with my kid" story: one Database.getChildActivityStatusList() call per
+// child (Future.wait'd together), tagged with childId/childName, then
+// both the two count cards and the list below read from the same
+// fetched data — no separate ad hoc query duplicating this logic (that's
+// what the old _UpcomingOverdueSection/fetchChildDueItems did, and it
+// didn't agree with the per-child Activities screen on what "overdue"
+// even meant, since it skipped closeDate/schedule/lock entirely).
+class _FollowUpsSection extends StatefulWidget {
+  final List<Map<String, dynamic>> myChildren;
+  final String Function(DateTime) formatDate;
+
+  const _FollowUpsSection({
+    required this.myChildren,
+    required this.formatDate,
+  });
+
+  @override
+  State<_FollowUpsSection> createState() => _FollowUpsSectionState();
+}
+
+class _FollowUpsSectionState extends State<_FollowUpsSection> {
+  final Database _db = Database();
+  late Future<List<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FollowUpsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.myChildren != widget.myChildren) {
+      _future = _load();
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _load() async {
+    final results = await Future.wait(widget.myChildren.map((child) async {
+      final childId = child['id'] as String?;
+      final groupId = child['groupId'] as String?;
+      if (childId == null || groupId == null || groupId.isEmpty) {
+        return <Map<String, dynamic>>[];
+      }
+      final items = await _db.getChildActivityStatusList(groupId: groupId, studentId: childId);
+      final childName = child['names'] as String? ?? 'Student';
+      // Tag each item with which child/card it belongs to — the
+      // Database method itself doesn't know about parents/children,
+      // only groupId/studentId, so this is where that context gets
+      // attached for display and for the tap-through below.
+      for (final item in items) {
+        item['childId'] = childId;
+        item['childName'] = childName;
+      }
+      return items;
+    }));
+    return results.expand((l) => l).toList();
+  }
+
+  static const _rank = {
+    'past_due': 0,
+    'due_today': 1,
+    'due_tomorrow': 2,
+    'later': 3,
+    'not_open_yet': 4,
+    'completed': 5,
+  };
+
+  String _subtitleFor(Map<String, dynamic> item) {
+    final status = item['status'] as String;
+    switch (status) {
+      case 'past_due':
+        final due = item['dueDate'] as DateTime?;
+        return due == null ? 'Past due' : 'Overdue since ${widget.formatDate(due)}';
+      case 'due_today':
+        return 'Due today';
+      case 'due_tomorrow':
+        return 'Due tomorrow';
+      case 'not_open_yet':
+        if (item['notOpenReason'] == 'scheduled') {
+          final scheduled = item['scheduledDate'] as DateTime?;
+          return scheduled == null ? 'Not open yet' : 'Opens ${widget.formatDate(scheduled)}';
+        }
+        return 'Locked — complete earlier activities first';
+      default:
+        final due = item['dueDate'] as DateTime?;
+        return due == null ? 'No due date' : 'Due ${widget.formatDate(due)}';
+    }
+  }
+
+  void _openChildActivities(Map<String, dynamic> item) {
+    final childId = item['childId'] as String;
+    final child = widget.myChildren.firstWhere(
+      (c) => c['id'] == childId,
+      orElse: () => <String, dynamic>{},
+    );
+    if (child.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ParentChildActivityStatusScreen(child: child),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final all = snapshot.data ?? const <Map<String, dynamic>>[];
+        final pastDueCount = all.where((i) => i['status'] == 'past_due').length;
+        final dueTodayCount = all.where((i) => i['status'] == 'due_today').length;
+
+        final actionable = all
+            .where((i) => i['status'] == 'past_due' || i['status'] == 'due_today' || i['status'] == 'due_tomorrow')
+            .toList()
+          ..sort((a, b) => _rank[a['status']]!.compareTo(_rank[b['status']]!));
+        final shown = actionable.take(6).toList();
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Follow-ups',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _countCard(
+                      icon: Icons.warning_amber_rounded,
+                      label: 'Past Due',
+                      value: '$pastDueCount',
+                      color: AppColors.danger,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _countCard(
+                      icon: Icons.today_rounded,
+                      label: 'Due Today',
+                      value: '$dueTodayCount',
+                      color: AppColors.warning,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (shown.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: AppColors.success, size: 22),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          all.isEmpty
+                              ? 'Nothing assigned yet.'
+                              : 'All caught up — nothing past due or due today!',
+                          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                ...shown.map((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _followUpTile(item),
+                    )),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _countCard({required IconData icon, required String label, required String value, required Color color}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(height: 8),
+          Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color)),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _followUpTile(Map<String, dynamic> item) {
+    final status = item['status'] as String;
+    final isPastDue = status == 'past_due';
+    final accent = isPastDue ? AppColors.danger : AppColors.warning;
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openChildActivities(item),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2)),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 6,
+                height: 36,
+                decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(3)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${item['childName']} · ${item['title']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _subtitleFor(item),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isPastDue ? AppColors.danger : Colors.grey[500],
+                        fontWeight: isPastDue ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Task-type insights section ──────────────────────────────────────
+
+class _TaskInsightsSection extends StatefulWidget {
+  final List<Map<String, dynamic>> myChildren;
+
+  const _TaskInsightsSection({required this.myChildren});
+
+  @override
+  State<_TaskInsightsSection> createState() => _TaskInsightsSectionState();
+}
+
+class _TaskInsightsSectionState extends State<_TaskInsightsSection> {
+  late Future<Map<String, _TypeStat>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TaskInsightsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.myChildren != widget.myChildren) {
+      _future = _load();
+    }
+  }
+
+  /// Aggregates every completed task's score, grouped by task type,
+  /// across all children — reads progress.taskAnswers, the same map
+  /// activity_play_screen.dart writes per task (each entry carries
+  /// 'type' plus per-task fields). No new tracking needed: this is
+  /// purely an aggregation over data already being written.
+  Future<Map<String, _TypeStat>> _load() async {
+    final byType = <String, _TypeStat>{};
+
+    for (final child in widget.myChildren) {
+      final childId = child['id'] as String?;
+      if (childId == null) continue;
+
+      final progressSnap = await FirebaseFirestore.instance
+          .collection('students')
+          .doc(childId)
+          .collection('progress')
+          .get();
+
+      for (final doc in progressSnap.docs) {
+        final taskAnswers = doc.data()['taskAnswers'] as Map<String, dynamic>?;
+        if (taskAnswers == null) continue;
+
+        for (final answer in taskAnswers.values) {
+          if (answer is! Map) continue;
+          final type = answer['type'] as String?;
+          final accuracy = (answer['accuracy'] as num?)?.toDouble();
+          if (type == null || accuracy == null) continue;
+
+          final stat = byType.putIfAbsent(type, () => _TypeStat());
+          stat.total += accuracy;
+          stat.count += 1;
+        }
+      }
+    }
+
+    return byType;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, _TypeStat>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final byType = snapshot.data ?? const <String, _TypeStat>{};
+        // Need a handful of distinct types with real attempts before a
+        // "strongest/weakest" comparison means anything.
+        if (byType.length < 2) return const SizedBox.shrink();
+
+        final ranked = byType.entries.toList()
+          ..sort((a, b) => b.value.average.compareTo(a.value.average));
+        final strongest = ranked.take(2).toList();
+        final weakest = ranked.reversed.take(2).toList();
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Skill Insights',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _typeStatColumn('Strongest', strongest, AppColors.success)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _typeStatColumn('Needs Practice', weakest, AppColors.danger)),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _typeStatColumn(String heading, List<MapEntry<String, _TypeStat>> entries, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(heading,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 8),
+          ...entries.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  '${taskTypeOptionFor(e.key).label} · ${e.value.average.round()}%',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+class _TypeStat {
+  double total = 0;
+  int count = 0;
+  double get average => count == 0 ? 0 : total / count;
 }

@@ -64,6 +64,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
     return {
       'phrase': phraseController.text.trim(),
       'hint': hintController.text.trim(),
+      'hide_text_from_student': true,
     };
   }
 
@@ -88,15 +89,10 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Info Banner ────────────────────────────────────────────────
         _buildInfoBanner(c),
         const SizedBox(height: AppSpacing.md),
-        
-        // ── Phrase Field ──────────────────────────────────────────────
         _buildPhraseField(c),
         const SizedBox(height: AppSpacing.md),
-        
-        // ── Hint Field ────────────────────────────────────────────────
         _buildHintField(c),
       ],
     );
@@ -116,8 +112,8 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              '🎧 Students ONLY hear the audio (no text shown). They must listen and repeat from memory.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+              'Students ONLY hear the audio (no text shown). They must listen and repeat from memory.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ),
         ],
@@ -201,7 +197,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
         ),
         const SizedBox(height: 8),
         Text(
-          '💡 Hint shown to students before they listen (e.g., what to focus on).',
+          'Hint shown to students before they listen (e.g., what to focus on).',
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],

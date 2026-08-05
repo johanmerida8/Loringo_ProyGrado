@@ -4,9 +4,39 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/activity_play_screen.dart';
-import 'package:loringo_app/screens/initials/quiz_lesson_play_screen.dart';
-import 'package:loringo_app/screens/initials/quiz_unit_play_screen.dart';
+import 'package:loringo_app/screens/initials/quiz_play_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+
+// CHANGE LOG (lesson quiz removal):
+// - Import of quiz_lesson_play_screen.dart removed — that file is being
+//   deleted from the project (confirmed not in use going forward).
+// - _navigateToActivity: the branch that routed to LessonQuizPlayScreen
+//   based on `item['lessonId']` being empty/non-empty is gone. Every
+//   quiz item now only ever means "unit quiz" (that's the only kind
+//   that exists), so this always navigates to QuizPlayScreen.
+// - _loadAssignedContent: the entire lesson-quiz block per lesson
+//   (querying collection('quizzes').where('type', isEqualTo: 'lesson'),
+//   building 'isQuizUnlocked' off unitActivitiesCompleted, and adding
+//   those items to allItems) was deleted. The remaining unit-quiz block
+//   dropped its `.where('type', isEqualTo: 'unit')` filter — new quiz
+//   documents don't carry a 'type' field anymore (see database.dart),
+//   so filtering by it would silently return zero results for anything
+//   created after the migration. Filtering by contentId + unitId alone
+//   is sufficient now that quizzes are unconditionally unit-scoped.
+// - completedQuizzes / quizProgressDetails parsing in the progress-load
+//   block is unchanged — it was never branching on quiz type, only on
+//   whether a progress doc had a 'quizId' key, which still applies
+//   identically to every quiz now.
+//
+// CHANGE LOG (scheduled activity availability):
+// - Activities can now optionally carry a scheduledDate (Firestore
+//   Timestamp, set by the teacher in create_activity_screen.dart).
+//   _loadAssignedContent's per-activity isUnlocked computation ANDs in
+//   an isScheduleReady check alongside the existing requiredActivityId
+//   prerequisite check — see the inline comment at that call site for
+//   the full rationale. This is the ONLY change for this feature; unit
+//   unlock logic, quiz logic, and the prerequisite chain itself are
+//   untouched.
 
 class StudentActivitiesTab extends StatefulWidget {
   final String studentId;
@@ -89,6 +119,11 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
   /// setState(() {}) does nothing here since an already-resolved Future
   /// never re-runs. This is what fixes the "need hot reload to see unit 2"
   /// bug. Called after returning from any activity or quiz screen.
+  ///
+  /// Also naturally picks up scheduled activities that have crossed
+  /// their unlock date since the tab was last loaded — every call re-runs
+  /// the isScheduleReady comparison in _loadAssignedContent against the
+  /// current time, so no separate polling/timer is needed for that case.
   void _refreshContent() {
     if (!mounted) return;
     setState(() {
@@ -249,9 +284,12 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
       final bool isUnlocked = item['isUnlocked'] ?? false;
       final String itemType = item['type'] ?? 'activity';
       final bool isQuiz = itemType == 'quiz';
+      final bool isLessonQuiz = isQuiz && item['quizScope'] == 'lesson';
       final bool isCompleted = item['isCompleted'] ?? false;
       final int stars = item['stars'] ?? 0;
       final bool isClosedAfterAttempts = item['isClosedAfterAttempts'] ?? false;
+      final bool isOverdue = item['isOverdue'] ?? false;
+      final bool isTurnInClosed = item['isClosed'] ?? false;
 
       activityWidgets.add(Padding(
         padding: const EdgeInsets.symmetric(vertical: 28),
@@ -270,14 +308,20 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                     margin: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
+                      // Lesson Quiz: blue (matches AppColors.info used
+                      // for it everywhere in the teacher UI). Unit Quiz:
+                      // orange, unchanged from before.
                       gradient: isUnlocked
-                          ? (isQuiz
+                          ? (isLessonQuiz
                               ? const LinearGradient(
-                                  colors: [Color(0xFFFFB74D), Color(0xFFFF9800)])
-                              : const LinearGradient(colors: [
-                                  AppColors.primary,
-                                  AppColors.primaryLight
-                                ]))
+                                  colors: [Color(0xFF64B5F6), AppColors.info])
+                              : (isQuiz
+                                  ? const LinearGradient(
+                                      colors: [Color(0xFFFFB74D), Color(0xFFFF9800)])
+                                  : const LinearGradient(colors: [
+                                      AppColors.primary,
+                                      AppColors.primaryLight
+                                    ])))
                           : LinearGradient(
                               colors: [Colors.grey[400]!, Colors.grey[600]!]),
                       border: Border.all(color: Colors.white, width: 4),
@@ -299,7 +343,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                             !isUnlocked && isClosedAfterAttempts
                                 ? Icons.check_circle
                                 : (isUnlocked
-                                    ? (isQuiz ? Icons.quiz : Icons.star)
+                                    ? (isLessonQuiz
+                                        ? Icons.school_outlined
+                                        : (isQuiz ? Icons.quiz : Icons.star))
                                     : Icons.lock),
                             color: Colors.white,
                             size: 28,
@@ -313,12 +359,14 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                             ),
                           ] else if (isQuiz) ...[
                             const SizedBox(height: 4),
-                            const Text(
-                              'Quiz',
-                              style: TextStyle(
+                            Text(
+                              isLessonQuiz ? 'Lesson\nQuiz' : 'Unit\nTest',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 12),
+                                  fontSize: 10,
+                                  height: 1.1),
                             ),
                           ],
                         ],
@@ -354,11 +402,41 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                     ),
                   ),
                 ],
+                if (isUnlocked && isOverdue) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.danger.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'Overdue',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.danger,
+                      ),
+                    ),
+                  ),
+                ],
+                if (!isUnlocked && isTurnInClosed) ...[
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: 140,
+                    child: Text(
+                      'Closed — no longer accepted',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                  ),
+                ],
               ],
-            ),],
-          ),
+            ),
+          ],
         ),
-      );
+      ));
 
       if (count > 0 && progress == midPoint) {
         activityWidgets.add(Center(
@@ -377,35 +455,19 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
 
   void _navigateToActivity(Map<String, dynamic> item, bool isQuiz) {
     if (isQuiz) {
-      if (item['lessonId'] == null || item['lessonId'] == '') {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => UnitQuizPlayScreen(
-              contentId: item['contentId'],
-              unitId: item['unitId'],
-              quizId: item['quizId'],
-              quizTitle: item['title'],
-              studentId: widget.studentId,
-              studentName: widget.studentName,
-            ),
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => QuizPlayScreen(
+            contentId: item['contentId'],
+            unitId: item['unitId'],
+            quizId: item['quizId'],
+            quizTitle: item['title'],
+            studentId: widget.studentId,
+            studentName: widget.studentName,
           ),
-        ).then((_) => _refreshContent());
-      } else {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => LessonQuizPlayScreen(
-              contentId: item['contentId'],
-              unitId: item['unitId'],
-              lessonId: item['lessonId'],
-              quizId: item['quizId'],
-              quizTitle: item['title'],
-              studentId: widget.studentId,
-            ),
-          ),
-        ).then((_) => _refreshContent());
-      }
+        ),
+      ).then((_) => _refreshContent());
     } else {
       Navigator.push(
         context,
@@ -456,18 +518,18 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
         for (var d in progressSnapshot.docs) {
           final pd = d.data();
           if (pd['isCompleted'] == true) {
-            if (pd.containsKey('activityId')) {
-              completedActivities[pd['activityId']] = {
+            if (pd['type'] == 'activity') {
+              completedActivities[d.id] = {
                 'stars': pd['stars'] ?? 0,
                 'bestScore': pd['bestScore'] ?? 0,
               };
-            } else if (pd.containsKey('quizId')) {
-              completedQuizzes[pd['quizId']] = {
+            } else if (pd['type'] == 'quiz') {
+              completedQuizzes[d.id] = {
                 'stars': pd['stars'] ?? 0,
-                'score': pd['score'] ?? 0
+                'score': pd['correctAnswers'] ?? 0
               };
-              quizProgressDetails[pd['quizId']] = {
-                'attempts': pd['attempts'] ?? 0,
+              quizProgressDetails[d.id] = {
+                'attempts': pd['totalAttempts'] ?? 0,
                 'passed': pd['passed'] ?? false,
                 'isClosedAfterAttempts': pd['isClosedAfterAttempts'] ?? false,
               };
@@ -499,11 +561,17 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
           bool hasUnitQuiz = false;
           bool unitQuizCompleted = false;
 
+          // UPDATED: 'scope' filter added back. The 'quizzes' collection
+          // now holds both scope: 'unit' and scope: 'lesson' docs (Lesson
+          // Quiz was reintroduced as a lighter-weight, non-blocking
+          // sibling of Unit Quiz — same form, different scope field).
+          // Without this filter, a Lesson Quiz would be counted here as
+          // if it were the Unit's gating quiz.
           final unitQuizzesSnap = await FirebaseFirestore.instance
               .collection('quizzes')
-              .where('type', isEqualTo: 'unit')
               .where('contentId', isEqualTo: contentId)
               .where('unitId', isEqualTo: unitId)
+              .where('scope', isEqualTo: 'unit')
               .get();
 
           if (unitQuizzesSnap.docs.isNotEmpty) {
@@ -576,6 +644,17 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             isUnitUnlocked = allPreviousCompleted;
           }
 
+          // NEW: lesson-level chaining within this unit. Same pattern as
+          // previousUnitIds/unitCompletedMap above, one level down —
+          // previousLessonIds accumulates every lesson already visited
+          // (in `order`), lessonCompletedMap records whether each one
+          // finished ALL its activities. Lesson Quiz completion is
+          // deliberately NOT part of this — Lesson Quiz stays optional/
+          // non-blocking, so a student can move to lesson 2's activities
+          // without having touched lesson 1's quiz.
+          List<String> previousLessonIds = [];
+          Map<String, bool> lessonCompletedMap = {};
+
           for (final lessonDoc in lessonsSnap.docs) {
             final lessonId = lessonDoc.id;
             final lessonData = lessonDoc.data();
@@ -591,16 +670,74 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 .orderBy('order')
                 .get();
 
+            // per-lesson completion tracking, separate from the
+            // unit-wide unitActivityIds/unitActivitiesCompleted counters
+            // above (those gate the Unit Quiz; these gate both this
+            // lesson's own unlock-for-next-lesson check and its Lesson
+            // Quiz below).
+            int lessonActivitiesTotal = activitiesSnap.docs.length;
+            int lessonActivitiesCompleted = 0;
+
+            // NEW: is every PRIOR lesson in this unit fully completed?
+            // Mirrors allPreviousCompleted for units, one level down.
+            // First lesson in the unit has an empty previousLessonIds,
+            // so this defaults to true — same "nothing to wait on" rule
+            // the first unit already gets.
+            bool allPreviousLessonsCompleted = true;
+            for (final prevLessonId in previousLessonIds) {
+              if (!(lessonCompletedMap[prevLessonId] ?? false)) {
+                allPreviousLessonsCompleted = false;
+                break;
+              }
+            }
+            // Both gates AND together: the unit must be unlocked AND
+            // every earlier lesson in it must be done before this
+            // lesson's activities open up.
+            final bool isLessonUnlocked =
+                isUnitUnlocked && allPreviousLessonsCompleted;
+
             for (final actDoc in activitiesSnap.docs) {
               final actData = actDoc.data();
               final activityId = actDoc.id;
               final requiredActivityId = actData['requiredActivityId'];
               final isCompleted = completedActivities.containsKey(activityId);
+              if (isCompleted) lessonActivitiesCompleted++;
               final stars = isCompleted
                   ? (completedActivities[activityId]['stars'] ?? 0)
                   : 0;
 
-              bool isUnlocked = isUnitUnlocked;
+              final scheduledTimestamp = actData['scheduledDate'] as Timestamp?;
+              final bool isScheduleReady = scheduledTimestamp == null ||
+                  !scheduledTimestamp.toDate().isAfter(DateTime.now());
+
+              // Display-only: due date never gates unlock/completion,
+              // it only flags the activity as overdue when incomplete.
+              final dueTimestamp = actData['dueDate'] as Timestamp?;
+              final bool isOverdue = !isCompleted &&
+                  dueTimestamp != null &&
+                  dueTimestamp.toDate().isBefore(DateTime.now());
+
+              // FEATURE: Canvas/Teams-style hard cutoff (turn_in_widget.dart).
+              // Unlike dueDate, closeDate DOES gate unlock — but only
+              // when actually set; null (every activity created before
+              // this field existed, or one left "never closes") means
+              // the activity behaves exactly as it always has, no cutoff
+              // ever. Whether the gap between dueDate and closeDate
+              // reads as a "late grace window" or "no late submissions"
+              // is just how far apart the two dates are — no separate
+              // flag needed (see TurnInSettings.allowsLateWindow).
+              final closeTimestamp = actData['closeDate'] as Timestamp?;
+              final bool isClosed = !isCompleted &&
+                  closeTimestamp != null &&
+                  closeTimestamp.toDate().isBefore(DateTime.now());
+
+              // CHANGED: was `isUnitUnlocked && isScheduleReady`. Now
+              // gated by isLessonUnlocked, which already includes
+              // isUnitUnlocked — strictly tighter, never looser than
+              // before. This is what blocks lesson 2's first activity
+              // (its own requiredActivityId == null) until lesson 1 is
+              // fully done.
+              bool isUnlocked = isLessonUnlocked && isScheduleReady && !isClosed;
               if (requiredActivityId != null && requiredActivityId.isNotEmpty) {
                 isUnlocked = isUnlocked && completedActivities.containsKey(requiredActivityId);
               }
@@ -620,49 +757,74 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 'isCompleted': isCompleted,
                 'stars': stars,
                 'requiredActivityId': requiredActivityId,
+                'scheduledDate': scheduledTimestamp,
+                'dueDate': dueTimestamp,
+                'isOverdue': isOverdue,
+                'isClosed': isClosed,
               });
             }
 
-            final lessonQuizzesSnap = await FirebaseFirestore.instance
+            // record this lesson's completion so the NEXT lesson's
+            // allPreviousLessonsCompleted check can see it.
+            final bool thisLessonCompleted = lessonActivitiesTotal > 0 &&
+                lessonActivitiesCompleted == lessonActivitiesTotal;
+            lessonCompletedMap[lessonId] = thisLessonCompleted;
+            previousLessonIds.add(lessonId);
+
+            // ── LESSON QUIZ (reintroduced) ──
+            final lessonQuizSnap = await FirebaseFirestore.instance
                 .collection('quizzes')
-                .where('type', isEqualTo: 'lesson')
                 .where('contentId', isEqualTo: contentId)
                 .where('unitId', isEqualTo: unitId)
+                .where('scope', isEqualTo: 'lesson')
                 .where('lessonId', isEqualTo: lessonId)
+                .limit(1)
                 .get();
 
-            for (final qDoc in lessonQuizzesSnap.docs) {
-              final qData = qDoc.data();
-              final quizId = qDoc.id;
+            if (lessonQuizSnap.docs.isNotEmpty) {
+              final lqDoc = lessonQuizSnap.docs.first;
+              final lqData = lqDoc.data();
+              final lqQuizId = lqDoc.id;
+              final lqCompleted = completedQuizzes.containsKey(lqQuizId);
+              final lqStars = lqCompleted ? (completedQuizzes[lqQuizId]['stars'] ?? 0) : 0;
 
-              final bool isQuizUnlocked = isUnitUnlocked &&
-                  unitActivityIds.isNotEmpty &&
-                  unitActivitiesCompleted == unitActivityIds.length;
-
-              final isCompleted = completedQuizzes.containsKey(quizId);
-              final stars = isCompleted ? (completedQuizzes[quizId]['stars'] ?? 0) : 0;
+              // CHANGED: was `isUnitUnlocked && lessonActivitiesTotal > 0
+              // && lessonActivitiesCompleted == lessonActivitiesTotal`.
+              // Now uses isLessonUnlocked instead of isUnitUnlocked, so
+              // a lesson-2 quiz also respects the new lesson chain (no
+              // point unlocking lesson 2's quiz if lesson 2's activities
+              // themselves aren't reachable yet). thisLessonCompleted is
+              // the same value just computed above, reused instead of
+              // recomputed.
+              final bool lessonActivitiesReady =
+                  isLessonUnlocked && thisLessonCompleted;
 
               allItems.add({
                 'type': 'quiz',
+                'quizScope': 'lesson',
                 'contentId': contentId,
                 'unitId': unitId,
                 'lessonId': lessonId,
-                'quizId': quizId,
-                'title': qData['title'] ?? 'Lesson Quiz',
-                'description': qData['description'] ?? 'Test your lesson knowledge',
-                'isUnlocked': isQuizUnlocked,
-                'isCompleted': isCompleted,
-                'stars': stars,
+                'quizId': lqQuizId,
+                'title': lqData['title'] ?? 'Lesson Quiz',
+                'description': lqData['description'] ?? 'Optional check-in for this lesson',
+                'isUnlocked': lessonActivitiesReady,
+                'isCompleted': lqCompleted,
+                'isClosedAfterAttempts': false,
+                'stars': lqStars,
               });
             }
           }
 
           // ── UNIT QUIZZES ──
+          // Filtered to scope: 'unit' — see the block above for why the
+          // filter is necessary now that both scopes share this
+          // collection.
           final unitQuizSnapshots = await FirebaseFirestore.instance
               .collection('quizzes')
-              .where('type', isEqualTo: 'unit')
               .where('contentId', isEqualTo: contentId)
               .where('unitId', isEqualTo: unitId)
+              .where('scope', isEqualTo: 'unit')
               .get();
 
           for (final qDoc in unitQuizSnapshots.docs) {
@@ -681,15 +843,10 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             final int attemptsUsed = progressDetail != null
                 ? (progressDetail['attempts'] as int? ?? 0)
                 : 0;
-            // final bool hasPassed = progressDetail != null
-            //     ? (progressDetail['passed'] as bool? ?? false)
-            //     : false;
 
             final bool isCompletedAfterAttempts = progressDetail != null
                 ? (progressDetail['isClosedAfterAttempts'] as bool? ?? false)
                 : false;
-
-            // final bool attemptsExhausted = attemptsUsed >= maxAttempts;
 
             final bool quizClosed = isCompletedAfterAttempts || isCompleted;
 

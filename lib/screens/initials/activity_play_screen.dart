@@ -15,6 +15,7 @@ import 'package:loringo_app/screens/initials/screen_three.dart';
 import 'package:loringo_app/screens/initials/screen_two.dart';
 import 'package:loringo_app/screens/initials/screen_seven.dart';
 import 'package:loringo_app/screens/initials/widget/practice_round_intro_screen.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 import 'package:loringo_app/services/database/database.dart';
 
 // NOTE — slow_reveal discontinued: the task type formerly mapped to
@@ -22,7 +23,26 @@ import 'package:loringo_app/services/database/database.dart';
 // now implements 'compare' instead (its content was replaced, not just its
 // wiring here). A brand-new screen_fourteen.dart implements 'flashcard'.
 // See the 'compare' and 'flashcard' cases in _buildTaskScreen below.
-
+//
+// ── TEACHER REVIEW FEATURE: per-task answer capture ─────────────────────
+// Every one of the 13 task screens now reports back not just isCorrect,
+// but also an `answerDetail` map describing what the student actually
+// answered vs. what was correct. The shape of that map is intentionally
+// different per task type (an image_select answer looks nothing like an
+// arrange answer), so there is no shared schema here beyond
+// {'type': <taskType>, ...type-specific fields}. This screen's only job
+// is to collect one such map per task into `taskAnswers` (keyed by task
+// doc ID) and hand the whole collection to Database.saveActivityCompletion
+// at the end, so the teacher-facing ActivityReviewScreen can render each
+// task's detail with a per-type widget.
+//
+// Design decision (confirmed with the thesis advisor context): only the
+// BEST-SCORING attempt's taskAnswers are persisted, mirroring the
+// existing bestScore behavior — a worse retry never overwrites a better
+// one's detail. See saveActivityCompletion in database.dart for where
+// that comparison happens; this screen always sends up its own current
+// attempt's taskAnswers and lets the database layer decide whether to
+// keep them.
 class ActivityPlayScreen extends StatefulWidget {
   final String contentId;
   final String unitId;
@@ -59,6 +79,15 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
   bool isLoading = true;
   int correctAnswers = 0;
   int wrongAnswers = 0;
+
+  // ── Per-task answer detail capture ──────────────────────────────────────
+  // Keyed by task doc ID. Populated in the main pass only — the review
+  // round (retry-until-correct) is purely for reinforcement and doesn't
+  // change what gets scored or reported, so it doesn't touch this map.
+  // If a task appears in the main pass and is answered wrong, its FIRST
+  // (main-pass) answerDetail is what's kept, since that's the one that
+  // actually counted toward correctAnswers/wrongAnswers.
+  final Map<String, Map<String, dynamic>> taskAnswers = {};
 
   // ── Review round state ──────────────────────────────────────────────────
   // Any task answered wrong on its first attempt (during the main pass)
@@ -148,22 +177,48 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
   /// Called by every one of the 13 single-answer task screens via
   /// onTaskComplete. Splits behavior depending on whether we're in the
   /// main pass or the review round — see the two private handlers below.
-  void nextTask(bool isCorrect) {
+  ///
+  /// [answerDetail] is the type-specific "what did the student answer"
+  /// map built by the task screen itself (see each screen_*.dart's
+  /// _checkAnswer for the exact shape). Always non-null from the task
+  /// screens' perspective, but callers that haven't been migrated yet in
+  /// this rollout default it to {} defensively so a missed call site
+  /// fails soft (empty detail) rather than crashing.
+  ///
+  /// Signature matches TaskCompleteCallback (see widget/task_callbacks.dart)
+  /// exactly, so this method tears off cleanly to every task screen's
+  /// onTaskComplete parameter — verified by the explicit type annotation
+  /// on the `nextTask` tear-off used below in _buildTaskScreen.
+  void nextTask(bool isCorrect, [Map<String, dynamic> answerDetail = const {}]) {
     if (inReviewRound) {
       _handleReviewAnswer(isCorrect);
     } else {
-      _handleMainPassAnswer(isCorrect);
+      _handleMainPassAnswer(isCorrect, answerDetail);
     }
   }
 
-  void _handleMainPassAnswer(bool isCorrect) {
+  void _handleMainPassAnswer(bool isCorrect, Map<String, dynamic> answerDetail) {
+    final taskId = tasks[currentTaskIndex].id;
     setState(() {
       if (isCorrect) {
         correctAnswers++;
       } else {
         wrongAnswers++;
-        wrongTaskIds.add(tasks[currentTaskIndex].id);
+        wrongTaskIds.add(taskId);
       }
+      // Recorded once per task in the main pass — a task is only ever
+      // visited once here (the review round is a separate pass over
+      // reviewTasks, handled by _handleReviewAnswer, which never calls
+      // this method), so there's no overwrite concern within a single
+      // attempt of the activity.
+      //
+      // 'accuracy' (0 or 100) is added on top of the type-specific
+      // answerDetail so per-task-type performance can be aggregated
+      // later (see parent_home_screen.dart's Skill Insights section) —
+      // answerDetail alone has no shared correctness field across the
+      // 12 task types, only `isCorrect` passed separately into this
+      // callback, so it needs to be folded in here to be persisted.
+      taskAnswers[taskId] = {...answerDetail, 'accuracy': isCorrect ? 100 : 0};
     });
     _advanceMainPass();
   }
@@ -189,8 +244,20 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
   /// [subCorrect]/[subWrong] are added directly to the running
   /// correctAnswers/wrongAnswers tally so partial credit is reflected in
   /// the final activity score exactly as if each sub-answer had been its
-  /// own task.
-  void _nextMultiPartTask(bool pass, int subCorrect, int subWrong) {
+  /// own task. [subQuestionDetails] carries one answerDetail-shaped map
+  /// per sub-question (e.g. one per reading comprehension question),
+  /// stored together under this task's ID as a list rather than a single
+  /// map — the review screen renders each sub-question as its own row.
+  ///
+  /// Signature matches MultiPartTaskCompleteCallback (see
+  /// widget/task_callbacks.dart) exactly, so this method tears off
+  /// cleanly to ScreenSeven's onTaskComplete parameter.
+  void _nextMultiPartTask(
+    bool pass,
+    int subCorrect,
+    int subWrong, [
+    List<Map<String, dynamic>> subQuestionDetails = const [],
+  ]) {
     if (inReviewRound) {
       // Multi-part tasks are only re-attempted as a whole during review;
       // sub-scores don't affect the locked-in main-pass score at that
@@ -198,10 +265,22 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
       if (pass) _advanceReviewRound();
       return;
     }
+    final taskId = tasks[currentTaskIndex].id;
     setState(() {
       correctAnswers += subCorrect;
       wrongAnswers += subWrong;
-      if (!pass) wrongTaskIds.add(tasks[currentTaskIndex].id);
+      if (!pass) wrongTaskIds.add(taskId);
+      final subTotal = subCorrect + subWrong;
+      // Same 'accuracy' field as the single-part path, computed from
+      // the sub-question tally rather than a single isCorrect since
+      // reading comprehension has multiple independently-scored
+      // sub-answers under one task.
+      final accuracy = subTotal == 0 ? (pass ? 100 : 0) : ((subCorrect / subTotal) * 100).round();
+      taskAnswers[taskId] = {
+        'type': 'reading',
+        'questions': subQuestionDetails,
+        'accuracy': accuracy,
+      };
     });
     _advanceMainPass();
   }
@@ -259,6 +338,9 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           wrongAnswers: wrongAnswers,
           xpBase: widget.xpBase ?? 100,
           bonusXP: widget.bonusXP ?? 0,
+          // Only overwritten server-side when this attempt's score beats
+          // the previously stored bestScore — see database.dart.
+          taskAnswers: taskAnswers,
         );
       }
     } catch (e) {
@@ -314,13 +396,21 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
       inReviewRound ? '${taskDoc.id}_review' : taskDoc.id,
     );
 
+    // Explicit typed references (not just bare method tear-offs) so the
+    // compiler actually checks nextTask/_nextMultiPartTask against the
+    // shared typedefs from widget/task_callbacks.dart right here, rather
+    // than only structurally matching at each of the 13 call sites below
+    // with no single place confirming the contract.
+    final TaskCompleteCallback onSingleAnswerComplete = nextTask;
+    final MultiPartTaskCompleteCallback onMultiPartComplete = _nextMultiPartTask;
+
     switch (taskType) {
       case 'image_select':
         return ScreenOne(
           key: taskKey,
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
-          taskId: taskDoc.id, onTaskComplete: nextTask,
+          taskId: taskDoc.id, onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -331,7 +421,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           key: taskKey,
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
-          taskId: taskDoc.id, onTaskComplete: nextTask,
+          taskId: taskDoc.id, onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -342,7 +432,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           key: taskKey,
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
-          taskId: taskDoc.id, onTaskComplete: nextTask,
+          taskId: taskDoc.id, onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -353,7 +443,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           key: taskKey,
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
-          taskId: taskDoc.id, onTaskComplete: nextTask,
+          taskId: taskDoc.id, onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -364,7 +454,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           key: taskKey,
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
-          taskId: taskDoc.id, onTaskComplete: nextTask,
+          taskId: taskDoc.id, onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -375,7 +465,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           key: taskKey,
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
-          taskId: taskDoc.id, onTaskComplete: nextTask,
+          taskId: taskDoc.id, onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -387,7 +477,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           contentId: widget.contentId, unitId: widget.unitId,
           lessonId: widget.lessonId, activityId: widget.activityId,
           taskId: taskDoc.id,
-          onTaskComplete: _nextMultiPartTask,
+          onTaskComplete: onMultiPartComplete,
           currentTaskNumber: displayNumber, totalTasks: displayTotal,
           collectionName: widget.collectionName,
           isPracticeRound: inReviewRound,
@@ -401,7 +491,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           lessonId: widget.lessonId,
           activityId: widget.activityId,
           taskId: taskDoc.id,
-          onTaskComplete: nextTask,
+          onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber,
           totalTasks: displayTotal,
           collectionName: widget.collectionName,
@@ -416,7 +506,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           lessonId: widget.lessonId,
           activityId: widget.activityId,
           taskId: taskDoc.id,
-          onTaskComplete: nextTask,
+          onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber,
           totalTasks: displayTotal,
           collectionName: widget.collectionName,
@@ -431,7 +521,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           lessonId: widget.lessonId,
           activityId: widget.activityId,
           taskId: taskDoc.id,
-          onTaskComplete: nextTask,
+          onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber,
           totalTasks: displayTotal,
           collectionName: widget.collectionName,
@@ -446,7 +536,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           lessonId: widget.lessonId,
           activityId: widget.activityId,
           taskId: taskDoc.id,
-          onTaskComplete: nextTask,
+          onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber,
           totalTasks: displayTotal,
           collectionName: widget.collectionName,
@@ -461,7 +551,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           lessonId: widget.lessonId,
           activityId: widget.activityId,
           taskId: taskDoc.id,
-          onTaskComplete: nextTask,
+          onTaskComplete: onSingleAnswerComplete,
           currentTaskNumber: displayNumber,
           totalTasks: displayTotal,
           collectionName: widget.collectionName,

@@ -1,10 +1,12 @@
 // screen_four.dart
 // ignore_for_file: curly_braces_in_flow_control_structures
 
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+// import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
@@ -14,6 +16,9 @@ import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 // import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
 class _FillOption {
   final String textEn;
@@ -33,7 +38,17 @@ class ScreenFour extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect)? onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'fill_blank', 'sentence': <full
+  // question text with ___ markers, for context>, 'blanks': [
+  //   {'given': <word student picked/dropped for this blank>,
+  //    'correct': <correct word for this blank>}, ...
+  // ]} — one entry per blank, whether the task has 1 blank (single
+  // dropdown-style) or several (drag targets). Both code paths below
+  // funnel into the same blanks list shape so the review screen doesn't
+  // need to branch on blank count.
+  final TaskCompleteCallback? onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -59,7 +74,7 @@ class ScreenFour extends StatefulWidget {
 
 class _ScreenFourState extends State<ScreenFour> with RetryableTask {
   // final AudioPlayer _player = AudioPlayer();
-  final FlutterTts _tts = FlutterTts();
+  // final FlutterTts _tts = FlutterTts();
 
   static const Color _green = Color(0xFF4CAF50);
   static const Color _red = Color(0xFFE53935);
@@ -93,18 +108,18 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
   @override
   void initState() {
     super.initState();
-    _initTts();
+    // _initTts();
     _fetchTask();
   }
 
-  Future<void> _initTts() async {
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.5);
-    await _tts.setPitch(1.0);
-  }
+  // Future<void> _initTts() async {
+  //   await _tts.setLanguage('en-GB');
+  //   await _tts.setSpeechRate(0.5);
+  //   await _tts.setPitch(1.0);
+  // }
 
   Future<void> _speak(String text) async {
-    if (text.isNotEmpty) await _tts.speak(text);
+    if (text.isNotEmpty) await TaskTtsService.speak(text, voice: TtsVoiceDefaults.defaultEnglish);
   }
 
   /// Awaits the utterance instead of firing-and-forgetting, so callers
@@ -115,7 +130,7 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
   /// wiring is needed here.
   Future<void> _speakAndWait(String text) async {
     if (text.isEmpty) return;
-    await _tts.speak(text);
+    await TaskTtsService.speak(text, voice: TtsVoiceDefaults.defaultEnglish);
   }
 
   Future<void> _handleClose() async {
@@ -215,6 +230,28 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
     return true;
   }
 
+  /// Builds the per-blank teacher-review detail regardless of whether
+  /// this task has one blank (dropdown-style, tracked in
+  /// _selectedOptionEn) or several (drag targets, tracked in
+  /// _droppedWords) — both paths produce the same
+  /// {'given', 'correct'} shape per blank so the review screen doesn't
+  /// need to special-case blank count.
+  List<Map<String, dynamic>> _buildBlankDetails() {
+    final details = <Map<String, dynamic>>[];
+    for (int i = 0; i < _blankCount; i++) {
+      final correctOpt = _options.firstWhere(
+        (o) => o.isCorrect && o.blankIndex == i,
+        orElse: () => _FillOption(textEn: '', isCorrect: false),
+      );
+      final given = _blankCount == 1 ? _selectedOptionEn : _droppedWords[i];
+      details.add({
+        'given': given ?? '',
+        'correct': correctOpt.textEn,
+      });
+    }
+    return details;
+  }
+
   /// Check flow: speak the completed sentence -> reveal the blank(s) in
   /// green/red -> brief pause so the student can register it -> then
   /// either offer a retry (RetryableTask, soft wrong / attempts left)
@@ -252,9 +289,18 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
       context,
       isCorrect: correct,
       isPracticeRound: widget.isPracticeRound,
-      onContinue: () => widget.onTaskComplete!(correct),
+      onContinue: () => widget.onTaskComplete!(correct, {
+        'type': 'fill_blank',
+        'sentence': questionForReview,
+        'blanks': _buildBlankDetails(),
+      }),
     );
   }
+
+  /// The original question text (with ___ markers), reconstructed from
+  /// _segments purely for the teacher review screen's context — never
+  /// shown to the student in this form.
+  String get questionForReview => _segments.join('___');
 
   void _resetLocalState() {
     setState(() {
@@ -269,7 +315,8 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
   @override
   void dispose() {
     // _player.dispose();
-    _tts.stop();
+    // _tts.stop();
+    TaskTtsService.stop();
     super.dispose();
   }
 

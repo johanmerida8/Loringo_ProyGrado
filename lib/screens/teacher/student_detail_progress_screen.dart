@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/screens/teacher/student_quiz_review_screen.dart';
+import 'package:loringo_app/screens/teacher/activity_review_screen.dart';
+import 'package:loringo_app/screens/teacher/lesson_quiz_review_screen.dart';
+import 'package:loringo_app/screens/teacher/unit_quiz_review_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class StudentDetailedProgressScreen extends StatefulWidget {
@@ -78,7 +80,11 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
       body: TabBarView(
         controller: _tabController,
         children: [
-          _ActivitiesTab(studentId: widget.studentId, unitId: widget.unitId),
+          _ActivitiesTab(
+            studentId: widget.studentId,
+            studentName: widget.studentName,
+            unitId: widget.unitId,
+          ),
           _QuizzesTab(
             studentId: widget.studentId,
             studentName: widget.studentName,
@@ -95,9 +101,14 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
 // ──────────────────────────────────────────────────────────────────────────
 class _ActivitiesTab extends StatefulWidget {
   final String studentId;
+  final String studentName;
   final String? unitId;
 
-  const _ActivitiesTab({required this.studentId, required this.unitId});
+  const _ActivitiesTab({
+    required this.studentId,
+    required this.studentName,
+    required this.unitId,
+  });
 
   @override
   State<_ActivitiesTab> createState() => _ActivitiesTabState();
@@ -162,6 +173,20 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
     }
   }
 
+  void _openReview(String activityId, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ActivityReviewScreen(
+          studentId: widget.studentId,
+          studentName: widget.studentName,
+          activityId: activityId,
+          activityTitle: title,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
@@ -170,7 +195,7 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
           .doc(widget.studentId)
           .collection('progress')
           .where('isCompleted', isEqualTo: true)
-          .where('activityId', isNotEqualTo: null)
+          .where('type', isEqualTo: 'activity')
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -179,8 +204,6 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
         final docs = snapshot.data?.docs ?? [];
         final activityDocs = docs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
-          final hasQuizId = data.containsKey('quizId') && data['quizId'] != null && data['quizId'].toString().isNotEmpty;
-          if (hasQuizId) return false;
 
           // Filtro por unidad en cliente (evita índice compuesto en
           // Firestore para isNotEqualTo + isEqualTo en campos distintos).
@@ -207,7 +230,7 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
           itemCount: activityDocs.length,
           itemBuilder: (context, index) {
             final data = activityDocs[index].data() as Map<String, dynamic>;
-            final activityId = data['activityId'] as String? ?? '';
+            final activityId = activityDocs[index].id;
             final contentId = data['contentId'] as String? ?? '';
             final unitId = data['unitId'] as String? ?? '';
             final bestScore = (data['bestScore'] as num?)?.toInt() ?? 0;
@@ -224,6 +247,12 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
             final dateStr = completedAt != null
                 ? _formatDate(completedAt.toDate())
                 : 'Unknown date';
+            // Whether this attempt has per-task detail available for
+            // review — activities completed before this feature existed
+            // simply won't have a taskAnswers map, and the Review button
+            // stays enabled regardless (ActivityReviewScreen shows a
+            // clear "not available" message in that case rather than
+            // hiding the whole entry).
 
             return FutureBuilder<String>(
               future: _getActivityTitle(activityId, contentId, unitId),
@@ -231,22 +260,44 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
                 final title = titleSnapshot.data ?? activityId;
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: AppColors.primary.withOpacity(0.1),
-                      child: Text('$bestScore%'),
-                    ),
-                    title: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+                    child: Column(
                       children: [
-                        Text(title),
-                        const SizedBox(height: 4),
-                        _buildStars(starCount),
+                        ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: AppColors.primary.withOpacity(0.1),
+                            child: Text('$bestScore%'),
+                          ),
+                          title: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(title),
+                              const SizedBox(height: 4),
+                              _buildStars(starCount),
+                            ],
+                          ),
+                          subtitle: Text('Completed: $dateStr'),
+                          trailing: Text('$bestScore%',
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () => _openReview(activityId, title),
+                              icon: const Icon(Icons.rate_review_outlined, size: 18),
+                              label: const Text('Review'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primary,
+                                side: const BorderSide(color: AppColors.primary),
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
-                    subtitle: Text('Completed: $dateStr'),
-                    trailing: Text('$bestScore%',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 );
               },
@@ -293,17 +344,60 @@ class _QuizzesTabState extends State<_QuizzesTab> {
         final info = {
           'title': data['title'] as String? ?? 'Unknown Quiz',
           'type': data['type'] as String? ?? 'lesson',
+          // 'scope' is the current field name written by createQuiz (see
+          // database.dart) — 'type' above is kept for any pre-migration
+          // documents that might still carry it. Prefer 'scope' when
+          // present so newly-created quizzes route correctly regardless
+          // of which legacy key older docs used.
+          'scope': data['scope'] as String? ?? data['type'] as String? ?? 'lesson',
         };
         _quizCache[quizId] = info;
         return info;
       } else {
-        _quizCache[quizId] = {'title': 'Deleted Quiz', 'type': 'unknown'};
+        _quizCache[quizId] = {'title': 'Deleted Quiz', 'type': 'unknown', 'scope': 'unknown'};
         return _quizCache[quizId]!;
       }
     } catch (e) {
       debugPrint('Error loading quiz info for $quizId: $e');
-      _quizCache[quizId] = {'title': 'Error loading', 'type': 'unknown'};
+      _quizCache[quizId] = {'title': 'Error loading', 'type': 'unknown', 'scope': 'unknown'};
       return _quizCache[quizId]!;
+    }
+  }
+
+  void _openReview(String quizId, String quizTitle, bool isUnitQuiz, String contentId, String unitId) {
+    if (isUnitQuiz) {
+      // Unit Quiz keeps its existing review + parent-report flow,
+      // unchanged — this screen only adds the Lesson Quiz branch below.
+      // contentId/unitId come from THIS quiz's own progress doc (already
+      // extracted in itemBuilder below), not from widget.unitId — the
+      // latter is null whenever the teacher is viewing "All Units", but
+      // UnitQuizReviewScreen needs the real, non-empty values to load
+      // and later save the parent report against reports/{unitId}.
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => UnitQuizReviewScreen(
+            studentId: widget.studentId,
+            studentName: widget.studentName,
+            quizId: quizId,
+            quizTitle: quizTitle,
+            unitId: unitId,
+            contentId: contentId,
+          ),
+        ),
+      );
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => LessonQuizReviewScreen(
+            studentId: widget.studentId,
+            studentName: widget.studentName,
+            quizId: quizId,
+            quizTitle: quizTitle,
+          ),
+        ),
+      );
     }
   }
 
@@ -315,19 +409,17 @@ class _QuizzesTabState extends State<_QuizzesTab> {
           .doc(widget.studentId)
           .collection('progress')
           .where('isCompleted', isEqualTo: true)
-          .where('quizId', isNotEqualTo: null)
+          .where('type', isEqualTo: 'quiz')
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-        
+
         final docs = snapshot.data?.docs ?? [];
 
         final validDocs = docs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
-          final quizId = data['quizId'] as String?;
-          if (quizId == null || quizId.isEmpty) return false;
 
           // Mismo filtro en cliente por consistencia con el tab de
           // Activities y para evitar índices compuestos.
@@ -354,13 +446,13 @@ class _QuizzesTabState extends State<_QuizzesTab> {
           itemCount: validDocs.length,
           itemBuilder: (context, index) {
             final data = validDocs[index].data() as Map<String, dynamic>;
-            final quizId = data['quizId'] as String;
+            final quizId = validDocs[index].id;
             final contentId = data['contentId'] as String? ?? '';
             final unitId = data['unitId'] as String? ?? '';
-            final score = data['score'] as int? ?? 0;
+            final score = data['correctAnswers'] as int? ?? 0;
             final total = data['totalQuestions'] as int? ?? 0;
             final stars = data['stars'] as int? ?? 0;
-            final completedAt = data['completedAt'] as Timestamp?;
+            final completedAt = data['lastCompletedAt'] as Timestamp?;
             final dateStr = completedAt != null
                 ? _formatDate(completedAt.toDate())
                 : 'Unknown date';
@@ -387,7 +479,7 @@ class _QuizzesTabState extends State<_QuizzesTab> {
                   );
                 }
                 final info = infoSnapshot.data!;
-                final isUnitQuiz = info['type'] == 'unit';
+                final isUnitQuiz = info['scope'] == 'unit';
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),
                   child: Column(
@@ -408,36 +500,30 @@ class _QuizzesTabState extends State<_QuizzesTab> {
                         subtitle: Text('$score/$total correct • $dateStr'),
                         trailing: Text('$percentage%'),
                       ),
-                      if (isUnitQuiz)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => StudentQuizReviewScreen(
-                                      studentId: widget.studentId,
-                                      studentName: widget.studentName,
-                                      quizId: quizId,
-                                      quizTitle: info['title'],
-                                      unitId: unitId,
-                                      contentId: contentId,
-                                    ),
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.visibility, size: 18),
-                              label: const Text('Review Answers'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.primary,
-                                side: const BorderSide(color: AppColors.primary),
-                              ),
+                      // ── Review button ──────────────────────────────
+                      // Now shown for BOTH scopes, not just Unit Quiz —
+                      // previously this whole block only rendered when
+                      // isUnitQuiz was true, leaving Lesson Quiz with no
+                      // way to inspect answers. _openReview branches on
+                      // isUnitQuiz to route to the correct screen (see
+                      // above), since Unit Quiz keeps its own
+                      // report-generation flow and Lesson Quiz only gets
+                      // an internal feedback note.
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _openReview(quizId, info['title'], isUnitQuiz, contentId, unitId),
+                            icon: const Icon(Icons.visibility, size: 18),
+                            label: const Text('Review Answers'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: isUnitQuiz ? AppColors.primary : AppColors.info,
+                              side: BorderSide(color: isUnitQuiz ? AppColors.primary : AppColors.info),
                             ),
                           ),
                         ),
+                      ),
                     ],
                   ),
                 );

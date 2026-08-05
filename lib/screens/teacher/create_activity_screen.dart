@@ -1,9 +1,12 @@
 // create_activity_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/create_task_screen.dart';
+import 'package:loringo_app/screens/teacher/teacher_task_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
+import 'package:loringo_app/screens/teacher/widgets/turn_in_widget.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -38,16 +41,6 @@ class _CreatePersonalizedActivityScreenState
   final Database db = Database();
 
   late TextEditingController titleController;
-  // 'order' is a positional/technical field, not something a teacher
-  // should type by hand — a free-text order let the sequence get gaps or
-  // duplicates (e.g. 1, 3 with nothing as 2). It's kept as a controller
-  // internally only because the rest of this screen's save logic already
-  // reads its .text; there is no visible field bound to it anymore.
-  // - Creating: always set to existingActivities.length + 1 (append to
-  //   the end of the lesson's activity list).
-  // - Editing: preserved as-is from existingData — this screen never
-  //   changes an existing activity's position. Reordering belongs to a
-  //   future drag-and-drop affordance on the list screen, not here.
   late TextEditingController orderController;
   late TextEditingController xpBaseController;
 
@@ -56,6 +49,31 @@ class _CreatePersonalizedActivityScreenState
   String? requiredActivityId;
   String difficulty = 'easy';
   List<Map<String, dynamic>> existingActivities = [];
+
+  // FEATURE: scheduled availability / due date / close date, extracted
+  // into TurnInSettingsWidget (see turn_in_widget.dart) since it grew
+  // into a cohesive three-date concept rather than three unrelated
+  // fields. scheduledDate is still the unlock gate compared against the
+  // STUDENT DEVICE's local clock in student_activities_screen.dart,
+  // alongside — not instead of — the existing requiredActivityId
+  // prerequisite check. dueDate/closeDate/allowLateTurnIns are
+  // display/notification/lock signals, not unlock gates.
+  TurnInSettings _turnIn = const TurnInSettings();
+
+  // ── Deferred-create staging (creating path only) ───────────────────────
+  // Set once the teacher finishes defining a batch of tasks in the task
+  // flow (TeacherTaskEditorScreen -> TaskTypeSelectorScreen/
+  // TaskGeneratorDialog -> TaskBatchReviewScreen, which bubbles the
+  // defined batch back here instead of writing it). While null, the
+  // submit button reads "CONTINUE" and just pushes into that flow. Once
+  // set, the button reads "CREATE ACTIVITY", and tapping it is the one
+  // moment the activity + all these tasks are actually written together.
+  List<BatchTaskResult>? _stagedTasks;
+
+  // Generated once (on the first "CONTINUE" tap) and reused for both the
+  // trip into the task flow and the eventual real write, so the activity
+  // and its tasks land under the same Firestore doc id.
+  String? _draftActivityId;
 
   bool get _isEditing => widget.activityId != null;
   Color get _c => widget.groupColor;
@@ -67,6 +85,8 @@ class _CreatePersonalizedActivityScreenState
     orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
     xpBaseController = TextEditingController(text: widget.existingData?['xpBase']?.toString() ?? '10');
     requiredActivityId = widget.existingData?['requiredActivityId'];
+
+    _turnIn = TurnInSettings.fromFirestore(widget.existingData);
 
     final initialXp = int.tryParse(xpBaseController.text) ?? 10;
     difficulty = _getDifficultyFromXP(initialXp);
@@ -153,22 +173,6 @@ class _CreatePersonalizedActivityScreenState
     }
   }
 
-  /// Validates the one remaining invariant that keeps the activity unlock
-  /// chain coherent within a lesson, before anything is written to
-  /// Firestore: only one activity per lesson may be the entry point
-  /// (requiredActivityId == null / "Always Unlocked"). Two entry points
-  /// would mean two activities both start immediately unlocked with no
-  /// way to tell which one the teacher meant to be first.
-  ///
-  /// The previous 'order' duplicate check was removed along with the
-  /// Display Order field itself — order is now always derived (append-
-  /// on-create, preserved-on-edit), so a duplicate can no longer occur
-  /// from this screen.
-  ///
-  /// Returns a user-facing error string naming the conflicting activity,
-  /// or null if the check passes. existingActivities already excludes
-  /// the activity currently being edited (see _loadExistingActivities),
-  /// so a direct comparison is safe — no need to skip self-matches here.
   String? _validateChainIntegrity() {
     if (requiredActivityId == null) {
       final otherEntryPoint = existingActivities.cast<Map<String, dynamic>?>().firstWhere(
@@ -197,57 +201,177 @@ class _CreatePersonalizedActivityScreenState
       return;
     }
 
+    // Belt-and-suspenders re-check: covers the case where a picked date
+    // has since slipped stale purely because the teacher sat on the
+    // form for a while before submitting — same validation the widget
+    // runs per-pick, re-run here against the final state.
+    final turnInError = validateTurnInSettings(_turnIn);
+    if (turnInError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(turnInError), backgroundColor: AppColors.danger),
+      );
+      return;
+    }
+
+    // The turn-in schedule used to be entirely optional. It no longer is:
+    // every activity needs a due date so the tasks created inside it (via
+    // task_generator_dialog/task_type_selector_screen) have something
+    // meaningful to be "overdue" or "late" against. Schedule Activity and
+    // Close/Until stay optional — only Due is mandatory.
+    if (_turnIn.dueDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Set a due date — Turn-in Schedule is required.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
+
+    if (_isEditing) {
+      await _submitEdit();
+      return;
+    }
+    await _submitCreate();
+  }
+
+  Future<void> _submitEdit() async {
     setState(() => isLoading = true);
-
     try {
-      final activityId = widget.activityId ?? 'activity_${DateTime.now().millisecondsSinceEpoch}';
-
-      if (!_isEditing) {
-        await db.createPersonalizedActivity(
-          groupId: widget.groupId,
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: activityId,
-          title: titleController.text.trim(),
-          order: int.parse(orderController.text.trim()),
-          requiredActivityId: requiredActivityId,
-          xpBase: int.parse(xpBaseController.text.trim()),
-          difficulty: difficulty,
+      final activityId = widget.activityId!;
+      final origTitle = widget.existingData?['title'] as String? ?? '';
+      final origXp = widget.existingData?['xpBase']?.toString() ?? '10';
+      final origRequired = widget.existingData?['requiredActivityId'] as String?;
+      final origTurnIn = TurnInSettings.fromFirestore(widget.existingData);
+      final noChanges =
+          titleController.text.trim() == origTitle &&
+          xpBaseController.text.trim() == origXp &&
+          requiredActivityId == origRequired &&
+          _turnIn == origTurnIn;
+      if (noChanges) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
         );
-      } else {
-        final origTitle = widget.existingData?['title'] as String? ?? '';
-        final origXp = widget.existingData?['xpBase']?.toString() ?? '10';
-        final origRequired = widget.existingData?['requiredActivityId'] as String?;
-        final noChanges =
-            titleController.text.trim() == origTitle &&
-            xpBaseController.text.trim() == origXp &&
-            requiredActivityId == origRequired;
-        if (noChanges) {
-          setState(() => isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
-          );
-          return;
-        }
-        await db.updatePersonalizedActivity(
-          groupId: widget.groupId,
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: activityId,
-          title: titleController.text.trim(),
-          order: int.parse(orderController.text.trim()),
-          requiredActivityId: requiredActivityId,
-          xpBase: int.parse(xpBaseController.text.trim()),
-          difficulty: difficulty,
+        return;
+      }
+      await db.updatePersonalizedActivity(
+        groupId: widget.groupId,
+        contentId: widget.contentId,
+        unitId: widget.unitId,
+        lessonId: widget.lessonId,
+        activityId: activityId,
+        title: titleController.text.trim(),
+        order: int.parse(orderController.text.trim()),
+        requiredActivityId: requiredActivityId,
+        xpBase: int.parse(xpBaseController.text.trim()),
+        difficulty: difficulty,
+        scheduledDate: _turnIn.scheduledDate,
+        dueDate: _turnIn.dueDate,
+        closeDate: _turnIn.closeDate,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Activity updated successfully!'), backgroundColor: AppColors.success),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
         );
       }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
 
+  /// Two very different things happen here depending on _stagedTasks:
+  ///  - Still null (first tap, button reads "CONTINUE"): nothing is
+  ///    written to Firestore. Pushes into the task flow and waits for it
+  ///    to bubble back a fully-defined batch, which just gets stored —
+  ///    the teacher lands right back on this same filled-in form.
+  ///  - Already set (second tap, button reads "CREATE ACTIVITY"): this IS
+  ///    the write — the activity itself plus every staged task, using
+  ///    whatever's currently in the form fields (the teacher may have
+  ///    tweaked title/XP/turn-in dates after staging; that's fine, this
+  ///    reads live values, not a stale snapshot from the first tap).
+  Future<void> _submitCreate() async {
+    if (_stagedTasks == null) {
+      setState(() => isLoading = true);
+      _draftActivityId ??= 'activity_${DateTime.now().millisecondsSinceEpoch}';
+
+      // Plain push, not pushReplacement: this form's State (title, XP,
+      // difficulty, prerequisite, turn-in dates) is never written
+      // anywhere until "CREATE ACTIVITY" below runs, so it has to stay
+      // alive on the stack underneath. Pressing back anywhere in the
+      // task flow lands the teacher right back on this exact filled-in
+      // form instead of losing everything.
+      final result = await Navigator.push<List<BatchTaskResult>>(
+        context,
+        MaterialPageRoute(
+          settings: const RouteSettings(name: kTeacherTaskEditorRoute),
+          builder: (_) => TeacherTaskEditorScreen(
+            groupId: widget.groupId,
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            lessonId: widget.lessonId,
+            activityId: _draftActivityId!,
+            activityTitle: titleController.text.trim(),
+            groupColor: _c,
+            ancestorTrail: const [],
+            isPendingActivity: true,
+          ),
+        ),
+      );
+
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+          if (result != null && result.isNotEmpty) _stagedTasks = result;
+        });
+      }
+      return;
+    }
+
+    setState(() => isLoading = true);
+    try {
+      await db.createPersonalizedActivity(
+        groupId: widget.groupId,
+        contentId: widget.contentId,
+        unitId: widget.unitId,
+        lessonId: widget.lessonId,
+        activityId: _draftActivityId!,
+        title: titleController.text.trim(),
+        order: int.parse(orderController.text.trim()),
+        requiredActivityId: requiredActivityId,
+        xpBase: int.parse(xpBaseController.text.trim()),
+        difficulty: difficulty,
+        scheduledDate: _turnIn.scheduledDate,
+        dueDate: _turnIn.dueDate,
+        closeDate: _turnIn.closeDate,
+      );
+      for (final r in _stagedTasks!) {
+        final taskId = 'task_${DateTime.now().millisecondsSinceEpoch}_${r.order}';
+        await db.createPersonalizedTask(
+          groupId: widget.groupId,
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
+          activityId: _draftActivityId!,
+          taskId: taskId,
+          type: r.type,
+          title: r.title,
+          question: r.question,
+          order: r.order,
+          data: r.data,
+        );
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_isEditing ? 'Activity updated successfully!' : 'Activity created successfully!'),
+            content: Text(
+                'Activity and ${_stagedTasks!.length} task${_stagedTasks!.length == 1 ? '' : 's'} created successfully!'),
             backgroundColor: AppColors.success,
           ),
         );
@@ -273,7 +397,6 @@ class _CreatePersonalizedActivityScreenState
         : null;
 
     return Scaffold(
-      // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader.
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
         children: [
@@ -379,11 +502,53 @@ class _CreatePersonalizedActivityScreenState
                       ],
                       onChanged: (value) => setState(() => requiredActivityId = value),
                     ),
+                    const SizedBox(height: AppSpacing.lg),
+
+                    // ── Turn-in settings (availability / due / close) ──────
+                    TurnInSettingsWidget(
+                      initial: _turnIn,
+                      accentColor: _c,
+                      onChanged: (next) => setState(() => _turnIn = next),
+                    ),
                     const SizedBox(height: AppSpacing.xl),
+
+                    if (_stagedTasks != null) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: AppColors.success.withOpacity(0.1),
+                          borderRadius: AppRadii.mdAll,
+                          border: Border.all(color: AppColors.success.withOpacity(0.4)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.check_circle_outline, color: AppColors.success, size: 16),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                '${_stagedTasks!.length} task${_stagedTasks!.length == 1 ? '' : 's'} ready. Tap Create Activity to save everything.',
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
 
                     CreateFormSubmitButton(
                       color: _c,
-                      label: _isEditing ? 'UPDATE ACTIVITY' : 'CREATE ACTIVITY',
+                      // Creating isn't the end of the road until tasks are
+                      // staged — the first tap ("CONTINUE") just carries
+                      // the form into the task flow without writing
+                      // anything. Once that flow bubbles a defined batch
+                      // back (_stagedTasks set), THIS tap is the one that
+                      // actually creates the activity and its tasks
+                      // together, so the label switches to say that.
+                      label: _isEditing
+                          ? 'UPDATE ACTIVITY'
+                          : (_stagedTasks != null ? 'CREATE ACTIVITY' : 'CONTINUE'),
                       isLoading: isLoading || !_activitiesLoaded,
                       onPressed: _submit,
                     ),

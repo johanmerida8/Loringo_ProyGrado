@@ -2,18 +2,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-// import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-// import 'package:just_audio/just_audio.dart';
+import 'package:flutter/services.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
+import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
-// ── Data model for one match pair ─────────────────────────────────────────────
 class _MatchPair {
   final int id;
   final String english;
@@ -34,17 +33,22 @@ class ScreenSix extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect) onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'match', 'mode': 'text'|'image',
+  // 'pairs': [{'english': ..., 'translated': ..., 'image': ...}, ...]}.
+  // Unlike every other task type, 'match' has no wrong-answer state that
+  // survives to completion — a mismatched tap resets after a beat (see
+  // _tryMatch below) and every pair is eventually matched correctly
+  // before onTaskComplete ever fires. So there's no "student picked X,
+  // correct was Y" to report; the detail is purely informational — which
+  // pairs this task contained — so the teacher review screen can still
+  // show the exercise's content even though there's nothing to grade
+  // per-pair.
+  final TaskCompleteCallback onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
-  // Accepted for constructor symmetry with the other 9 task screens
-  // (ActivityPlayScreen passes this uniformly to all of them), but
-  // unused here: a wrong tap in this match game just un-selects after a
-  // brief flash rather than ending the task, so this screen can never
-  // actually be answered "wrong" in the sense ActivityPlayScreen's
-  // review round cares about — it never lands in wrongTaskIds, so it
-  // can never be replayed as a practice round in the first place.
   final bool isPracticeRound;
 
   const ScreenSix({
@@ -66,9 +70,6 @@ class ScreenSix extends StatefulWidget {
 }
 
 class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMixin {
-  // final AudioPlayer _player = AudioPlayer();
-  final FlutterTts _tts = FlutterTts();
-
   static const Color _green = Color(0xFF4CAF50);
 
   String _userLang = 'Spanish';
@@ -98,24 +99,12 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
   @override
   void dispose() {
     _shakeCtrl.dispose();
-    // _player.dispose();
-    _tts.stop();
+    TaskTtsService.stop();
     super.dispose();
   }
 
   Future<void> _setUp() async {
-    await _initTts();
     await _fetchTask();
-  }
-
-  Future<void> _initTts() async {
-    try {
-      await _tts.setLanguage('en-GB');
-      await _tts.setSpeechRate(0.5);
-      await _tts.setPitch(1.0);
-    } catch (e) {
-      debugPrint('TTS init error: $e');
-    }
   }
 
   Future<void> _handleClose() async {
@@ -125,7 +114,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
 
   Future<void> _fetchTask() async {
     try {
-      // Get user language
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) {
         try {
@@ -138,7 +126,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         }
       }
 
-      // Fetch the task document
       final doc = await FirebaseFirestore.instance
           .collection(widget.collectionName)
           .doc(widget.contentId)
@@ -161,33 +148,24 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
       }
 
       final raw = doc.data() as Map<String, dynamic>;
-      
-      // ✅ Debug: Print what we got
       debugPrint('ScreenSix raw data: $raw');
-      
-      // ✅ Try to get data from both possible locations
+
       Map<String, dynamic> taskData;
       if (raw.containsKey('data') && raw['data'] is Map<String, dynamic>) {
         taskData = raw['data'] as Map<String, dynamic>;
       } else {
         taskData = raw;
       }
-      
+
       debugPrint('ScreenSix taskData: $taskData');
-      
-      // ✅ Get mode
+
       _mode = taskData['mode'] as String? ?? 'text';
-      
-      // ✅ Get pairs - try multiple possible locations
+
       List<Map<String, dynamic>> rawPairs = [];
-      
-      // Try 1: Direct 'pairs' field
+
       if (taskData.containsKey('pairs') && taskData['pairs'] is List) {
         rawPairs = List<Map<String, dynamic>>.from(taskData['pairs']);
-      } 
-      // Try 2: If pairs are at root level as individual fields
-      else {
-        // Check if we have individual pair entries
+      } else {
         final keys = taskData.keys.where((k) => k.startsWith('pair_') || k.startsWith('pair'));
         if (keys.isNotEmpty) {
           for (final key in keys) {
@@ -198,9 +176,9 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
           }
         }
       }
-      
+
       debugPrint('ScreenSix rawPairs count: ${rawPairs.length}');
-      
+
       if (rawPairs.isEmpty) {
         setState(() {
           _errorMessage = 'No pairs found in this task';
@@ -209,7 +187,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         return;
       }
 
-      // Convert to _MatchPair objects
       final pairs = rawPairs.asMap().entries.map((e) {
         final data = e.value;
         return _MatchPair(
@@ -220,9 +197,8 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         );
       }).toList();
 
-      // Filter out pairs with empty english
       final validPairs = pairs.where((p) => p.english.isNotEmpty).toList();
-      
+
       if (validPairs.isEmpty) {
         setState(() {
           _errorMessage = 'No valid pairs found';
@@ -231,7 +207,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         return;
       }
 
-      // Shuffle columns separately for the matching game
       final leftCol = List<_MatchPair>.from(validPairs)..shuffle();
       final rightCol = List<_MatchPair>.from(validPairs)..shuffle();
 
@@ -242,9 +217,10 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         _isLoading = false;
         _errorMessage = null;
       });
-      
-      debugPrint('ScreenSix loaded ${validPairs.length} pairs');
 
+      TaskTtsService.prefetch(validPairs.map((p) => p.english).toList());
+
+      debugPrint('ScreenSix loaded ${validPairs.length} pairs');
     } catch (e, stackTrace) {
       debugPrint('ScreenSix ERROR: $e');
       debugPrint('StackTrace: $stackTrace');
@@ -258,12 +234,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
   void _onTapLeft(int pairId) {
     if (_matchedIds.contains(pairId) || _wrongLeftId != null) return;
     setState(() => _selectedLeftId = pairId);
-    try {
-      final pair = _pairs.firstWhere((p) => p.id == pairId);
-      _tts.speak(pair.english);
-    } catch (e) {
-      debugPrint('TTS error: $e');
-    }
+    
     _tryMatch();
   }
 
@@ -280,7 +251,32 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     final rightId = _selectedRightId!;
 
     if (leftId == rightId) {
-      TaskFeedback.fire(true);
+      // Whether THIS match is the one that completes the whole exercise --
+      // checked BEFORE _matchedIds.add() below, since after adding it
+      // _matchedIds.length would already equal _pairs.length even for the
+      // check itself; computing it here against the pre-add state is
+      // clearer than reordering the add.
+      final willCompleteExercise = _matchedIds.length + 1 == _pairs.length;
+
+      if (willCompleteExercise) {
+        // CHANGED: the match that finishes the whole exercise gets a
+        // stronger confirmation -- medium-tap + heavy haptic -- instead of
+        // the regular light-tap/light haptic every other correct match
+        // gets, so it reads as "that was the last one" rather than just
+        // another pair.
+        HapticFeedback.heavyImpact();
+        FeedbackSoundService.instance.playAsset('assets/sound/medium-tap.mp3');
+      } else {
+        HapticFeedback.lightImpact();
+        FeedbackSoundService.instance.playAsset('assets/sound/light-tap.mp3');
+      }
+
+      final pair = _pairs.firstWhere(
+        (p) => p.id == leftId,
+        orElse: () => const _MatchPair(id: -1, english: ''),
+      );
+      if (pair.english.isNotEmpty) TaskTtsService.speak(pair.english, voice: TtsVoiceDefaults.defaultEnglish);
+
       setState(() {
         _matchedIds.add(leftId);
         _selectedLeftId = null;
@@ -288,10 +284,35 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
       });
       if (_matchedIds.length == _pairs.length) {
         Future.delayed(const Duration(milliseconds: 600), () {
+          // FIXED: this was dropped in the previous edit -- the real
+          // success sound/haptic needs to fire once here, right before
+          // showing the result sheet, so completing the exercise still
+          // gets its actual success chime (not just the medium-tap from
+          // the final match above, which is a distinct "last pair" cue,
+          // not the overall completion sound).
+          TaskFeedback.fire(true);
           TaskResultSheet.show(
             context,
             isCorrect: true,
-            onContinue: () => widget.onTaskComplete(true),
+            onContinue: () {
+              // Teacher review detail: every pair the task contained,
+              // all matched correctly by construction (see class doc
+              // comment on why 'match' has no per-pair right/wrong to
+              // report — completion only happens once everything is
+              // matched).
+              final pairsDetail = _pairs
+                  .map((p) => {
+                        'english': p.english,
+                        'translated': p.translated,
+                        'image': p.image,
+                      })
+                  .toList();
+              widget.onTaskComplete(true, {
+                'type': 'match',
+                'mode': _mode,
+                'pairs': pairsDetail,
+              });
+            },
           );
         });
       }
@@ -315,7 +336,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     }
   }
 
-  // ── Tile color helper ─────────────────────────────────────────────────────
   ({Color bg, Color border, Color text}) _tileColors(int pairId, bool isLeft) {
     final isMatched = _matchedIds.contains(pairId);
     final isSelected = isLeft ? _selectedLeftId == pairId : _selectedRightId == pairId;
@@ -331,7 +351,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     return (bg: Colors.white, border: Colors.grey.shade300, text: Colors.black87);
   }
 
-  // ── Left tile (English word) ─────────────────────────────────────────────
   Widget _buildLeftTile(_MatchPair pair) {
     final isMatched = _matchedIds.contains(pair.id);
     final c = _tileColors(pair.id, true);
@@ -342,6 +361,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
       child: GestureDetector(
         onTap: isMatched ? null : () => _onTapLeft(pair.id),
         child: Container(
+          constraints: const BoxConstraints(minHeight: _rightTileHeight),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           decoration: BoxDecoration(
             color: c.bg,
@@ -368,20 +388,12 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                 ),
               ),
             ),
-            if (!isMatched) ...[
-              const SizedBox(width: 6),
-              GestureDetector(
-                onTap: () => _tts.speak(pair.english),
-                child: Icon(Icons.volume_up, size: 16, color: _selectedLeftId == pair.id ? _green : Colors.grey.shade400),
-              ),
-            ],
           ]),
         ),
       ),
     );
   }
 
-  // ── Right tile (text or image) ───────────────────────────────────────────
   Widget _buildRightTile(_MatchPair pair) {
     final isMatched = _matchedIds.contains(pair.id);
     final c = _tileColors(pair.id, false);
@@ -409,34 +421,40 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
     );
   }
 
-  // Text mode right tile
+  static const double _rightTileHeight = 100;
+
   Widget _buildTextTile(_MatchPair pair, bool isMatched) {
-    return Padding(
+    return Container(
+      height: _rightTileHeight,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        if (isMatched) ...[
-          const Icon(Icons.check_circle, color: _green, size: 16),
-          const SizedBox(width: 6),
-        ],
-        Flexible(
-          child: Text(
-            pair.translated,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 15, fontWeight: isMatched ? FontWeight.bold : FontWeight.w600, color: Colors.black87),
-          ),
+      child: Center(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isMatched) ...[
+              const Icon(Icons.check_circle, color: _green, size: 16),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                pair.translated,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, fontWeight: isMatched ? FontWeight.bold : FontWeight.w600, color: Colors.black87),
+              ),
+            ),
+          ],
         ),
-      ]),
+      ),
     );
   }
 
-  // Image mode right tile
   Widget _buildImageTile(_MatchPair pair, bool isMatched) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: Stack(
         children: [
           SizedBox(
-            height: 100,
+            height: _rightTileHeight, // ya coincide, mismo valor
             width: double.infinity,
             child: pair.image.isNotEmpty
                 ? Image.network(
@@ -552,7 +570,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
             child: ResponsiveActivityShell(
               child: Column(
                 children: [
-                  // Header with progress
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                     child: Row(children: [
@@ -574,7 +591,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                     ]),
                   ),
               
-                  // Title and counter
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Row(
@@ -601,7 +617,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                   ),
                   const SizedBox(height: 8),
               
-                  // Column headers
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Row(children: [
@@ -634,7 +649,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                   ),
                   const SizedBox(height: 8),
               
-                  // Two‑column scrollable area
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),

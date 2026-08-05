@@ -4,10 +4,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:loringo_app/components/avatar_selector.dart';
 import 'package:loringo_app/screens/parent/parent_navigation_screen.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 import 'dart:math';
 
 /// Parent Register Child Screen
 /// After parent registers, they must register their child
+///
+/// COLOR MIGRATION: previously used a standalone warm palette (peach/
+/// cream — 0xFFFAEDCA, 0xFFFFCFB3, 0xFFB7E0FF/0xFF4A90E2, 0xFFFE5D26,
+/// 0xFFA2CA71, 0xFF387F39, 0xFFF6E96B, 0xFFE67E22) with no tokens of
+/// its own. Same migration as ParentJoinGroupScreen — every raw Color
+/// below is replaced with the nearest AppColors token, matching the
+/// rest of the parent flow (ParentProfileScreen, ParentJoinGroupScreen)
+/// rather than keeping this screen's one-off identity.
+///
+/// HEADER CHANGE: the old `Scaffold(backgroundColor: ...)` with no
+/// AppBar at all is replaced with the same inline header pattern
+/// ParentProfileScreen uses — a circular back button + large title
+/// directly in the body, no solid-color AppBar strip. This screen is
+/// only ever pushed (never a tab root), so it needs its own back
+/// affordance; ParentProfileScreen's _buildHeader() is the established
+/// precedent for how a pushed parent screen should look.
+///
+/// CHILD LIMIT: added a hard cap of 8 children per parent, mirroring
+/// the existing 3-admin cap in Database.createUser(). No legitimate
+/// family needs more than 8 student accounts under one parent login —
+/// even a large or blended family with multiple children under one
+/// guardian's care fits comfortably under this; beyond that, additional
+/// "children" are far more likely to be account spam than real use. The
+/// limit is enforced with a plain count query before allowing another
+/// Firestore write here — same shape as the admin check, no override
+/// path.
 class ParentRegisterChildScreen extends StatefulWidget {
   const ParentRegisterChildScreen({super.key});
 
@@ -17,10 +44,13 @@ class ParentRegisterChildScreen extends StatefulWidget {
 }
 
 class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
+  static const int _maxChildrenPerParent = 8;
+
   final childNameController = TextEditingController();
   String? generatedAccessCode;
   bool isRegistered = false;
   String? selectedAvatar;
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -48,6 +78,8 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       return;
     }
 
+    setState(() => _isSubmitting = true);
+
     try {
       // Get parent auth user
       final parentAuthUser = FirebaseAuth.instance.currentUser;
@@ -57,6 +89,24 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       }
 
       final parentUserId = parentAuthUser.uid;
+
+      // FEATURE: enforce the 5-child cap before writing anything. Same
+      // pattern as Database.createUser()'s 3-admin check — count first,
+      // throw before the write if at/over the limit. Checked here
+      // (rather than added as a Database method) since student
+      // documents are created directly against Firestore in this
+      // screen already, with no Database.createStudent()-style method
+      // to hook into.
+      final existingChildrenCount = await FirebaseFirestore.instance
+          .collection('students')
+          .where('parentId', isEqualTo: parentUserId)
+          .count()
+          .get();
+      final currentCount = existingChildrenCount.count ?? 0;
+      if (currentCount >= _maxChildrenPerParent) {
+        throw Exception(
+            'Maximum number of children ($_maxChildrenPerParent) reached');
+      }
 
       // Generate unique access code
       final accessCode = _generateAccessCode();
@@ -72,11 +122,14 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       };
 
-      // Insert to Firebase
+      // Insert to Firebase. Access code lives only as a field (queried by
+      // student_code_screen.dart's `.where('accessCode', ...)` at login) —
+      // it's not a stable, safe choice for a document ID (regenerating/
+      // rotating a code would mean recreating the whole document), so the
+      // student doc gets an auto-generated ID like every other collection.
       await FirebaseFirestore.instance
           .collection('students')
-          .doc(accessCode) // Use access code as document ID for easy lookup
-          .set(newStudentData);
+          .add(newStudentData);
 
       if (mounted) {
         setState(() {
@@ -86,10 +139,15 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error registering child: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error registering child: $e'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
       }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -100,7 +158,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Code copied to clipboard'),
-          backgroundColor: Color(0xFFA2CA71),
+          backgroundColor: AppColors.success,
           duration: Duration(seconds: 2),
         ),
       );
@@ -134,18 +192,59 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAEDCA),
+      backgroundColor: AppColors.scaffoldBackground,
       body: SafeArea(
         child: SingleChildScrollView(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32.0),
-              child: isRegistered
-                  ? _buildSuccessView()
-                  : _buildRegistrationForm(),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Inline header — see file header for why this
+                // replaces the old bare Scaffold with no AppBar at all.
+                // Only shown on the form step; the success step has its
+                // own celebratory framing and no back action makes
+                // sense there (the child is already created).
+                if (!isRegistered) _buildHeader(),
+
+                Center(
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                    child: isRegistered
+                        ? _buildSuccessView()
+                        : _buildRegistrationForm(),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft(0.1),
+                borderRadius: AppRadii.mdAll,
+              ),
+              child: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: AppColors.primary, size: 18),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          const Text('Register Child', style: AppText.h1),
+        ],
       ),
     );
   }
@@ -155,7 +254,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const SizedBox(height: 80),
+        const SizedBox(height: AppSpacing.xl),
 
         // Logo
         Image.asset(
@@ -167,23 +266,23 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
             return const Icon(
               Icons.school,
               size: 100,
-              color: Color(0xFF4CAF50),
+              color: AppColors.primary,
             );
           },
         ),
 
-        const SizedBox(height: 40),
+        const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
         const Text(
           'Register Your Child!',
           style: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
-            color: Color(0xFFFE5D26),
+            color: AppColors.primaryDark,
           ),
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
 
         Text(
           'To continue, we need your child\'s name',
@@ -191,7 +290,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           style: TextStyle(fontSize: 16, color: Colors.grey[700]),
         ),
 
-        const SizedBox(height: 40),
+        const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
         // Child name textfield
         TextField(
@@ -201,38 +300,38 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
             hintText: 'E.g.: Juan Pérez',
             prefixIcon: const Icon(
               Icons.child_care_rounded,
-              color: Color(0xFFFFCFB3),
+              color: AppColors.primary,
             ),
             filled: true,
-            fillColor: Colors.white,
+            fillColor: AppColors.surface,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppRadii.mdAll,
               borderSide: BorderSide.none,
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppRadii.mdAll,
               borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFFFCFB3), width: 2),
+              borderRadius: AppRadii.mdAll,
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
             ),
           ),
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(height: AppSpacing.lg),
 
         // Avatar selector button
         GestureDetector(
           onTap: _showAvatarSelector,
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              color: AppColors.surface,
+              borderRadius: AppRadii.mdAll,
               border: Border.all(
                 color: selectedAvatar != null
-                    ? const Color(0xFFB7E0FF)
+                    ? AppColors.info
                     : Colors.grey.shade300,
                 width: selectedAvatar != null ? 2 : 1,
               ),
@@ -244,11 +343,11 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                   height: 60,
                   decoration: BoxDecoration(
                     color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: AppRadii.mdAll,
                   ),
                   child: selectedAvatar != null
                       ? ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: AppRadii.mdAll,
                           child: Image.asset(
                             selectedAvatar!,
                             fit: BoxFit.cover,
@@ -267,7 +366,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                           size: 32,
                         ),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,7 +379,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         selectedAvatar != null
                             ? 'Avatar selected ✓'
@@ -288,7 +387,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                         style: TextStyle(
                           fontSize: 16,
                           color: selectedAvatar != null
-                              ? const Color(0xFFA2CA71)
+                              ? AppColors.success
                               : Colors.grey[600],
                           fontWeight: FontWeight.bold,
                         ),
@@ -306,30 +405,35 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
         ),
 
-        const SizedBox(height: 40),
+        const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
         // Register button
         SizedBox(
           width: double.infinity,
           child: ElevatedButton(
-            onPressed: _registerChild,
+            onPressed: _isSubmitting ? null : _registerChild,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFCFB3),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              disabledBackgroundColor: Colors.grey[300],
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg - 6),
+              shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
               elevation: 3,
             ),
-            child: const Text(
-              'Register Child',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+            child: _isSubmitting
+                ? const SizedBox(
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.onPrimary,
+                    ),
+                  )
+                : const Text('Register Child', style: AppText.button),
           ),
         ),
 
-        const SizedBox(height: 80),
+        const SizedBox(height: AppSpacing.xl + AppSpacing.md),
       ],
     );
   }
@@ -339,60 +443,56 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const SizedBox(height: 60),
+        const SizedBox(height: AppSpacing.xl - 2),
 
         // Success icon
         Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           decoration: const BoxDecoration(
-            color: Color(0xFFA2CA71),
+            color: AppColors.success,
             shape: BoxShape.circle,
           ),
           child: const Icon(
             Icons.check_circle_rounded,
             size: 80,
-            color: Colors.white,
+            color: AppColors.onPrimary,
           ),
         ),
 
-        const SizedBox(height: 30),
+        const SizedBox(height: AppSpacing.xl - 2),
 
         const Text(
           'Child Registered!',
           style: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
-            color: Color(0xFFFE5D26),
+            color: AppColors.primaryDark,
           ),
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
 
         Text(
           childNameController.text,
           style: const TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF387F39),
+            color: AppColors.primaryDark,
           ),
         ),
 
-        const SizedBox(height: 40),
+        const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
         // Access code card
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFB7E0FF), Color(0xFF4A90E2)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(20),
+            gradient: AppDecorations.primaryGradient,
+            borderRadius: AppRadii.lgAll,
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFB7E0FF).withOpacity(0.5),
+                color: AppColors.primarySoft(0.4),
                 offset: const Offset(0, 6),
                 blurRadius: 12,
               ),
@@ -400,26 +500,27 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
           child: Column(
             children: [
-              const Icon(Icons.key_rounded, size: 48, color: Colors.white),
-              const SizedBox(height: 16),
+              const Icon(Icons.key_rounded,
+                  size: 48, color: AppColors.onPrimary),
+              const SizedBox(height: AppSpacing.md),
               const Text(
                 'Student Access Code',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
-                  color: Colors.white,
+                  color: AppColors.onPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppSpacing.lg - 4),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
+                  horizontal: AppSpacing.lg,
+                  vertical: AppSpacing.md,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppColors.surface,
+                  borderRadius: AppRadii.mdAll,
                 ),
                 child: Text(
                   generatedAccessCode ?? '',
@@ -427,23 +528,21 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                     fontSize: 32,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 8,
-                    color: Color(0xFFFE5D26),
+                    color: AppColors.primaryDark,
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppSpacing.lg - 4),
               ElevatedButton.icon(
                 onPressed: _copyAccessCode,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF4A90E2),
+                  backgroundColor: AppColors.surface,
+                  foregroundColor: AppColors.info,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
+                    horizontal: AppSpacing.lg,
+                    vertical: AppSpacing.sm + 4,
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
                 ),
                 icon: const Icon(Icons.copy_rounded),
                 label: const Text(
@@ -455,15 +554,15 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
         ),
 
-        const SizedBox(height: 30),
+        const SizedBox(height: AppSpacing.xl - 2),
 
         // Important message
         Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           decoration: BoxDecoration(
-            color: const Color(0xFFF6E96B).withOpacity(0.3),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFF6E96B), width: 2),
+            color: AppColors.tint(AppColors.warning, 0.15),
+            borderRadius: AppRadii.lgAll,
+            border: Border.all(color: AppColors.warning, width: 2),
           ),
           child: Column(
             children: [
@@ -471,23 +570,23 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                 children: [
                   Icon(
                     Icons.warning_amber_rounded,
-                    color: Color(0xFFE67E22),
+                    color: AppColors.warning,
                     size: 28,
                   ),
-                  SizedBox(width: 12),
+                  SizedBox(width: AppSpacing.md - 4),
                   Expanded(
                     child: Text(
                       'Important!',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFFE67E22),
+                        color: AppColors.warning,
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md - 4),
               Text(
                 'Save this code. Your child will need it to log in to the app for the first time.',
                 style: TextStyle(
@@ -500,7 +599,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
         ),
 
-        const SizedBox(height: 30),
+        const SizedBox(height: AppSpacing.xl - 2),
 
         // Continue button
         SizedBox(
@@ -508,22 +607,17 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           child: ElevatedButton(
             onPressed: _goToHome,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFCFB3),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg - 6),
+              shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
               elevation: 3,
             ),
-            child: const Text(
-              'Continue',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+            child: const Text('Continue', style: AppText.button),
           ),
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.md - 4),
 
         // Register another child button
         SizedBox(
@@ -539,12 +633,10 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
               });
             },
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFA2CA71),
-              side: const BorderSide(color: Color(0xFFA2CA71), width: 2),
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              foregroundColor: AppColors.success,
+              side: const BorderSide(color: AppColors.success, width: 2),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg - 6),
+              shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
             ),
             icon: const Icon(Icons.add),
             label: const Text(
@@ -554,7 +646,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
         ),
 
-        const SizedBox(height: 60),
+        const SizedBox(height: AppSpacing.xl + AppSpacing.lg),
       ],
     );
   }

@@ -1,17 +1,14 @@
-// screen_eight.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-// import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-// import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
 class ScreenEight extends StatefulWidget {
   final String contentId;
@@ -19,7 +16,13 @@ class ScreenEight extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect) onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'sentence_builder', 'prompt': <ES or EN
+  // prompt sentence>, 'direction': 'es_to_en'|'en_to_es',
+  // 'studentSentence': <words the student assembled, joined>,
+  // 'correctSentence': <the expected answer, joined>}.
+  final TaskCompleteCallback onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -44,60 +47,37 @@ class ScreenEight extends StatefulWidget {
 }
 
 class _ScreenEightState extends State<ScreenEight> with RetryableTask {
-  // final AudioPlayer _player = AudioPlayer();
-  final FlutterTts _tts = FlutterTts();
-
   static const Color _green = Color(0xFF4CAF50);
   static const Color _greyBg = Color(0xFFF5F5F5);
 
-  // Task data
   String _promptSentence = '';
   String _direction = 'es_to_en';
   List<String> _correctAnswer = [];
   List<String> _wordBank = [];
 
-  // Student answer
   List<String> _selectedWords = [];
 
-  // UI state
   bool _isLoading = true;
-
-  // FIX 3: Track whether bottom sheet is already open to prevent re-entry
-  // Also guards the retry-prompt sheet from RetryableTask for the same
-  // reason — only one bottom sheet (result or retry-prompt) should ever
-  // be in flight at once.
   bool _isResultSheetOpen = false;
 
-  // Feedback messages shown when the answer is incorrect — no answer exposed
-  // (FIX 2). These are shown inside the FINAL (hard-wrong) result sheet
-  // only now — the soft-wrong retry prompt has its own generic copy from
-  // RetryableTask, since showing a "keep trying" hint there and then a
-  // second one on the hard-wrong sheet would be redundant.
   static const List<String> _incorrectHints = [
-    '¡Casi! Revisa el orden de las palabras.',
-    '¡Buen intento! Sigue intentándolo.',
-    '¡Tú puedes! Piensa en la oración completa.',
-    '¡Inténtalo de nuevo! Estás muy cerca.',
-    '¡No te rindas! Vuelve a intentarlo.',
+    'Almost there! Check the word order.',
+    'Good try! Keep going.',
+    'You can do it! Think about the full sentence.',
+    'Try again! You\'re very close.',
+    'Don\'t give up! Give it another try.',
   ];
+
   int _hintCycleCount = 0;
 
-  // convenience getters - everything UI-facing derives from these
   bool get _isEsToEn => _direction == 'es_to_en';
-  String get _promptLangCode => _isEsToEn ? 'es-ES' : 'en-GB';
   String get _headerLabel => _isEsToEn ? 'Translate to English' : 'Translate to Spanish';
   String get _listenTooltip => _isEsToEn ? 'Listen to Spanish' : 'Listen to English';
 
   @override
   void initState() {
     super.initState();
-    _initTts();
     _fetchTask();
-  }
-
-  Future<void> _initTts() async {
-    await _tts.setSpeechRate(0.5);
-    await _tts.setPitch(1.0);
   }
 
   Future<void> _handleClose() async {
@@ -126,12 +106,10 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
 
         setState(() {
           _direction = data['direction'] ?? 'es_to_en';
-          // sentence is the current key: spanishSentence kept as fallback
-          // for tasks created before the direction toggle was added
           _promptSentence = data['sentence'] ?? data['spanishSentence'] ?? '';
           _correctAnswer = List<String>.from(data['correctAnswer'] ?? []);
           _wordBank = List<String>.from(data['wordBank'] ?? []);
-          _wordBank.shuffle(); // Shuffle for variety each time
+          _wordBank.shuffle();
           _isLoading = false;
         });
       } else {
@@ -144,8 +122,10 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
   }
 
   void _speakPrompt() async {
-    await _tts.setLanguage(_promptLangCode);
-    await _tts.speak(_promptSentence);
+    // Spanish prompts use Ximena, English prompts use Maisie -- picked
+    // fresh on every call since _direction (and therefore the prompt's
+    // language) can differ from one task to the next.
+    await TaskTtsService.speak(_promptSentence, voice: _isEsToEn ? TtsVoice.ximena : TtsVoiceDefaults.defaultEnglish);
   }
 
   void _addWord(String word) {
@@ -171,8 +151,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
     });
   }
 
-  // FIX 3: _checkAnswer now shows the sheet synchronously; audio plays in the
-  // background without blocking the UI.  No await before showModalBottomSheet.
   void _checkAnswer() {
     if (_isResultSheetOpen) return;
 
@@ -190,8 +168,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
         },
       );
       if (softRetry) return;
-      // Hard wrong (attempts exhausted) — falls through to the normal
-      // scored result sheet below, with the cycling hint attached.
       _hintCycleCount++;
     }
 
@@ -203,24 +179,24 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
       extraContent: isCorrect ? null : TaskResultHintBox(hint: _currentHint),
       onContinue: () {
         _isResultSheetOpen = false;
-        // Both correct and (hard) wrong now advance — ActivityPlayScreen
-        // queues wrong tasks for a practice round at the end instead of
-        // this screen clearing the word bank and retrying in place.
-        widget.onTaskComplete(isCorrect);
+        widget.onTaskComplete(isCorrect, {
+          'type': 'sentence_builder',
+          'prompt': _promptSentence,
+          'direction': _direction,
+          'studentSentence': _selectedWords.join(' '),
+          'correctSentence': _correctAnswer.join(' '),
+        });
       },
     ).then((_) => _isResultSheetOpen = false);
   }
 
-  // FIX 2: Incorrect feedback never exposes the correct answer.
-  // Instead, it cycles through encouraging hint messages.
   String get _currentHint {
     return _incorrectHints[(_hintCycleCount - 1) % _incorrectHints.length];
   }
 
   @override
   void dispose() {
-    // _player.dispose();
-    _tts.stop();
+    TaskTtsService.stop();
     super.dispose();
   }
 
@@ -249,7 +225,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
             child: ResponsiveActivityShell(
               child: Column(
                 children: [
-                  // ── Progress Bar ──────────────────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
@@ -284,7 +259,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                     ),
                   ),
               
-                  // ── Spanish Sentence Card ─────────────────────────────────────
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                     padding: const EdgeInsets.all(20),
@@ -305,16 +279,15 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                           children: [
                             Icon(Icons.translate, color: _green, size: 24),
                             const SizedBox(width: 12),
-                            const Text(
-                              'Translate to English',
-                              style: TextStyle(
+                            Text(
+                              _headerLabel,
+                              style: const TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.black54,
                               ),
                             ),
                             const Spacer(),
-                            // FIX 1: Only the sentence card has audio
                             IconButton(
                               icon: Icon(
                                 Icons.volume_up,
@@ -342,7 +315,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
               
                   const SizedBox(height: 16),
               
-                  // ── Your Answer header ────────────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
@@ -371,7 +343,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
               
                   const SizedBox(height: 8),
               
-                  // ── Selected Words Area ───────────────────────────────────────
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 20),
                     padding: const EdgeInsets.all(16),
@@ -442,7 +413,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
               
                   const SizedBox(height: 20),
               
-                  // ── Word Bank header ──────────────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
@@ -480,8 +450,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
               
                   const SizedBox(height: 8),
               
-                  // ── Word Bank Grid ────────────────────────────────────────────
-                  // FIX 1: Tiles no longer have individual audio buttons.
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -543,7 +511,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                                         ),
                                       ],
                                     ),
-                                    // FIX 1: Simple centered text, no audio icon
                                     child: Center(
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(
@@ -567,10 +534,6 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                     ),
                   ),
               
-                  // ── CHECK Button ──────────────────────────────────────────────
-                  // FIX 3: No longer uses _isSubmitting as a gating bool.
-                  // The _isResultSheetOpen flag prevents double-tap; the button
-                  // itself is disabled only when no words are selected.
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                     child: SizedBox(

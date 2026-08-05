@@ -2,9 +2,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+// import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 // import 'package:loringo_app/services/audio/feedback_sound_service.dart';
@@ -12,9 +13,12 @@ import 'package:loringo_app/services/audio/task_feedback.dart';
 // import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/highlight_text.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 import 'package:loringo_app/services/speech_to_text/speech_permissions.dart';
 import 'package:loringo_app/services/speech_to_text/speech_to_text_service.dart';
 import 'package:loringo_app/services/speech_to_text/speech_recognition_result.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
 class ScreenNine extends StatefulWidget {
   final String contentId;
@@ -22,7 +26,17 @@ class ScreenNine extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect) onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'repeat_after_me', 'targetPhrase': <the
+  // phrase the student was asked to repeat>, 'recognizedText': <what
+  // speech-to-text captured on the FINAL attempt that produced this
+  // isCorrect result>}. Unlike the text/image task types, there's no
+  // "correct option" to compare against — the review screen shows the
+  // target phrase alongside what the system heard, letting the teacher
+  // judge pronunciation quality themselves rather than a binary
+  // right/wrong per word.
+  final TaskCompleteCallback onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -46,9 +60,26 @@ class ScreenNine extends StatefulWidget {
   State<ScreenNine> createState() => _ScreenNineState();
 }
 
+// RetryableTask added: a wrong PRONUNCIATION (mic captured something,
+// it just didn't match) now gets one local retry before counting
+// against the student, same mechanic as the other task screens using
+// this mixin. See retryable_task.dart's file header for the full
+// rationale and the important distinction it draws between a soft
+// (retryable) wrong answer and a hard (scored) one.
+//
+// Deliberately NOT used for mic-capture failures (no speech / timeout)
+// — those stay on the existing indefinite-retry path via captureError
+// in _showResultSheet, unchanged from before. Rationale: RetryableTask
+// counts attempts at answering, and a capture failure means the
+// student's pronunciation was never actually evaluated at all. Folding
+// that into the 2-attempt budget would let a noisy room or a flaky mic
+// burn through both attempts without the app ever having judged a
+// single real pronunciation — punishing hardware conditions instead of
+// language skill, which is exactly the kind of discouraging failure
+// mode this app's design principles try to avoid for young learners.
 class _ScreenNineState extends State<ScreenNine>
-    with SingleTickerProviderStateMixin {
-  final FlutterTts _tts = FlutterTts();
+    with SingleTickerProviderStateMixin, RetryableTask<ScreenNine> {
+  // final FlutterTts _tts = FlutterTts();
   // final AudioPlayer _player = AudioPlayer();
 
   // BUGFIX CONTEXT: SpeechToTextService used to be a singleton (a
@@ -77,13 +108,48 @@ class _ScreenNineState extends State<ScreenNine>
 
   // Task data
   String _phrase = '';
-  String _hint = '';
   bool _isLoading = true;
+
+  // CHANGE: this used to be local UI-only state the student toggled
+  // themselves. It's now sourced from Firestore (data['showPhrase'],
+  // set by the teacher in RepeatAfterMeTask's editor) and represents
+  // the task's configured difficulty mode, not a runtime student
+  // action. See _fetchTask() for where it's read and _revealPhrase()
+  // for why the student can still override it upward (never downward)
+  // during a single attempt.
+  bool _showPhrase = false;
 
   // UI states
   bool _isSpeaking = false;
   bool _isListening = false;
   bool _isResultSheetOpen = false;
+
+  // FEATURE: true while the mic is open AND the last sound-level
+  // sample came back below threshold with nothing recognized yet.
+  // Driven by SpeechToTextService.onLowVolumeWarning /
+  // onListeningStop — see _setupSpeechService(). Purely advisory UI;
+  // it never blocks or delays recording.
+  bool _isVolumeLow = false;
+
+  // REVEAL MECHANIC: when the teacher configures this task with
+  // showPhrase == false, the phrase starts masked (dash placeholders)
+  // and the student must rely on the TTS audio + their own recall.
+  // Tapping "Reveal" sets this true and shows the real text for the
+  // rest of THIS attempt — no penalty, since a failed mic capture
+  // (background noise, permission hiccup, etc.) is a technical
+  // failure, not the student not knowing the answer, and shouldn't be
+  // conflated with "gave up and peeked." Always available when the
+  // task starts hidden, unlike Duolingo where reveal sometimes costs
+  // hearts in other exercise types — CJ's app avoids anything that
+  // could discourage young learners (5-9yo), so no punitive framing
+  // here.
+  //
+  // Initialized from _showPhrase once the task loads (see _fetchTask):
+  // if the teacher set showPhrase == true, the phrase is visible from
+  // the start and there's nothing to "reveal." If false, this starts
+  // false and the reveal button becomes the student's own escape
+  // hatch.
+  bool _isRevealed = false;
 
   // Speech recognition results
   String _recognizedText = '';
@@ -93,7 +159,7 @@ class _ScreenNineState extends State<ScreenNine>
   @override
   void initState() {
     super.initState();
-    _initTts();
+    // _initTts();
     _fetchTask();
     _setupSpeechService();
 
@@ -109,12 +175,27 @@ class _ScreenNineState extends State<ScreenNine>
   // ── Speech service ────────────────────────────────────────────────────────
 
   void _setupSpeechService() {
-    _speechService.onListeningStart = () => setState(() => _isListening = true);
-    _speechService.onListeningStop = () => setState(() => _isListening = false);
+    _speechService.onListeningStart = () => setState(() {
+          _isListening = true;
+          _isVolumeLow = false;
+        });
+    _speechService.onListeningStop = () => setState(() {
+          _isListening = false;
+          _isVolumeLow = false;
+        });
+
+    // FEATURE: surfaces the low-volume state as a visible hint instead
+    // of the previous debugPrint-only behavior. See
+    // SpeechToTextService.onLowVolumeWarning doc comment for when this
+    // fires and how it self-clears.
+    _speechService.onLowVolumeWarning = () {
+      if (mounted) setState(() => _isVolumeLow = true);
+    };
 
     _speechService.onPartialResult = (text) {
       setState(() {
         _recognizedText = text;
+        _isVolumeLow = false;
         _updateHighlightWords(text);
       });
     };
@@ -123,13 +204,17 @@ class _ScreenNineState extends State<ScreenNine>
       setState(() {
         _recognizedText = result.recognizedText;
         _isListening = false;
+        _isVolumeLow = false;
         _updateHighlightWords(result.recognizedText);
       });
       _showResultSheet(isCorrect: result.isCorrect, captureError: false);
     };
 
     _speechService.onError = (error) {
-      setState(() => _isListening = false);
+      setState(() {
+        _isListening = false;
+        _isVolumeLow = false;
+      });
       final isNoSpeech = error.toLowerCase().contains('no speech') ||
           error.toLowerCase().contains('no match') ||
           error.toLowerCase().contains('timeout');
@@ -173,13 +258,24 @@ class _ScreenNineState extends State<ScreenNine>
     setState(() => _highlightWordsList = []);
   }
 
+  // ── Reveal ────────────────────────────────────────────────────────────────
+
+  // No penalty, no tracking side-effect — just flips the mask off. Kept
+  // as its own method (rather than an inline setState in the button's
+  // onTap) so the "no penalty here" decision is a single, obvious,
+  // commentable point for jury Q&A rather than buried in a widget tree.
+  void _revealPhrase() {
+    if (_isRevealed) return;
+    setState(() => _isRevealed = true);
+  }
+
   // ── TTS & audio ───────────────────────────────────────────────────────────
 
-  Future<void> _initTts() async {
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.45);
-    await _tts.setPitch(1.0);
-  }
+  // Future<void> _initTts() async {
+  //   await _tts.setLanguage('en-GB');
+  //   await _tts.setSpeechRate(0.45);
+  //   await _tts.setPitch(1.0);
+  // }
 
   Future<void> _handleClose() async {
     final shouldExit = await confirmExitTask(context);
@@ -203,10 +299,27 @@ class _ScreenNineState extends State<ScreenNine>
             {};
         setState(() {
           _phrase = data['phrase'] ?? '';
-          _hint = data['hint'] ?? '';
+          // Absent field (tasks created before this toggle existed)
+          // defaults to false, matching RepeatAfterMeTask's editor
+          // default — old tasks adopt the hidden-phrase UX
+          // automatically rather than needing a data migration.
+          _showPhrase = data['showPhrase'] as bool? ?? false;
+          // _isRevealed starts in sync with the teacher's configured
+          // mode: if the task is set to always show the phrase, there's
+          // no masked state to reveal from. If hidden, the student
+          // starts masked and can reveal manually via _revealPhrase().
+          _isRevealed = _showPhrase;
           _isLoading = false;
         });
         _initializeHighlightWords();
+        // Fresh attempt budget for this task instance — mirrors what
+        // every other RetryableTask screen does on load, and matters
+        // in particular for the review round, where ActivityPlayScreen
+        // rebuilds this screen: without this reset, a task that used
+        // its retry on the first pass would arrive at the review round
+        // with zero attempts left and skip straight to hard-wrong on
+        // any mistake.
+        resetAttempts();
         // Auto-speak on load — student hears the phrase immediately.
         Future.delayed(const Duration(milliseconds: 350), _speakPhrase);
       } else {
@@ -221,7 +334,7 @@ class _ScreenNineState extends State<ScreenNine>
   Future<void> _speakPhrase() async {
     if (_isSpeaking) return;
     setState(() => _isSpeaking = true);
-    await _tts.speak(_phrase);
+    await TaskTtsService.speak(_phrase, voice: TtsVoiceDefaults.defaultEnglish);
     setState(() => _isSpeaking = false);
   }
 
@@ -252,6 +365,27 @@ class _ScreenNineState extends State<ScreenNine>
     String? errorMessage,
   }) {
     if (_isResultSheetOpen) return;
+
+    // RetryableTask hook: only for a genuine wrong PRONUNCIATION, never
+    // for a capture failure (see the class-level doc comment for why
+    // captureError is excluded). offerRetry() increments the attempt
+    // counter and, if a retry remains, shows its own sheet and clears
+    // this screen's local recognition state via onRetry — returning
+    // true tells us to stop here instead of opening TaskResultSheet at
+    // all for this pass.
+    if (!isCorrect && !captureError) {
+      final retried = offerRetry(
+        context: context,
+        onRetry: () {
+          setState(() {
+            _recognizedText = '';
+            _highlightWordsList = [];
+          });
+        },
+      );
+      if (retried) return;
+    }
+
     _isResultSheetOpen = true;
 
     TaskFeedback.fire(isCorrect);
@@ -283,16 +417,26 @@ class _ScreenNineState extends State<ScreenNine>
         // isn't a wrong *answer* — it's the mic not hearing anything, so
         // that case still lets the student retry right here rather than
         // burning an attempt that was never actually evaluated. A genuine
-        // wrong pronunciation, like every other screen, now advances via
-        // onTaskComplete(false) instead of resetting for another try —
-        // ActivityPlayScreen queues it for the review round instead.
+        // wrong pronunciation now only reaches this point once
+        // RetryableTask's attempts are exhausted (see above), and
+        // advances via onTaskComplete(false) exactly as before —
+        // ActivityPlayScreen queues it for the review round.
         if (captureError) {
           setState(() {
             _recognizedText = '';
             _highlightWordsList = [];
           });
         } else {
-          widget.onTaskComplete(isCorrect);
+          // Teacher review detail: whatever speech-to-text captured on
+          // THIS final (scored) attempt, alongside the target phrase.
+          // There's no per-word "correct option" here — the teacher
+          // judges pronunciation quality by comparing the two strings
+          // themselves.
+          widget.onTaskComplete(isCorrect, {
+            'type': 'repeat_after_me',
+            'targetPhrase': _phrase,
+            'recognizedText': _recognizedText,
+          });
         }
       },
     ).then((_) => _isResultSheetOpen = false);
@@ -300,7 +444,8 @@ class _ScreenNineState extends State<ScreenNine>
 
   @override
   void dispose() {
-    _tts.stop();
+    // _tts.stop();
+    TaskTtsService.stop();
     // _player.dispose();
     // Now safe by construction: this instance is private to this
     // screen (SpeechToTextService is no longer a singleton), so
@@ -353,23 +498,9 @@ class _ScreenNineState extends State<ScreenNine>
                           ],
                         ),
                       ),
-      
-                      // ── Hint ──────────────────────────────────────────────────
-                      if (_hint.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
-                          child: Text(
-                            _hint,
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade600,
-                                fontStyle: FontStyle.italic),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-      
+
                       const SizedBox(height: 12),
-      
+
                       // ── Loringo character ──────────────────────────────────────
                       Image.asset(
                         'assets/images/loringo-listening.png',
@@ -377,9 +508,9 @@ class _ScreenNineState extends State<ScreenNine>
                         height: 110,
                         fit: BoxFit.contain,
                       ),
-      
+
                       const SizedBox(height: 8),
-      
+
                       const Text(
                         'Repeat after me',
                         style: TextStyle(
@@ -389,9 +520,37 @@ class _ScreenNineState extends State<ScreenNine>
                           letterSpacing: 0.3,
                         ),
                       ),
-      
+
+                      const SizedBox(height: 6),
+
+                      // ── Reveal button ───────────────────────────────────────────
+                      // Only shown while masked, which only happens when the
+                      // teacher configured this task with showPhrase == false.
+                      // No cost/penalty (see _revealPhrase doc comment) — this
+                      // is purely an accessibility escape hatch for when the
+                      // student genuinely can't recall the phrase or the mic
+                      // failed to capture it on a previous attempt.
+                      if (!_isRevealed)
+                        InkWell(
+                          onTap: _revealPhrase,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            child: Text(
+                              'REVEAL',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.8,
+                                color: Colors.blue.shade400,
+                              ),
+                            ),
+                          ),
+                        ),
+
                       const SizedBox(height: 16),
-      
+
                       // ── Phrase card with embedded Listen button ───────────────
                       Container(
                         margin: const EdgeInsets.symmetric(horizontal: 24),
@@ -408,12 +567,17 @@ class _ScreenNineState extends State<ScreenNine>
                         ),
                         child: Column(
                           children: [
-                            // Phrase text with yellow highlight as words are spoken
+                            // Phrase text — masked with dash placeholders unless
+                            // the teacher set showPhrase == true or the student
+                            // tapped Reveal, with correctly-recognized words
+                            // un-masking in place as the student speaks (see
+                            // HighlightTextWidget doc comment for the mechanic).
                             Padding(
                               padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
                               child: HighlightTextWidget(
                                 text: _phrase,
                                 wordsToHighlight: _highlightWordsList,
+                                isRevealed: _isRevealed,
                                 normalStyle: const TextStyle(
                                   fontSize: 22,
                                   fontWeight: FontWeight.bold,
@@ -427,17 +591,23 @@ class _ScreenNineState extends State<ScreenNine>
                                   backgroundColor: _highlightColor,
                                   height: 1.45,
                                 ),
+                                maskedStyle: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey.shade400,
+                                  height: 1.45,
+                                ),
                                 textAlign: TextAlign.center,
                               ),
                             ),
-      
+
                             Divider(
                               height: 1,
                               color: Colors.grey.shade100,
                               indent: 16,
                               endIndent: 16,
                             ),
-      
+
                             // Replay button embedded inside the card
                             InkWell(
                               onTap: _isSpeaking ? null : _speakPhrase,
@@ -487,7 +657,7 @@ class _ScreenNineState extends State<ScreenNine>
                           ],
                         ),
                       ),
-      
+
                       // ── Word progress pill (while speaking) ────────────────────
                       if (_highlightWordsList.isNotEmpty) ...[
                         const SizedBox(height: 10),
@@ -516,7 +686,42 @@ class _ScreenNineState extends State<ScreenNine>
                           ),
                         ),
                       ],
-      
+
+                      // ── Low volume warning (while listening) ───────────────────
+                      // Purely advisory — never blocks recording, never
+                      // counts as an error on its own. Only visible while
+                      // the mic is open and the last sound-level sample
+                      // was below threshold with nothing recognized yet.
+                      if (_isListening && _isVolumeLow) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 24),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.orange.shade200),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.volume_off_rounded,
+                                  size: 16, color: Colors.orange.shade700),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Speak louder — we can barely hear you',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
                       // ── Partial "you said" text while listening ────────────────
                       if (_recognizedText.isNotEmpty && _isListening) ...[
                         const SizedBox(height: 10),
@@ -548,9 +753,9 @@ class _ScreenNineState extends State<ScreenNine>
                           ),
                         ),
                       ],
-      
+
                       const Spacer(),
-      
+
                       // ── Mic button ─────────────────────────────────────────────
                       AnimatedBuilder(
                         animation: _pulseAnimation,
@@ -583,9 +788,9 @@ class _ScreenNineState extends State<ScreenNine>
                           ),
                         ),
                       ),
-      
+
                       const SizedBox(height: 8),
-      
+
                       Text(
                         _isListening ? 'Listening… speak now' : 'Tap to speak',
                         style: TextStyle(
@@ -593,7 +798,7 @@ class _ScreenNineState extends State<ScreenNine>
                             color: Colors.grey.shade600,
                             fontWeight: FontWeight.w500),
                       ),
-      
+
                       const SizedBox(height: 32),
                     ],
                   ),

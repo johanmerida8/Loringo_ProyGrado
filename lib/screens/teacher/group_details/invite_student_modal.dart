@@ -1,7 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:loringo_app/services/notifications/one_signal_service.dart';
 
 void showInviteStudentModal({
   required BuildContext context,
@@ -309,40 +308,20 @@ class _SendInvitationSection extends StatelessWidget {
     }
 
     try {
-      final userSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .where('role', isEqualTo: 'parent')
-          .limit(1)
-          .get();
-
-      if (!context.mounted) return;
-      if (userSnapshot.docs.isEmpty) {
-        _showWarning(context, 'No parent found with that email');
-        return;
-      }
-
-      final parentId = userSnapshot.docs.first.id;
-      await FirebaseFirestore.instance.collection('notifications').add({
-        'userId': parentId,
-        'type': 'group_invitation',
-        'title': 'Group Invitation',
-        'message': 'You have been invited to the group $groupName',
-        'data': {
-          'groupId': groupId,
-          'groupName': groupName,
-          'groupCode': groupCode,
-        },
-        'isRead': false,
-        'createdAt': FieldValue.serverTimestamp(),
+      // Parent lookup, the notifications-history write, and the OneSignal
+      // push all now happen server-side in one call — see
+      // functions/src/groupInvitationNotifications.ts. This used to be
+      // three separate client-side steps here, duplicating the exact
+      // pattern notification_service.dart used for report notifications;
+      // consolidating both onto Cloud Functions callables removed that
+      // duplication.
+      final callable = FirebaseFunctions.instance.httpsCallable('sendGroupInvitationNotification');
+      await callable.call({
+        'parentEmail': email,
+        'groupId': groupId,
+        'groupName': groupName,
+        'groupCode': groupCode,
       });
-
-      // send push notification
-      await OneSignalNotificationService.sendNotification(
-        userId: parentId, 
-        title: 'Group Invitation', 
-        message: 'You have been invited to the group $groupName'
-      );
 
       if (!context.mounted) return;
       onSent();
@@ -350,6 +329,18 @@ class _SendInvitationSection extends StatelessWidget {
         SnackBar(
           content: Text('Invitation sent to $email'),
           backgroundColor: const Color(0xFF4CAF50),
+        ),
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!context.mounted) return;
+      if (e.code == 'not-found') {
+        _showWarning(context, 'No parent found with that email');
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.message ?? e.code}'),
+          backgroundColor: Colors.red,
         ),
       );
     } catch (e) {

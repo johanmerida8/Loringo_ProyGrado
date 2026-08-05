@@ -2,18 +2,22 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+// import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 // import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 // import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 import 'package:loringo_app/services/speech_to_text/speech_permissions.dart';
 import 'package:loringo_app/services/speech_to_text/speech_to_text_service.dart';
 import 'package:loringo_app/services/speech_to_text/speech_recognition_result.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
 class ScreenTen extends StatefulWidget {
   final String contentId;
@@ -21,7 +25,15 @@ class ScreenTen extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect) onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'listen_and_speak', 'targetPhrase':
+  // <phrase the student heard and had to repeat>, 'recognizedText':
+  // <what speech-to-text captured on the FINAL (scored) attempt>}. Same
+  // rationale as ScreenNine's repeat_after_me: no per-word "correct
+  // option" here, the teacher judges pronunciation by comparing the two
+  // strings directly.
+  final TaskCompleteCallback onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -45,9 +57,15 @@ class ScreenTen extends StatefulWidget {
   State<ScreenTen> createState() => _ScreenTenState();
 }
 
+// RetryableTask added: a wrong PRONUNCIATION (mic captured something,
+// it just didn't match) now gets one local retry before counting
+// against the student — same mechanic and same exclusion of
+// mic-capture failures as ScreenNine. See screen_nine.dart's class doc
+// comment and retryable_task.dart's file header for the full
+// rationale.
 class _ScreenTenState extends State<ScreenTen>
-    with SingleTickerProviderStateMixin {
-  final FlutterTts _tts = FlutterTts();
+    with SingleTickerProviderStateMixin, RetryableTask<ScreenTen> {
+  // final FlutterTts _tts = FlutterTts();
   // final AudioPlayer _player = AudioPlayer();
 
   // BUGFIX CONTEXT: same fix as ScreenNine and ScreenThirteen.
@@ -81,13 +99,20 @@ class _ScreenTenState extends State<ScreenTen>
   bool _isListening = false;
   bool _isResultSheetOpen = false;
 
+  // FEATURE: true while the mic is open AND the last sound-level
+  // sample came back below threshold with nothing recognized yet.
+  // Driven by SpeechToTextService.onLowVolumeWarning /
+  // onListeningStop — see _setupSpeechService(). Purely advisory UI;
+  // it never blocks or delays recording.
+  bool _isVolumeLow = false;
+
   // Speech recognition
   String _recognizedText = '';
 
   @override
   void initState() {
     super.initState();
-    _initTts();
+    // _initTts();
     _fetchTask();
     _setupSpeechService();
 
@@ -101,17 +126,35 @@ class _ScreenTenState extends State<ScreenTen>
   }
 
   void _setupSpeechService() {
-    _speechService.onListeningStart = () => setState(() => _isListening = true);
-    _speechService.onListeningStop = () => setState(() => _isListening = false);
+    _speechService.onListeningStart = () => setState(() {
+          _isListening = true;
+          _isVolumeLow = false;
+        });
+    _speechService.onListeningStop = () => setState(() {
+          _isListening = false;
+          _isVolumeLow = false;
+        });
+
+    // FEATURE: surfaces the low-volume state as a visible hint instead
+    // of the previous debugPrint-only behavior. See
+    // SpeechToTextService.onLowVolumeWarning doc comment for when this
+    // fires and how it self-clears.
+    _speechService.onLowVolumeWarning = () {
+      if (mounted) setState(() => _isVolumeLow = true);
+    };
 
     _speechService.onPartialResult = (text) {
-      setState(() => _recognizedText = text);
+      setState(() {
+        _recognizedText = text;
+        _isVolumeLow = false;
+      });
     };
 
     _speechService.onFinalResult = (SpeechRecognitionResult result) {
       setState(() {
         _recognizedText = result.recognizedText;
         _isListening = false;
+        _isVolumeLow = false;
       });
 
       // Haptic + sound now happen inside _showResultSheet via
@@ -124,7 +167,10 @@ class _ScreenTenState extends State<ScreenTen>
     };
 
     _speechService.onError = (error) {
-      setState(() => _isListening = false);
+      setState(() {
+        _isListening = false;
+        _isVolumeLow = false;
+      });
       final isNoSpeech = error.toLowerCase().contains('no speech') ||
           error.toLowerCase().contains('no match') ||
           error.toLowerCase().contains('timeout');
@@ -140,11 +186,11 @@ class _ScreenTenState extends State<ScreenTen>
     };
   }
 
-  Future<void> _initTts() async {
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.45);
-    await _tts.setPitch(1.0);
-  }
+  // Future<void> _initTts() async {
+  //   await _tts.setLanguage('en-GB');
+  //   await _tts.setSpeechRate(0.45);
+  //   await _tts.setPitch(1.0);
+  // }
 
   Future<void> _handleClose() async {
     final shouldExit = await confirmExitTask(context);
@@ -171,6 +217,10 @@ class _ScreenTenState extends State<ScreenTen>
           _hint = data['hint'] ?? '';
           _isLoading = false;
         });
+        // Fresh attempt budget for this task instance — see
+        // ScreenNine's _fetchTask for why this matters at the review
+        // round specifically.
+        resetAttempts();
         // Auto-speak on load
         Future.delayed(const Duration(milliseconds: 500), _speakPhrase);
       } else {
@@ -185,7 +235,7 @@ class _ScreenTenState extends State<ScreenTen>
   Future<void> _speakPhrase() async {
     if (_isSpeaking) return;
     setState(() => _isSpeaking = true);
-    await _tts.speak(_phrase);
+    await TaskTtsService.speak(_phrase, voice: TtsVoiceDefaults.defaultEnglish);
     setState(() => _isSpeaking = false);
   }
 
@@ -214,6 +264,23 @@ class _ScreenTenState extends State<ScreenTen>
     String spokenText = '',
   }) {
     if (_isResultSheetOpen) return;
+
+    // RetryableTask hook — same placement and same exclusion of
+    // captureError as ScreenNine. Only a genuinely wrong pronunciation
+    // consumes an attempt; a mic-capture failure never evaluated the
+    // student's speech at all, so it stays on the existing indefinite
+    // retry path below unchanged.
+    if (!isCorrect && !captureError) {
+      final retried = offerRetry(
+        context: context,
+        onRetry: () {
+          setState(() => _recognizedText = '');
+          Future.delayed(const Duration(milliseconds: 300), _speakPhrase);
+        },
+      );
+      if (retried) return;
+    }
+
     _isResultSheetOpen = true;
 
     TaskFeedback.fire(isCorrect);
@@ -244,13 +311,21 @@ class _ScreenTenState extends State<ScreenTen>
         // A microphone-capture error (no speech detected, timeout) isn't a
         // wrong *answer* — nothing was actually evaluated — so it still
         // retries locally here rather than being scored. A genuine wrong
-        // pronunciation now advances via onTaskComplete(false) like every
-        // other screen; ActivityPlayScreen queues it for the review round.
+        // pronunciation now only reaches this point once RetryableTask's
+        // attempts are exhausted (see above), and advances via
+        // onTaskComplete(false) like every other screen; ActivityPlayScreen
+        // queues it for the review round.
         if (captureError) {
           setState(() => _recognizedText = '');
           Future.delayed(const Duration(milliseconds: 300), _speakPhrase);
         } else {
-          widget.onTaskComplete(isCorrect);
+          // Teacher review detail: what speech-to-text captured on THIS
+          // final scored attempt, alongside the target phrase.
+          widget.onTaskComplete(isCorrect, {
+            'type': 'listen_and_speak',
+            'targetPhrase': _phrase,
+            'recognizedText': spokenText,
+          });
         }
       },
     ).then((_) => _isResultSheetOpen = false);
@@ -258,7 +333,8 @@ class _ScreenTenState extends State<ScreenTen>
 
   @override
   void dispose() {
-    _tts.stop();
+    // _tts.stop();
+    TaskTtsService.stop();
     // _player.dispose();
     // Now safe by construction: this instance is private to this
     // screen (SpeechToTextService is no longer a singleton), so
@@ -426,6 +502,41 @@ class _ScreenTenState extends State<ScreenTen>
                           ],
                         ),
                       ),
+                
+                      // ── Low volume warning (while listening) ───────────────────
+                      // Purely advisory — never blocks recording, never
+                      // counts as an error on its own. Only visible while
+                      // the mic is open and the last sound-level sample was
+                      // below threshold with nothing recognized yet.
+                      if (_isListening && _isVolumeLow) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 24),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.orange.shade200),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.volume_off_rounded,
+                                  size: 16, color: Colors.orange.shade700),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Speak louder — we can barely hear you',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                 
                       // ── "You said" text while listening ───────────────────────
                       if (_recognizedText.isNotEmpty && _isListening) ...[

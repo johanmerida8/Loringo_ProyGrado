@@ -3,22 +3,19 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-// import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-// import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
-// import 'package:loringo_app/services/audio/feedback_sound_service.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
-// import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
-// -- Data model for one conversation turn ------------------------------------
 class _Turn {
-  final String bubbleEn;        // original English bubble text
-  final List<Map<String, dynamic>> options; // {textEn, isCorrect}
+  final String bubbleEn;
+  final List<Map<String, dynamic>> options;
 
   const _Turn({
     required this.bubbleEn,
@@ -32,7 +29,17 @@ class ScreenTwo extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect) onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'complete_the_chat', 'turns': [
+  //   {'bubble': <NPC line>, 'chosenReply': <student's pick>,
+  //    'isCorrect': <bool>}, ...
+  // ]} — one entry per conversation turn, in order. This screen already
+  // builds an equivalent list (_history) for its own on-screen review UI
+  // as the conversation progresses, so the answerDetail is assembled
+  // from that same data at completion time rather than duplicating the
+  // tracking logic.
+  final TaskCompleteCallback onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -57,25 +64,12 @@ class ScreenTwo extends StatefulWidget {
 }
 
 class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
-  // final AudioPlayer _player = AudioPlayer();
-  final FlutterTts _tts = FlutterTts();
-
-  // All turns loaded from Firestore
   List<_Turn> _turns = [];
-
-  // Which turn the student is currently answering (0-based)
   int _currentTurn = 0;
-
-  // The reply selected for the current turn
   String _selectedReply = '';
-
-  // History: list of {bubble, chosenReply, correct} -- shown as a chat log above
   final List<Map<String, dynamic>> _history = [];
-
-  // Overall correctness tracking
   int _correctCount = 0;
   int _wrongCount = 0;
-
   bool _isLoading = true;
 
   static const Color _green = Color(0xFF4CAF50);
@@ -83,20 +77,20 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
   @override
   void initState() {
     super.initState();
-    _initTts();
+    // FIXED: removed the stray TaskTtsService.speak() call that had no
+    // text argument and no purpose here -- _turns isn't loaded yet at
+    // this point, so there's nothing to speak. The real first-turn
+    // auto-speak already happens correctly inside _fetchTask() below.
     _fetchTask();
   }
 
-  Future<void> _initTts() async {
-    await _tts.setLanguage('en-GB');
-    await _tts.setSpeechRate(0.5);
-    await _tts.setPitch(1.0);
+  void _speak(String text) async {
+    if (text.isNotEmpty) await TaskTtsService.speak(text, voice: TtsVoiceDefaults.defaultEnglish);
   }
 
   @override
   void dispose() {
-    // _player.dispose();
-    _tts.stop();
+    TaskTtsService.stop();
     super.dispose();
   }
 
@@ -142,10 +136,6 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
 
       setState(() => _isLoading = false);
 
-      // Auto-speak the first turn's bubble as soon as the task is
-      // ready, same auto-play pattern used in screen_seven for reading
-      // -- the teacher's line reads itself instead of requiring a
-      // manual tap on the speaker icon first.
       if (_turns.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _speak(_turns[_currentTurn].bubbleEn);
@@ -155,10 +145,6 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
       debugPrint('ScreenTwo ERROR: $e');
       setState(() => _isLoading = false);
     }
-  }
-
-  void _speak(String text) async {
-    if (text.isNotEmpty) await _tts.speak(text);
   }
 
   Future<void> _handleClose() async {
@@ -175,10 +161,6 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
 
     TaskFeedback.fire(correct);
 
-    // Soft wrong answer on this turn, attempts left -> retry the SAME
-    // turn (clear the reply choice only) without touching _history,
-    // _correctCount/_wrongCount, or advancing _currentTurn. Nothing is
-    // scored for this turn until a hard result is reached.
     if (!correct &&
         offerRetry(
           context: context,
@@ -188,9 +170,6 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
     }
 
     if (correct) _correctCount++; else _wrongCount++;
-    // Attempts for this turn are done (correct, or wrong with none
-    // left) -- reset the counter so the NEXT turn gets its own fresh 2
-    // attempts instead of inheriting whatever was left on this one.
     resetAttempts();
 
     _history.add({
@@ -209,16 +188,20 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
       onContinue: () {
         if (isLastTurn) {
           final overallCorrect = _correctCount > _wrongCount;
-          widget.onTaskComplete(overallCorrect);
+          // Teacher review detail: _history already holds one entry per
+          // turn with exactly the shape the review screen needs
+          // (bubbleEn/chosenReply/correct), built incrementally above as
+          // the conversation progressed — reused as-is rather than
+          // recomputed.
+          widget.onTaskComplete(overallCorrect, {
+            'type': 'complete_the_chat',
+            'turns': _history,
+          });
         } else {
           setState(() {
             _currentTurn++;
             _selectedReply = '';
           });
-          // Auto-speak the new turn's bubble right after advancing --
-          // same reasoning as the first-turn auto-speak in _fetchTask,
-          // just deferred a frame so it fires once the new bubble is
-          // actually built/on screen.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _speak(_turns[_currentTurn].bubbleEn);
           });

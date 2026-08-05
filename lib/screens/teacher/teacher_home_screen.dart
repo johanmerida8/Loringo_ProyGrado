@@ -4,12 +4,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 // import 'package:loringo_app/components/app_drawer.dart';
+import 'package:loringo_app/components/notifications_badge.dart';
 import 'package:loringo_app/components/responsive_scaffold.dart';
-import 'package:loringo_app/screens/teacher/group_navigation_screen.dart';
+import 'package:loringo_app/screens/parent/parent_notifications_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_content_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
+import 'package:loringo_app/screens/teacher/archived_groups_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_league_screen.dart';
-import 'package:loringo_app/screens/teacher/teacher_quizzes_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/group_card.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -96,6 +98,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           'academicYear': newGroupData['academicYear'],
           'classroom':    newGroupData['classroom'],
           'teacherId':    teacherId,
+          'archived':     false,
           'createdAt':    FieldValue.serverTimestamp(),
         });
         if (mounted) {
@@ -135,6 +138,15 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
               if (!isWide) Navigator.pop(context);
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.archive_rounded, color: AppColors.primary),
+            title: const Text('Archived Groups'),
+            onTap: () {
+              if (!isWide) Navigator.pop(context);
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ArchivedGroupsScreen()));
+            },
+          ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.folder_rounded, color: AppColors.primary),
@@ -152,15 +164,6 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
               if (!isWide) Navigator.pop(context);
               Navigator.push(context,
                   MaterialPageRoute(builder: (_) => const TeacherImageScreen()));
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.quiz_rounded, color: AppColors.primary),
-            title: const Text('Quizzes'),
-            onTap: () {
-              if (!isWide) Navigator.pop(context);
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const TeacherQuizzesScreen()));
             },
           ),
           ListTile(
@@ -206,7 +209,21 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                           ),
                         ),
                       if (!isWide) const SizedBox(width: AppSpacing.md),
-                      const Text('My Groups', style: AppText.h1),
+                      const Expanded(child: Text('My Groups', style: AppText.h1)),
+                      // NotificationBadge is role-agnostic (streams
+                      // `notifications` by userId, not by role), so the
+                      // same component the parent dashboard uses works
+                      // here unmodified — teachers now receive overdue-
+                      // activity alerts (notifyOverdueActivities Cloud
+                      // Function) that need somewhere to surface.
+                      NotificationBadge(
+                        userId: teacherId ?? '',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const ParentNotificationsScreen()),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -225,10 +242,17 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                   if (snapshot.hasError) {
                     return SliverFillRemaining(child: _ErrorState(onRetry: () => setState(() {})));
                   }
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  if (!snapshot.hasData) {
                     return const SliverFillRemaining(child: _EmptyGroupsState());
                   }
+                  // Archived groups never show up here — they only live in
+                  // "Archived Groups" (see the drawer entry above). Missing
+                  // 'archived' (groups created before this field existed)
+                  // is treated as not-archived, so nothing needs a
+                  // migration.
                   final groups = snapshot.data!.docs
+                      .where((doc) => (doc.data() as Map)['archived'] != true)
+                      .toList()
                     ..sort((a, b) {
                       final aTime = (a.data() as Map)['createdAt'] as Timestamp?;
                       final bTime = (b.data() as Map)['createdAt'] as Timestamp?;
@@ -237,6 +261,10 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                       if (bTime == null) return -1;
                       return bTime.compareTo(aTime);
                     });
+
+                  if (groups.isEmpty) {
+                    return const SliverFillRemaining(child: _EmptyGroupsState());
+                  }
 
                   return SliverPadding(
                     padding: const EdgeInsets.fromLTRB(
@@ -275,195 +303,14 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
 
   Widget _buildGroupCard(QueryDocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    return _GroupCard(
+    return GroupCard(
       groupId: doc.id,
       name: data['name'] ?? 'Untitled',
       colorHex: data['color'] ?? '#4CAF50',
       groupCode: data['groupCode'] ?? '',
       academicYear: (data['academicYear'] as int?) ?? DateTime.now().year,
-      classroom: (data['classroom'] as String?) ?? _legacyPeriodLabel(data['period']),
+      classroom: (data['classroom'] as String?) ?? legacyPeriodLabel(data['period']),
     );
-  }
-}
-
-// Produces a readable fallback label from the old int-based 'period' field
-// (1 or 2) for groups created before 'classroom' existed. Returns an empty
-// string if there's nothing to fall back to, so the UI can decide how to
-// display "no classroom set" rather than showing a confusing "Period null".
-String _legacyPeriodLabel(dynamic period) {
-  if (period == 1) return 'Period 1';
-  if (period == 2) return 'Period 2';
-  return '';
-}
-
-// ── Group card ────────────────────────────────────────────────────────────────
-
-class _GroupCard extends StatelessWidget {
-  final String groupId;
-  final String name;
-  final String colorHex;
-  final String groupCode;
-  final int    academicYear;
-  final String classroom;
-
-  const _GroupCard({
-    required this.groupId,
-    required this.name,
-    required this.colorHex,
-    required this.groupCode,
-    required this.academicYear,
-    required this.classroom,
-  });
-
-  Color get _cardColor {
-    try {
-      return Color(
-          int.parse('FF${colorHex.replaceAll('#', '')}', radix: 16));
-    } catch (_) {
-      return AppColors.primary;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _cardColor;
-    return FutureBuilder<int>(
-      future: _getAssignedUnitsCount(groupId),
-      builder: (context, snapshot) {
-        final count       = snapshot.data ?? 0;
-        final contentText = count == 1 ? 'content' : 'contents';
-
-        return GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => TeacherGroupDetailsScreen(
-                groupId:   groupId,
-                groupName: name,
-                groupCode: groupCode,
-                groupColor: color,
-              ),
-            ),
-          ),
-          child: Container(
-            // margin: const EdgeInsets.only(bottom: AppSpacing.md),
-            padding: const EdgeInsets.all(AppSpacing.md + 4),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [color, color.withOpacity(0.72)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(AppRadii.lg),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withOpacity(0.28),
-                  offset: const Offset(0, 6),
-                  blurRadius: 14,
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.onPrimary,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              height: 1.15,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            classroom.isNotEmpty
-                                ? '$academicYear · $classroom'
-                                : '$academicYear',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.82),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Code chip
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md, vertical: AppSpacing.xs + 2),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.22),
-                        borderRadius: BorderRadius.circular(AppRadii.pill),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.vpn_key_rounded,
-                              color: AppColors.onPrimary, size: 13),
-                          const SizedBox(width: AppSpacing.xs),
-                          Text(
-                            groupCode,
-                            style: const TextStyle(
-                              color: AppColors.onPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Row(
-                  children: [
-                    const Icon(Icons.folder_rounded,
-                        color: AppColors.onPrimary, size: 18),
-                    const SizedBox(width: AppSpacing.xs),
-                    Text(
-                      '$count $contentText',
-                      style: const TextStyle(
-                        color: AppColors.onPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const Spacer(),
-                    const Icon(Icons.arrow_forward_ios_rounded,
-                        color: AppColors.onPrimary, size: 16),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<int> _getAssignedUnitsCount(String groupId) async {
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('content')
-          .where('assignedTo', arrayContains: groupId)
-          .get();
-      return snap.docs.length;
-    } catch (_) {
-      return 0;
-    }
   }
 }
 

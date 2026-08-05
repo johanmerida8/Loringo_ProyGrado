@@ -29,6 +29,7 @@ class TeacherCategoryCard extends StatelessWidget {
     final data         = doc.data() as Map<String, dynamic>;
     final categoryName = data['categoryName'] as String? ?? 'Unnamed';
     final categoryId   = doc.id;
+    final ownerId      = data['ownerId'] as String? ?? '';
     final accent       = _accentFor(categoryName);
     final initial =
         categoryName.isNotEmpty ? categoryName[0].toUpperCase() : '#';
@@ -38,6 +39,7 @@ class TeacherCategoryCard extends StatelessWidget {
           context,
           MaterialPageRoute(
               builder: (_) => TeacherViewImagesScreen(
+                  ownerId:      ownerId,
                   categoryId:   categoryId,
                   categoryName: categoryName))),
       child: Container(
@@ -88,7 +90,7 @@ class TeacherCategoryCard extends StatelessWidget {
                       color: Colors.black87)),
               const SizedBox(height: AppSpacing.xs),
               StreamBuilder<int>(
-                stream: db.getImagesCountStream(categoryId),
+                stream: db.getImagesCountStream(ownerId, categoryId),
                 builder: (_, snap) {
                   final count = snap.data ?? 0;
                   return Container(

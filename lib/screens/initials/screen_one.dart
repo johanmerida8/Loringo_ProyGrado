@@ -13,6 +13,7 @@ import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 // import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 
 class ScreenOne extends StatefulWidget {
   final String contentId;
@@ -20,7 +21,12 @@ class ScreenOne extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect)? onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef
+  // instead of an inline function type. answerDetail shape for this
+  // screen: {'type': 'image_select', 'word': <prompt>, 'selected':
+  // <chosen option text>, 'correct': <correct option text>}.
+  final TaskCompleteCallback? onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -109,6 +115,14 @@ class _ScreenOneState extends State<ScreenOne> with RetryableTask {
     );
     final bool isCorrect = option['isCorrect'] == true;
 
+    // Teacher review detail: the correct option's text, found
+    // independently of which one the student picked, so this is
+    // accurate even when the student chose wrong.
+    final correctOption = options.firstWhere(
+      (o) => o['isCorrect'] == true,
+      orElse: () => {'text': ''},
+    );
+
     TaskFeedback.fire(isCorrect);
 
     // Soft wrong answer with attempts left -> offerRetry shows the
@@ -132,7 +146,12 @@ class _ScreenOneState extends State<ScreenOne> with RetryableTask {
         // practice round at the end instead of being retried in place
         // here). This screen no longer resets its own selection on a
         // wrong answer.
-        widget.onTaskComplete?.call(isCorrect);
+        widget.onTaskComplete?.call(isCorrect, {
+          'type': 'image_select',
+          'word': word,
+          'selected': selectedOption,
+          'correct': correctOption['text'] ?? '',
+        });
       },
     );
   }

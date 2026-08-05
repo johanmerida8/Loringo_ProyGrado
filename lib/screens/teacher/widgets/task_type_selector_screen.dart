@@ -1,5 +1,6 @@
 // task_type_selector_screen.dart
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/create_task_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_batch_review_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -35,14 +36,17 @@ class TaskTypeSelectorScreen extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final Color groupColor;
-
-  /// Upper bound on how many tasks can be selected total across all
-  /// type counters combined — driven by TeacherTaskEditorScreen as (15
-  /// total per activity - tasks that already exist), not a fixed
-  /// constant. Prevents selecting more than the activity has room for.
-  /// Must be >= 1 — the caller is responsible for not opening this
-  /// screen at all when the activity is already full.
   final int maxTasks;
+  final int existingTaskCount;
+
+  /// True only when the activity itself hasn't been written to Firestore
+  /// yet — forwarded straight through from TeacherTaskEditorScreen, and
+  /// on to TaskBatchReviewScreen. When true, that screen doesn't write
+  /// anything either: it hands the defined batch back via
+  /// Navigator.pop(context, results), and this screen bubbles that same
+  /// result one level further up (see _proceedToReview) so it eventually
+  /// reaches create_activity_screen.dart, which does the actual create.
+  final bool isPendingActivity;
 
   const TaskTypeSelectorScreen({
     super.key,
@@ -53,6 +57,8 @@ class TaskTypeSelectorScreen extends StatefulWidget {
     required this.activityId,
     required this.groupColor,
     required this.maxTasks,
+    required this.existingTaskCount,
+    this.isPendingActivity = false,
   });
 
   @override
@@ -64,14 +70,36 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
   /// typeId -> count. Only types with count > 0 are included in the batch.
   final Map<String, int> _counts = {};
 
+  // reading comprehension is a standalone
+  static const String _readingType = 'reading';
+
   Color get _c => widget.groupColor;
 
   int get _total => _counts.values.fold(0, (a, b) => a + b);
+
+  bool get _isReadingSelected => (_counts[_readingType] ?? 0) > 0;
+
+  bool get _isOtherTypeSelected => 
+      _counts.entries.any((e) => e.key != _readingType && e.value > 0);
+
+  bool get _readingBlockedByExisitingTasks => widget.existingTaskCount > 0;
 
   bool get _canIncrement => _total < widget.maxTasks;
 
   void _increment(String typeId) {
     if (!_canIncrement) return;
+
+    // reading comprehension is exclusive: picking it clears out any other selected type
+    if (typeId == _readingType) {
+      if (_readingBlockedByExisitingTasks) return;
+      if (_isOtherTypeSelected) return;
+      if ((_counts[_readingType] ?? 0) >= 1) return;
+      setState(() => _counts[_readingType] = 1);
+      return;
+    }
+
+    if (_isReadingSelected) return;
+
     setState(() => _counts[typeId] = (_counts[typeId] ?? 0) + 1);
   }
 
@@ -100,9 +128,9 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
     return list;
   }
 
-  void _proceedToReview() {
+  Future<void> _proceedToReview() async {
     if (_total == 0) return;
-    Navigator.push(
+    final result = await Navigator.push<List<BatchTaskResult>>(
       context,
       MaterialPageRoute(
         builder: (_) => TaskBatchReviewScreen(
@@ -116,9 +144,17 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
           // The teacher picked exact types and counts here — nothing was
           // assigned randomly — so the review screen should say "Added".
           isGenerated: false,
+          isPendingActivity: widget.isPendingActivity,
         ),
       ),
     );
+    // Bubble the defined batch one level further up — see the field doc
+    // on isPendingActivity. When it's false, TaskBatchReviewScreen wrote
+    // everything itself and popped via a named-route popUntil instead, so
+    // this await resolves with null and there's nothing to forward.
+    if (widget.isPendingActivity && result != null && mounted) {
+      Navigator.pop(context, result);
+    }
   }
 
   @override
@@ -164,6 +200,9 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
                     counts: _counts,
                     color: _c,
                     canIncrement: _canIncrement,
+                    isReadingSelected: _isReadingSelected,
+                    isOtherTypeSelected: _isOtherTypeSelected,
+                    readingBlockedByExistingTasks: _readingBlockedByExisitingTasks,
                     onIncrement: _increment,
                     onDecrement: _decrement,
                   ),
@@ -180,7 +219,7 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '$_total / ${widget.maxTasks} tasks selected',
+                '$_total / ${_isReadingSelected ? 1 : widget.maxTasks} tasks selected',
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -222,6 +261,9 @@ class _TypeGroupSection extends StatelessWidget {
     required this.counts,
     required this.color,
     required this.canIncrement,
+    required this.isReadingSelected,
+    required this.isOtherTypeSelected,
+    required this.readingBlockedByExistingTasks,
     required this.onIncrement,
     required this.onDecrement,
   });
@@ -231,6 +273,9 @@ class _TypeGroupSection extends StatelessWidget {
   final Map<String, int> counts;
   final Color color;
   final bool canIncrement;
+  final bool isReadingSelected;
+  final bool isOtherTypeSelected;
+  final bool readingBlockedByExistingTasks;
   final ValueChanged<String> onIncrement;
   final ValueChanged<String> onDecrement;
 
@@ -245,14 +290,36 @@ class _TypeGroupSection extends StatelessWidget {
           child: Text(groupName.toUpperCase(),
               style: AppText.fieldLabel.copyWith(color: AppColors.textSecondary)),
         ),
-        ...options.map((option) => _TypeCounterTile(
-              option: option,
-              count: counts[option.id] ?? 0,
-              color: color,
-              canIncrement: canIncrement,
-              onIncrement: () => onIncrement(option.id),
-              onDecrement: () => onDecrement(option.id),
-            )),
+        ...options.map((option) {
+          final isReadingTile = option.id == 'reading';
+
+          final tileCanIncrement = isReadingTile
+              ? canIncrement &&
+                  !readingBlockedByExistingTasks &&
+                  !isOtherTypeSelected &&
+                  (counts[option.id] ?? 0) < 1
+              : canIncrement && !isReadingSelected;
+
+          String? reason;
+          if (isReadingTile && readingBlockedByExistingTasks) {
+            reason = 'This activity already has tasks — Reading Comprehension '
+                'must be the only task in an activity';
+          } else if (isReadingTile && isOtherTypeSelected) {
+            reason = 'Reading Comprehension can\'t be combined with other tasks';
+          } else if (!isReadingTile && isReadingSelected) {
+            reason = 'Remove Reading Comprehension to add other tasks';
+          }
+
+          return _TypeCounterTile(
+            option: option,
+            count: counts[option.id] ?? 0,
+            color: color,
+            canIncrement: tileCanIncrement,
+            lockedReason: reason,
+            onIncrement: () => onIncrement(option.id),
+            onDecrement: () => onDecrement(option.id),
+          );
+        }),
       ],
     );
   }
@@ -266,6 +333,7 @@ class _TypeCounterTile extends StatelessWidget {
     required this.count,
     required this.color,
     required this.canIncrement,
+    this.lockedReason, // NEW
     required this.onIncrement,
     required this.onDecrement,
   });
@@ -274,6 +342,7 @@ class _TypeCounterTile extends StatelessWidget {
   final int count;
   final Color color;
   final bool canIncrement;
+  final String? lockedReason; // NEW
   final VoidCallback onIncrement;
   final VoidCallback onDecrement;
 
@@ -293,58 +362,74 @@ class _TypeCounterTile extends StatelessWidget {
           width: _isSelected ? 2 : 1,
         ),
       ),
-      child: Row(children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: (_isSelected ? color : AppColors.muted).withOpacity(0.12),
-            borderRadius: BorderRadius.circular(AppRadii.sm),
-          ),
-          child: Icon(option.icon,
-              color: _isSelected ? color : AppColors.muted, size: 20),
-        ),
-        const SizedBox(width: AppSpacing.md),
-        Expanded(
-          child: Text(
-            option.label,
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: _isSelected ? color : AppColors.textPrimary,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: (_isSelected ? color : AppColors.muted).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+              ),
+              child: Icon(option.icon,
+                  color: _isSelected ? color : AppColors.muted, size: 20),
             ),
-          ),
-        ),
-        // ── Counter ──────────────────────────────────────────────────
-        Container(
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(
-              icon: const Icon(Icons.remove, size: 18),
-              onPressed: count > 0 ? onDecrement : null,
-              color: color,
-              splashRadius: 20,
-            ),
-            SizedBox(
-              width: 24,
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
               child: Text(
-                '$count',
-                textAlign: TextAlign.center,
+                option.label,
                 style: TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.bold, color: color),
+                  fontWeight: FontWeight.w600,
+                  color: _isSelected ? color : AppColors.textPrimary,
+                ),
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.add, size: 18),
-              onPressed: canIncrement ? onIncrement : null,
-              color: color,
-              splashRadius: 20,
+            Container(
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(
+                  icon: const Icon(Icons.remove, size: 18),
+                  onPressed: count > 0 ? onDecrement : null,
+                  color: color,
+                  splashRadius: 20,
+                ),
+                SizedBox(
+                  width: 24,
+                  child: Text(
+                    '$count',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold, color: color),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add, size: 18),
+                  onPressed: canIncrement ? onIncrement : null,
+                  color: color,
+                  splashRadius: 20,
+                ),
+              ]),
             ),
           ]),
-        ),
-      ]),
+          // NEW: inline explanation when this tile is locked by the
+          // reading-exclusivity rule specifically (not just "batch full").
+          if (lockedReason != null) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 52),
+              child: Text(
+                lockedReason!,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

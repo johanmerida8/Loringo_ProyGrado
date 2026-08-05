@@ -10,11 +10,13 @@ import 'package:loringo_app/screens/teacher/widgets/teacher_uploading_view.dart'
 // ── TeacherUploadImageScreen ──────────────────────────────────────────────────
 
 class TeacherUploadImageScreen extends StatefulWidget {
+  final String ownerId;
   final String categoryId;
   final String categoryName;
 
   const TeacherUploadImageScreen(
       {super.key,
+      required this.ownerId,
       required this.categoryId,
       required this.categoryName});
 
@@ -235,6 +237,7 @@ class _TeacherUploadImageScreenState
           }
         } else {
           await _db.saveImageMetadata(
+            ownerId:             widget.ownerId,
             categoryId:          widget.categoryId,
             name:                imageName,
             imageUrl:            result['secure_url'] as String,

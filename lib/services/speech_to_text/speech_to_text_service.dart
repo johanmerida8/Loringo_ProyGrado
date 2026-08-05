@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'speech_permissions.dart';
@@ -35,6 +36,36 @@ import 'speech_recognition_result.dart';
 /// `stt.SpeechToText()` engine — every time. Each screen's instance is
 /// fully independent: its own callbacks, its own `dispose()` blast
 /// radius, no cross-talk between task types.
+///
+/// ROBUSTNESS PASS (this revision): addresses three concrete failure
+/// modes reported in manual testing, all of which previously left the
+/// student stuck with a spinning mic and no feedback:
+///
+/// 1. Transient `initialize()` failure. On some Android devices the
+///    native speech engine isn't warmed up yet on the very first call
+///    (common right after granting mic permission) and `_speech
+///    .initialize()` returns false once even though a second attempt a
+///    moment later succeeds. `initialize()` now retries once after a
+///    short delay before giving up, instead of failing permanently on
+///    the first false.
+/// 2. Concurrent start calls. If the student double-taps the mic button
+///    fast enough that a second `startListening()` fires before the
+///    first `initialize()` finishes, both calls used to race against
+///    `_isAvailable`/`_isListening`. An `_isInitializing` guard now
+///    makes a second call wait on the in-flight initialization instead
+///    of kicking off a duplicate one.
+/// 3. Silent hang with no callback at all. `stt.listen()` normally
+///    guarantees either a result or an `onStatus`/`onError` callback,
+///    but on a handful of OEM Android builds the plugin has been
+///    observed to never call back if the native engine dies
+///    mid-session (no exception thrown either). Previously this left
+///    `_isListening == true` forever with the mic UI stuck listening.
+///    A local safety timer now fires `onError` and force-resets state
+///    if nothing at all — no partial result, no final result, no
+///    status change — arrives within [listenDuration] plus a grace
+///    window. This is a pure backstop: it never fires if the plugin is
+///    behaving normally, since any real result or status change cancels
+///    it immediately.
 class SpeechToTextService {
   SpeechToTextService();
 
@@ -50,6 +81,18 @@ class SpeechToTextService {
   // Para evitar múltiples errores de volumen bajo
   bool _hasShownLowVolumeWarning = false;
 
+  // Guards against duplicate/concurrent initialize() calls (fix #2).
+  Future<bool>? _initializingFuture;
+
+  // Safety-net timer for silent hangs (fix #3). Cancelled the instant
+  // any real callback (partial, final, status, or error) arrives.
+  Timer? _watchdogTimer;
+
+  // Tracks whether this instance has already been torn down, so a
+  // watchdog firing after dispose() can't call back into a disposed
+  // screen's callbacks.
+  bool _isDisposed = false;
+
   // Callbacks
   VoidCallback? onListeningStart;
   VoidCallback? onListeningStop;
@@ -57,36 +100,85 @@ class SpeechToTextService {
   Function(SpeechRecognitionResult)? onFinalResult;
   Function(String)? onError;
 
+  /// FEATURE: fired once per listening session the first time the sound
+  /// level stays below threshold with nothing recognized yet. Previously
+  /// this state was tracked internally (_hasShownLowVolumeWarning) but
+  /// only ever reached a debugPrint — the student had no way to know
+  /// the mic wasn't picking them up, so a genuinely quiet room or a
+  /// phone held too far away looked identical to "not listening at
+  /// all" from the UI. Screens can now surface this as a "Speak
+  /// louder" hint while the mic is open. Cleared automatically the
+  /// moment any speech is detected (see onSoundLevelChange below), so
+  /// it never lingers as a stale warning once the student is heard.
+  VoidCallback? onLowVolumeWarning;
+
   bool get isAvailable => _isAvailable;
   bool get isListening => _isListening;
   String get lastRecognizedText => _lastRecognizedText;
 
-  /// Initialize speech recognition
+  /// Initialize speech recognition.
+  ///
+  /// FIX #1: retries once after a short delay if the first attempt
+  /// returns false. This specifically targets the "engine not warmed up
+  /// yet" case rather than genuine unavailability (e.g. no mic
+  /// permission, which is checked up front and returns immediately
+  /// without wasting the retry).
+  ///
+  /// FIX #2: if a call is already in flight, subsequent callers await
+  /// the same Future instead of starting a second, redundant
+  /// initialization race.
   Future<bool> initialize() async {
-    // First check permission
+    if (_initializingFuture != null) {
+      return _initializingFuture!;
+    }
+    final future = _initializeInternal();
+    _initializingFuture = future;
+    try {
+      return await future;
+    } finally {
+      _initializingFuture = null;
+    }
+  }
+
+  Future<bool> _initializeInternal() async {
     final hasPermission = await SpeechPermissions.isMicrophonePermissionGranted();
     if (!hasPermission) {
       debugPrint('Microphone permission not granted');
       return false;
     }
 
-    // Initialize speech recognition
-    _isAvailable = await _speech.initialize(
+    _isAvailable = await _attemptInitialize();
+
+    // First attempt failed — this is the common "engine cold start"
+    // case on some Android devices. One short-delayed retry resolves
+    // it in practice without meaningfully delaying the UI (the mic
+    // button already shows a listening/loading state to the student).
+    if (!_isAvailable) {
+      debugPrint('Speech engine not ready, retrying initialize()...');
+      await Future.delayed(const Duration(milliseconds: 400));
+      _isAvailable = await _attemptInitialize();
+    }
+
+    return _isAvailable;
+  }
+
+  Future<bool> _attemptInitialize() {
+    return _speech.initialize(
       onError: (error) {
         debugPrint('Speech recognition error: ${error.errorMsg}');
+        _cancelWatchdog();
         _isListening = false;
-        onError?.call(error.errorMsg);
+        if (!_isDisposed) onError?.call(error.errorMsg);
       },
       onStatus: (status) {
         debugPrint('Speech status: $status');
         if (status == 'notListening' && _isListening) {
+          _cancelWatchdog();
           _isListening = false;
-          onListeningStop?.call();
+          if (!_isDisposed) onListeningStop?.call();
         }
       },
     );
-
-    return _isAvailable;
   }
 
   /// Start listening for speech.
@@ -123,14 +215,28 @@ class SpeechToTextService {
     _isListening = true;
     onListeningStart?.call();
 
+    // FIX #3: arm the watchdog. If nothing — no partial, no final, no
+    // status change, no error — comes back from the plugin within the
+    // requested window plus a grace period, force a clean error state
+    // instead of leaving the student staring at a stuck mic icon. Any
+    // real callback below cancels this before it can fire.
+    _armWatchdog(listenDuration);
+
     await _speech.listen(
       onResult: (result) {
-        // Reset warning flag when we get any result (means speech is detected)
+        _cancelWatchdog();
+        // Reset warning flag when we get any result (means speech is
+        // detected) — covers the case where recognized text arrives
+        // without a sound-level sample crossing the threshold first.
         _hasShownLowVolumeWarning = false;
 
         if (!result.finalResult) {
           _lastRecognizedText = result.recognizedWords;
-          onPartialResult?.call(result.recognizedWords);
+          if (!_isDisposed) onPartialResult?.call(result.recognizedWords);
+          // A partial result means the engine is alive and talking to
+          // us — re-arm the watchdog for the remaining window so a stall
+          // *after* a partial result is still caught.
+          _armWatchdog(listenDuration);
         } else {
           _lastRecognizedText = result.recognizedWords;
           _isListening = false;
@@ -144,8 +250,10 @@ class SpeechToTextService {
             accuracy: accuracy,
           );
 
-          onFinalResult?.call(speechResult);
-          onListeningStop?.call();
+          if (!_isDisposed) {
+            onFinalResult?.call(speechResult);
+            onListeningStop?.call();
+          }
         }
       },
       listenFor: listenDuration,
@@ -155,32 +263,67 @@ class SpeechToTextService {
       listenMode: stt.ListenMode.dictation,
       onSoundLevelChange: (level) {
         _currentSoundLevel = level;
-        // ✅ Solo mostrar advertencia una vez y cuando no hay resultados
+        // Fire once per session — repeated low-level samples (the
+        // callback runs many times a second while listening) would
+        // otherwise spam the UI. _hasShownLowVolumeWarning gates that;
+        // it's reset in startListening() so each new attempt gets its
+        // own fresh warning if needed again.
         if (!_hasShownLowVolumeWarning && level < 0.05 && _isListening && _lastRecognizedText.isEmpty) {
           _hasShownLowVolumeWarning = true;
-          // Usar onError solo para errores reales, no para advertencias
-          // Mejor manejarlo con un callback separado o simplemente no mostrar SnackBar
           debugPrint('Volume too low: $level');
+          if (!_isDisposed) onLowVolumeWarning?.call();
+        }
+        // Speech resumed above threshold — clear the flag so a later
+        // dip during the SAME session can warn again (e.g. the student
+        // trails off mid-phrase) instead of staying silenced after the
+        // first blip.
+        if (level >= 0.05 && _hasShownLowVolumeWarning) {
+          _hasShownLowVolumeWarning = false;
         }
       },
     );
   }
 
+  /// Arms (or re-arms) the silent-hang safety timer. `slack` gives the
+  /// plugin's own `pauseFor`/`listenFor` machinery room to finish
+  /// naturally before the watchdog second-guesses it.
+  void _armWatchdog(Duration listenDuration) {
+    _cancelWatchdog();
+    const slack = Duration(seconds: 3);
+    _watchdogTimer = Timer(listenDuration + slack, () {
+      if (!_isListening || _isDisposed) return;
+      debugPrint('Speech watchdog: no callback received, forcing error state');
+      _isListening = false;
+      onError?.call('timeout');
+      // Best-effort cleanup of the native session; ignore failures here
+      // since we're already in a degraded state and the user-facing
+      // error has already been dispatched above.
+      _speech.stop().catchError((_) {});
+    });
+  }
+
+  void _cancelWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+  }
+
   /// Stop listening
   Future<void> stopListening() async {
+    _cancelWatchdog();
     if (_isListening) {
       await _speech.stop();
       _isListening = false;
-      onListeningStop?.call();
+      if (!_isDisposed) onListeningStop?.call();
     }
   }
 
   /// Cancel listening without processing
   Future<void> cancelListening() async {
+    _cancelWatchdog();
     if (_isListening) {
       await _speech.cancel();
       _isListening = false;
-      onListeningStop?.call();
+      if (!_isDisposed) onListeningStop?.call();
     }
   }
 
@@ -232,7 +375,14 @@ class SpeechToTextService {
   /// guarantees the next `startListening()` call on this instance (if
   /// any) properly re-initializes rather than assuming a now-stopped
   /// engine is still ready.
+  ///
+  /// Also cancels the watchdog and marks the instance disposed so any
+  /// in-flight native callback that arrives after dispose() (a known
+  /// possibility with this plugin) is a no-op instead of calling back
+  /// into a State that's already been torn down.
   void dispose() {
+    _isDisposed = true;
+    _cancelWatchdog();
     _speech.stop();
     _isAvailable = false;
     _isListening = false;

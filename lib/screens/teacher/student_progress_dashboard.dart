@@ -113,7 +113,7 @@ class _StudentProgressDashboardState
 
               final lessonQuizzesSnap = await db
                   .collection('quizzes')
-                  .where('type', isEqualTo: 'lesson')
+                  .where('scope', isEqualTo: 'lesson')
                   .where('contentId', isEqualTo: contentId)
                   .where('unitId', isEqualTo: unitId)
                   .get();
@@ -121,7 +121,7 @@ class _StudentProgressDashboardState
 
               final unitQuizzesSnap = await db
                   .collection('quizzes')
-                  .where('type', isEqualTo: 'unit')
+                  .where('scope', isEqualTo: 'unit')
                   .where('contentId', isEqualTo: contentId)
                   .where('unitId', isEqualTo: unitId)
                   .limit(1)
@@ -170,8 +170,8 @@ class _StudentProgressDashboardState
           byUnit.putIfAbsent(unitId, () => UnitRawData());
           completedActivityIdsPerUnit.putIfAbsent(unitId, () => {});
 
-          if (data.containsKey('activityId') && data['isCompleted'] == true) {
-            final activityId = data['activityId'] as String;
+          if (data['type'] == 'activity' && data['isCompleted'] == true) {
+            final activityId = doc.id;
             if (!completedActivityIdsPerUnit[unitId]!.contains(activityId)) {
               completedActivityIdsPerUnit[unitId]!.add(activityId);
               byUnit[unitId]!.completedActivities++;
@@ -179,16 +179,29 @@ class _StudentProgressDashboardState
             }
           }
 
-          if (data.containsKey('quizId') && data['isCompleted'] == true) {
-            final quizId = data['quizId'] as String;
-            final score = (data['score'] as int?) ?? 0;
+          if (data['type'] == 'quiz' && data['isCompleted'] == true) {
+            final quizId = doc.id;
+            final correct = (data['correctAnswers'] as int?) ?? 0;
             final total = (data['totalQuestions'] as int?) ?? 0;
 
-            if (quizId.startsWith('lesson_quiz_')) {
+            // The quiz's own scope determines lesson vs. unit — not the
+            // doc ID (quiz IDs are all 'quiz_<timestamp>', no prefix to
+            // match on). unitInfo already carries which quiz IDs belong
+            // to each bucket, built from the scope-filtered queries above.
+            UnitInfo? unitInfo;
+            for (final u in units) {
+              if (u.unitId == unitId) {
+                unitInfo = u;
+                break;
+              }
+            }
+
+            if (unitInfo != null && unitInfo.lessonQuizIds.contains(quizId)) {
               byUnit[unitId]!.completedLessonQuizzes++;
-              byUnit[unitId]!.lessonQuizScoreSum += (score / total * 100).round();
-            } else if (quizId.startsWith('unit_quiz_')) {
-              byUnit[unitId]!.unitQuizScore = score;
+              byUnit[unitId]!.lessonQuizScoreSum +=
+                  total == 0 ? 0 : (correct / total * 100).round();
+            } else if (unitInfo != null && unitInfo.unitQuizId == quizId) {
+              byUnit[unitId]!.unitQuizScore = correct;
               byUnit[unitId]!.unitQuizTotal = total;
             }
           }

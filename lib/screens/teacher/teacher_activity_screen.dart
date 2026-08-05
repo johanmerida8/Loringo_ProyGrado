@@ -2,10 +2,35 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/activity_play_screen.dart';
-import 'package:loringo_app/screens/initials/quiz_lesson_play_screen.dart';
-import 'package:loringo_app/screens/initials/quiz_unit_play_screen.dart';
+import 'package:loringo_app/screens/initials/quiz_play_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_task_editor_screen.dart';
 import 'package:lottie/lottie.dart';
+
+// CHANGE LOG (Lesson Quiz reloading restored):
+// - The comment that used to sit where Lesson Quiz loading was removed
+//   ("practice is now an Activity, not a separate quiz type") was
+//   correct at the time it was written — that was true for the OLD
+//   Lesson Quiz concept (reused Activity Tasks, no form of its own).
+//   It went stale once Lesson Quiz was reintroduced as a genuinely
+//   different, later concept: a real scope: 'lesson' Quiz doc with the
+//   same multiple-choice form as Unit Quiz, just ungraded. That second
+//   introduction updated student_activities_screen.dart but never made
+//   it into THIS file — this screen (the teacher's Content preview) was
+//   silently only ever showing Unit Test, never any Lesson Quiz.
+// - _loadGroupContent: added a per-lesson query for scope: 'lesson'
+//   quizzes, run alongside the existing per-lesson activities query
+//   (same Future.wait batching pattern already used for
+//   perUnitResults/perLessonResults). Each lesson quiz found is pushed
+//   into items as its own 'quiz' entry with 'quizScope': 'lesson',
+//   right after that lesson's activities and before the next lesson's
+//   header — same position a Lesson Quiz occupies in the student view.
+// - _showQuizDialog / _buildQuizRow: now branch on
+//   item['quizScope'] == 'lesson' for color (blue, matching
+//   AppColors.info elsewhere) vs the existing purple Unit Test styling,
+//   and for copy ("ungraded, doesn't block progress" vs "graded, gates
+//   next unit"). Navigation target is QuizPlayScreen either way — it
+//   already reads scope itself and behaves correctly (see
+//   quiz_play_screen.dart's _isLessonScope branching).
 
 class TeacherActivityScreen extends StatefulWidget {
   final String groupId;
@@ -30,6 +55,8 @@ class TeacherActivityScreen extends StatefulWidget {
 class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
   static const Color greenPrimary = Color(0xFF4CAF50);
   static const Color greenAccent = Color(0xFF81C784);
+  static const Color lessonQuizColor = Color(0xFF1976D2); // blue, matches AppColors.info used elsewhere for Lesson Quiz
+  static const Color unitTestColor = Color(0xFF7C3AED); // purple, unchanged from before
 
   static const List<String> _unitMascots = [
     'assets/animation/animation.json',
@@ -83,7 +110,6 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
 
   Future<List<Map<String, dynamic>>> _loadGroupContent() async {
     try {
-      // Load approved content for this group
       final contentSnap = await FirebaseFirestore.instance
           .collection('content')
           .where('assignedTo', arrayContains: widget.groupId)
@@ -111,8 +137,6 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
         final contentDoc = contentDocs[ci];
         final contentId = contentDoc.id;
         final contentData = contentDoc.data();
-        // Tracked so every descendant item below can carry the full
-        // ancestor trail (needed for breadcrumb navigation downstream).
         final contentTitle = contentData['title'] as String? ?? 'Untitled Content';
 
         items.add({
@@ -123,14 +147,16 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
 
         final unitDocs = allUnitsSnaps[ci].docs;
 
-        // ✅ Load unit quizzes from root 'quizzes' collection
+        // Unit-scoped quizzes (one per unit, shown after that unit's
+        // lessons). Lesson-scoped quizzes are loaded separately
+        // per-lesson below, alongside that lesson's activities.
         final unitQuizzesMap = <String, List<QueryDocumentSnapshot>>{};
         final unitQuizzesSnap = await FirebaseFirestore.instance
             .collection('quizzes')
-            .where('type', isEqualTo: 'unit')
             .where('contentId', isEqualTo: contentId)
+            .where('scope', isEqualTo: 'unit')
             .get();
-        
+
         for (final quizDoc in unitQuizzesSnap.docs) {
           final quizData = quizDoc.data() as Map<String, dynamic>;
           final unitId = quizData['unitId'] as String;
@@ -138,23 +164,14 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
         }
 
         final perUnitResults = await Future.wait(
-          unitDocs.map((ud) => Future.wait([
-                FirebaseFirestore.instance
-                    .collection('content')
-                    .doc(contentId)
-                    .collection('units')
-                    .doc(ud.id)
-                    .collection('lessons')
-                    .orderBy('order')
-                    .get(),
-                // ✅ Load lesson quizzes from root collection
-                FirebaseFirestore.instance
-                    .collection('quizzes')
-                    .where('type', isEqualTo: 'lesson')
-                    .where('contentId', isEqualTo: contentId)
-                    .where('unitId', isEqualTo: ud.id)
-                    .get(),
-              ])),
+          unitDocs.map((ud) => FirebaseFirestore.instance
+              .collection('content')
+              .doc(contentId)
+              .collection('units')
+              .doc(ud.id)
+              .collection('lessons')
+              .orderBy('order')
+              .get()),
         );
 
         int unitIndex = 0;
@@ -173,8 +190,7 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
             'unitId': unitId,
           });
 
-          final lessonDocs = perUnitResults[ui][0].docs;
-          final lessonQuizzes = perUnitResults[ui][1].docs;
+          final lessonDocs = perUnitResults[ui].docs;
 
           final perLessonResults = await Future.wait(
             lessonDocs.map((ld) => FirebaseFirestore.instance
@@ -186,6 +202,21 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
                 .doc(ld.id)
                 .collection('activities')
                 .orderBy('order')
+                .get()),
+          );
+
+          // Lesson Quiz — at most one per lesson (enforced in
+          // database.dart's createQuiz), fetched alongside each
+          // lesson's activities in the same batched Future.wait so this
+          // doesn't add serial round-trips per lesson.
+          final perLessonQuizResults = await Future.wait(
+            lessonDocs.map((ld) => FirebaseFirestore.instance
+                .collection('quizzes')
+                .where('contentId', isEqualTo: contentId)
+                .where('unitId', isEqualTo: unitId)
+                .where('scope', isEqualTo: 'lesson')
+                .where('lessonId', isEqualTo: ld.id)
+                .limit(1)
                 .get()),
           );
 
@@ -203,7 +234,6 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
               'lessonId': lessonId,
             });
 
-            // Activities
             for (final activityDoc in perLessonResults[li].docs) {
               final d = activityDoc.data();
               items.add({
@@ -216,47 +246,48 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
                 'order': d['order'] ?? 0,
                 'xpBase': d['xpBase'] ?? 0,
                 'difficulty': d['difficulty'] ?? 'easy',
-                // Carried so the Activity dialog can build a breadcrumb
-                // trail when jumping into PersonalizedTaskListScreen.
                 'contentTitle': contentTitle,
                 'unitTitle': unitTitle,
                 'lessonTitle': lessonTitle,
               });
             }
-          }
 
-          // ✅ Add lesson quizzes (filtered by lessonId)
-          for (final quizDoc in lessonQuizzes) {
-            final quizData = quizDoc.data() as Map<String, dynamic>;
-            final quizLessonId = quizData['lessonId'] as String?;
-            if (quizLessonId != null) {
+            // Lesson Quiz for this lesson, if one exists — shown right
+            // after that lesson's activities, same position the
+            // student-facing path uses.
+            final lessonQuizDocs = perLessonQuizResults[li].docs;
+            if (lessonQuizDocs.isNotEmpty) {
+              final lqDoc = lessonQuizDocs.first;
+              final lqData = lqDoc.data() as Map<String, dynamic>;
+
               items.add({
                 'type': 'quiz',
+                'quizScope': 'lesson',
                 'contentId': contentId,
                 'unitId': unitId,
-                'lessonId': quizLessonId,
-                'quizId': quizDoc.id,
-                'title': quizData['title'] ?? 'Untitled Quiz',
-                'quizType': 'lesson_quiz',
-                'xpReward': quizData['xpReward'] ?? 0,
-                'questionCount': (quizData['questionIds'] as List?)?.length ?? 0,
+                'lessonId': lessonId,
+                'quizId': lqDoc.id,
+                'title': lqData['title'] ?? 'Lesson Quiz',
+                'xpReward': lqData['xpReward'] ?? 0,
+                'questionCount': lqData['totalQuestions'] ?? 0,
               });
             }
           }
 
-          // ✅ Add unit quizzes
+          // Unit quiz — shown after all of this unit's lessons (and
+          // their Lesson Quizzes) have been added.
           final unitQuizzes = unitQuizzesMap[unitId] ?? [];
           for (final quizDoc in unitQuizzes) {
             final quizData = quizDoc.data() as Map<String, dynamic>;
-            
+
             items.add({
               'type': 'quiz',
+              'quizScope': 'unit',
               'contentId': contentId,
               'unitId': unitId,
               'lessonId': '',
               'quizId': quizDoc.id,
-              'title': quizData['title'] ?? 'Unit Quiz',
-              'quizType': 'unit_test',
+              'title': quizData['title'] ?? 'Quiz',
               'xpReward': quizData['xpReward'] ?? 0,
               'questionCount': quizData['totalQuestions'] ?? 0,
             });
@@ -304,6 +335,7 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
             onPressed: () {
               Navigator.pop(context);
               Navigator.push(context, MaterialPageRoute(
+                settings: const RouteSettings(name: kTeacherTaskEditorRoute),
                 builder: (_) => TeacherTaskEditorScreen(
                   groupId: widget.groupId,
                   contentId: item['contentId'],
@@ -408,59 +440,45 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
   );
 
   void _showQuizDialog(Map<String, dynamic> item) {
-    final bool isUnitQuiz = (item['quizType'] ?? '') == 'unit_test';
-    
+    final bool isLessonQuiz = item['quizScope'] == 'lesson';
+    final Color c = isLessonQuiz ? lessonQuizColor : unitTestColor;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(children: [
-          Icon(isUnitQuiz ? Icons.assignment_turned_in : Icons.quiz,
-              color: const Color(0xFF7C3AED)),
+          Icon(isLessonQuiz ? Icons.school_outlined : Icons.assignment_turned_in, color: c),
           const SizedBox(width: 8),
           Expanded(child: Text(item['title'],
               style: const TextStyle(fontWeight: FontWeight.bold))),
         ]),
         content: Wrap(spacing: 8, runSpacing: 8, children: [
-          _chip(Icons.star, '${item['xpReward']} XP${isUnitQuiz ? ' (graded)' : ' (practice)'}', Colors.amber),
+          _chip(Icons.star, '${item['xpReward']} XP${isLessonQuiz ? ' (ungraded)' : ' (graded)'}', Colors.amber),
           _chip(Icons.question_answer, '${item['questionCount']} questions', Colors.blue),
-          _chip(isUnitQuiz ? Icons.grade : Icons.school,
-              isUnitQuiz ? 'Unit Test' : 'Lesson Quiz',
-              isUnitQuiz ? Colors.orange : Colors.grey),
+          _chip(isLessonQuiz ? Icons.school_outlined : Icons.grade,
+              isLessonQuiz ? 'Lesson Quiz' : 'Unit Test', c),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              
-              if (isUnitQuiz) {
-                // ✅ Navigate to Unit Quiz Play Screen
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => UnitQuizPlayScreen(
-                    contentId: item['contentId'],
-                    unitId: item['unitId'],
-                    quizId: item['quizId'],
-                    quizTitle: item['title'],
-                    isPreview: true,
-                  ),
-                ));
-              } else {
-                // Lesson quiz - use existing QuizPlayScreen
-                Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => LessonQuizPlayScreen(
-                    contentId: item['contentId'],
-                    unitId: item['unitId'],
-                    lessonId: item['lessonId'],
-                    quizId: item['quizId'],
-                    quizTitle: item['title'],
-                    // collectionName: 'quizzes',
-                    isPreview: true,
-                  ),
-                ));
-              }
+              // QuizPlayScreen reads scope from the quiz doc itself and
+              // handles both scope: 'unit' and scope: 'lesson'
+              // correctly — no branching needed here on which screen to
+              // navigate to.
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => QuizPlayScreen(
+                  contentId: item['contentId'],
+                  unitId: item['unitId'],
+                  quizId: item['quizId'],
+                  quizTitle: item['title'],
+                  isPreview: true,
+                ),
+              ));
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7C3AED)),
+            style: ElevatedButton.styleFrom(backgroundColor: c),
             icon: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
             label: const Text('Preview', style: TextStyle(color: Colors.white)),
           ),
@@ -469,47 +487,53 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
     );
   }
 
-  Widget _buildQuizRow(Map<String, dynamic> item) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 10),
-    child: GestureDetector(
-      onTap: () => _showQuizDialog(item),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF3E8FF), borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF7C3AED).withOpacity(0.35)),
-          boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withOpacity(0.08),
-              blurRadius: 8, offset: const Offset(0, 3))],
+  Widget _buildQuizRow(Map<String, dynamic> item) {
+    final bool isLessonQuiz = item['quizScope'] == 'lesson';
+    final Color c = isLessonQuiz ? lessonQuizColor : unitTestColor;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: GestureDetector(
+        onTap: () => _showQuizDialog(item),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: c.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: c.withOpacity(0.35)),
+            boxShadow: [BoxShadow(color: c.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 3))],
+          ),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+              child: Icon(isLessonQuiz ? Icons.school_outlined : Icons.quiz, color: c, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(item['title'], style: TextStyle(fontSize: 14,
+                  fontWeight: FontWeight.bold, color: c.withOpacity(0.85))),
+              const SizedBox(height: 4),
+              Text(
+                '${item['questionCount']} questions · ${item['xpReward']} XP ${isLessonQuiz ? 'ungraded' : 'graded'}',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ])),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: Colors.amber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.star, size: 13, color: Colors.amber), const SizedBox(width: 3),
+                Text('${item['xpReward']} XP', style: const TextStyle(fontSize: 11,
+                    fontWeight: FontWeight.bold, color: Colors.amber)),
+              ]),
+            ),
+          ]),
         ),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: const Color(0xFF7C3AED).withOpacity(0.12),
-                borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.quiz, color: Color(0xFF7C3AED), size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(item['title'], style: const TextStyle(fontSize: 14,
-                fontWeight: FontWeight.bold, color: Color(0xFF4B1D96))),
-            const SizedBox(height: 4),
-            Text('${item['questionCount']} questions · ${item['xpReward']} XP ${(item['quizType'] == 'unit_test') ? 'graded' : 'practice'}',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-          ])),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: Colors.amber.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(20)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.star, size: 13, color: Colors.amber), const SizedBox(width: 3),
-              Text('${item['xpReward']} XP', style: const TextStyle(fontSize: 11,
-                  fontWeight: FontWeight.bold, color: Colors.amber)),
-            ]),
-          ),
-        ]),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _buildUnitMascot(int unitIndex) {
     final path = _unitMascots[(unitIndex - 1) % _unitMascots.length];

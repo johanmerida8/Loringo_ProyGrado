@@ -194,6 +194,7 @@ class _TeacherActivityEditorScreenState
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
+                          settings: const RouteSettings(name: kTeacherTaskEditorRoute),
                           builder: (_) => TeacherTaskEditorScreen(
                             groupId:       widget.groupId,
                             contentId:     widget.contentId,

@@ -6,11 +6,15 @@ import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/image_service.dart';
 
 class AdminViewImagesScreen extends StatefulWidget {
+  final String ownerId;
   final String categoryId;
   final String categoryName;
 
   const AdminViewImagesScreen(
-      {super.key, required this.categoryId, required this.categoryName});
+      {super.key,
+      required this.ownerId,
+      required this.categoryId,
+      required this.categoryName});
 
   @override
   State<AdminViewImagesScreen> createState() => _AdminViewImagesScreenState();
@@ -85,6 +89,7 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
         context,
         MaterialPageRoute(
             builder: (_) => AdminUploadImageScreen(
+                ownerId:      widget.ownerId,
                 categoryId:   widget.categoryId,
                 categoryName: widget.categoryName)));
 
@@ -105,7 +110,7 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
   Future<void> _loadImages() async {
     setState(() => isLoading = true);
     try {
-      final fetched = await _db.getImagesByCategory(widget.categoryId);
+      final fetched = await _db.getImagesByCategory(widget.ownerId, widget.categoryId);
       setState(() {
         images    = fetched;
         isLoading = false;
@@ -159,7 +164,7 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
       }
       return;
     }
-    await _db.deleteImage(widget.categoryId, imageId);
+    await _db.deleteImage(widget.ownerId, widget.categoryId, imageId);
     if (mounted) {
       _showSuccessSnackBar(context, 'Image deleted');
       _loadImages();

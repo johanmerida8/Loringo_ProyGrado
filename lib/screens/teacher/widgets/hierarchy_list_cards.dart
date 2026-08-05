@@ -16,6 +16,22 @@ class HierarchyListCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
+  /// Optional widget shown on the title row, between the title/subtitle
+  /// column and the "⋮" menu — e.g. the Quiz status chip on a Unit or
+  /// Lesson row.
+  ///
+  /// Kept generic (plain Widget, not e.g. a hard-coded "quiz" param) so
+  /// this stays a dumb primitive shared by every hierarchy screen
+  /// (content/unit/lesson/activity), the same reasoning as
+  /// TeacherScreenHeader.trailing. This is deliberately NOT part of the
+  /// "⋮" menu (see HierarchyPopupActions below, which stays Edit/Delete
+  /// only): Edit/Delete act on the row's own identity (rename/remove this
+  /// unit or lesson); a Quiz is a separate piece of educational content
+  /// tied to the row, not a property of the row itself, so it gets its
+  /// own always-visible control instead of being buried one tap deeper
+  /// inside a menu that conceptually means something else.
+  final Widget? trailingChip;
+
   const HierarchyListCard({
     super.key,
     required this.order,
@@ -26,6 +42,7 @@ class HierarchyListCard extends StatelessWidget {
     required this.onDelete,
     this.subtitle,
     this.badge,
+    this.trailingChip,
   });
 
   @override
@@ -88,6 +105,12 @@ class HierarchyListCard extends StatelessWidget {
                 ),
               ),
             ),
+            // Quiz chip (or any other card-specific control) — sits
+            // beside the "⋮", not inside it.
+            if (trailingChip != null) ...[
+              trailingChip!,
+              const SizedBox(width: AppSpacing.sm),
+            ],
             // Actions
             HierarchyPopupActions(onEdit: onEdit, onDelete: onDelete),
             const SizedBox(width: AppSpacing.sm),

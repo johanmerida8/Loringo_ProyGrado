@@ -16,12 +16,19 @@ class TeacherGroupDetailsScreen extends StatefulWidget {
   final String groupCode;
   final Color  groupColor;
 
+  /// Which tab to land on — the "Edit" action on a GroupCard (My Groups /
+  /// Archived Groups) jumps straight to Settings (index 3) instead of
+  /// making the teacher navigate there manually. Defaults to Content (0)
+  /// for the normal tap-the-card entry point.
+  final int initialTabIndex;
+
   const TeacherGroupDetailsScreen({
     super.key,
     required this.groupId,
     required this.groupName,
     required this.groupCode,
     required this.groupColor,
+    this.initialTabIndex = 0,
   });
 
   @override
@@ -31,7 +38,7 @@ class TeacherGroupDetailsScreen extends StatefulWidget {
 
 class _TeacherGroupDetailsScreenState
     extends State<TeacherGroupDetailsScreen> {
-  int _currentIndex = 0;
+  late int _currentIndex = widget.initialTabIndex;
 
   List<Map<String, dynamic>> _students    = [];
   Map<String, dynamic>?      _teacherData;
@@ -209,45 +216,6 @@ class _TeacherGroupDetailsScreenState
           SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger));
     } finally {
       if (mounted) setState(() => _savingSettings = false);
-    }
-  }
-
-  Future<void> _deleteGroup() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadii.md)),
-        title: const Text('Delete Group'),
-        content: Text('Delete "$_groupName"? This cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.danger,
-              foregroundColor: AppColors.onPrimary,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadii.sm)),
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-    try {
-      await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .doc(widget.groupId)
-          .delete();
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger));
     }
   }
 
@@ -713,28 +681,9 @@ class _TeacherGroupDetailsScreenState
             ),
           ),
           const SizedBox(height: AppSpacing.md),
-
-          // Danger zone
-          const Divider(),
-          const SizedBox(height: AppSpacing.sm),
-          SizedBox(
-            width: double.infinity, height: 50,
-            child: OutlinedButton.icon(
-              onPressed: _deleteGroup,
-              icon: Icon(Icons.delete_rounded, color: AppColors.danger),
-              label: Text('Delete Group',
-                  style: TextStyle(
-                    color: AppColors.danger,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  )),
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: AppColors.danger),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.md)),
-              ),
-            ),
-          ),
+          // Archive/Unarchive moved to the "⋮" menu on the group's card
+          // (My Groups / Archived Groups) — see GroupCard in
+          // widgets/group_card.dart. Editing settings is still done here.
           const SizedBox(height: AppSpacing.xl),
         ],
       ),

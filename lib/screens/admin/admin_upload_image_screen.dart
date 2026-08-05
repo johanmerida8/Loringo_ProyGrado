@@ -6,11 +6,15 @@ import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/image_service.dart';
 
 class AdminUploadImageScreen extends StatefulWidget {
+  final String ownerId;
   final String categoryId;
   final String categoryName;
 
   const AdminUploadImageScreen(
-      {super.key, required this.categoryId, required this.categoryName});
+      {super.key,
+      required this.ownerId,
+      required this.categoryId,
+      required this.categoryName});
 
   @override
   State<AdminUploadImageScreen> createState() =>
@@ -229,6 +233,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
           }
         } else {
           await _db.saveImageMetadata(
+            ownerId:            widget.ownerId,
             categoryId:         widget.categoryId,
             name:               imageName,
             imageUrl:           result['secure_url'] as String,

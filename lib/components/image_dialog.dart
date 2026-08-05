@@ -44,21 +44,28 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
     } catch (_) { setState(() => _isLoadingCategories = false); }
   }
 
-  Future<void> _loadImages(String categoryId) async {
+  Future<void> _loadImages(String ownerId, String categoryId) async {
     setState(() { _isLoadingImages = true; _images = []; });
     try {
-      // reads from mediaLibrary/{categoryId}/imageItems
-      final imgs = await _db.getImagesByCategory(categoryId);
+      // reads from mediaLibrary/{ownerId}/categories/{categoryId}/imageItems
+      final imgs = await _db.getImagesByCategory(ownerId, categoryId);
       setState(() { _images = imgs; _isLoadingImages = false; });
     } catch (_) { setState(() => _isLoadingImages = false); }
   }
 
-  void _openCategory(String categoryId, String categoryName) {
-    setState(() { _selectedCategoryId = categoryId; _selectedCategoryName = categoryName; });
-    _loadImages(categoryId);
+  void _openCategory(String ownerId, String categoryId, String categoryName) {
+    setState(() {
+      _selectedCategoryId = categoryId;
+      _selectedCategoryName = categoryName;
+    });
+    _loadImages(ownerId, categoryId);
   }
 
-  void _back() => setState(() { _selectedCategoryId = null; _selectedCategoryName = null; _images = []; });
+  void _back() => setState(() {
+        _selectedCategoryId = null;
+        _selectedCategoryName = null;
+        _images = [];
+      });
 
   Widget _buildCategoryList(List<Map<String, dynamic>> categories) {
     if (categories.isEmpty) return const Center(child: Text('No categories yet', style: TextStyle(color: Colors.grey)));
@@ -68,11 +75,12 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
         final cat = categories[index];
         // Field is now 'categoryName'
         final catName = cat['categoryName'] as String? ?? '';
+        final catOwnerId = cat['ownerId'] as String? ?? '';
         return ListTile(
           leading: Container(width: 36, height: 36, decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.folder_rounded, color: _green, size: 20)),
           title: Text(catName),
           trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
-          onTap: () => _openCategory(cat['id'] as String, catName),
+          onTap: () => _openCategory(catOwnerId, cat['id'] as String, catName),
         );
       },
     );

@@ -66,6 +66,8 @@ class FeedbackSoundService {
   static const String _successAsset = 'assets/sound/success-2.mp3';
   static const String _failAsset = 'assets/sound/fail-2.mp3';
 
+  static const double _resultVolume = 0.5;
+
   /// Loads AND warms up both assets. Safe to call multiple times — each
   /// step only redoes the part that hasn't succeeded yet.
   ///
@@ -120,7 +122,8 @@ class FeedbackSoundService {
       await Future.delayed(const Duration(milliseconds: 60));
       await player.stop();
       await player.seek(Duration.zero);
-      await player.setVolume(1);
+
+      await player.setVolume(_resultVolume);
       if (isSuccess) {
         _successWarmed = true;
       } else {
@@ -131,7 +134,7 @@ class FeedbackSoundService {
       // Restore volume defensively even if something above threw
       // mid-sequence, so a failed warm-up never leaves playback muted.
       try {
-        await player.setVolume(1);
+        await player.setVolume(_resultVolume);
       } catch (_) {}
     }
   }
@@ -161,6 +164,8 @@ class FeedbackSoundService {
         await player.stop();
       }
       await player.seek(Duration.zero);
+
+      await player.setVolume(_resultVolume);
     } catch (e) {
       debugPrint('FeedbackSoundService: seek failed for $asset: $e');
       if (isCorrect) {
@@ -183,10 +188,11 @@ class FeedbackSoundService {
   /// Plays an arbitrary one-off asset (not success/fail), for screens
   /// with a custom sound effect. Not preloaded/warmed, so this pays the
   /// full cost every call — use playResult for the hot-path sounds.
-  Future<void> playAsset(String assetPath) async {
+  Future<void> playAsset(String assetPath, {double volume = 0.5}) async {
     final player = AudioPlayer();
     try {
       await player.setAsset(assetPath);
+      await player.setVolume(volume);
       await player.play();
       unawaited(
         player.playerStateStream

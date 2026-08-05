@@ -356,10 +356,15 @@ class _CreatePersonalizedTaskScreenState
     }
   }
 
+  // 'complete_the_chat' removed from this list — CompleteChatTask.collectData()
+  // never reads questionController's value (it only ever persists `turns`),
+  // so showing the "Question" field for this type was dead UI: whatever a
+  // teacher typed there was silently discarded on save. image_select and
+  // image_select_reverse are unaffected — both genuinely consume 'question'
+  // as the prompt shown to the student, so they keep the field.
   bool _hasQuestionField() {
     return selectedType == 'image_select' ||
-        selectedType == 'image_select_reverse' ||
-        selectedType == 'complete_the_chat';
+        selectedType == 'image_select_reverse';
   }
 
   void _showSnackBar(String message, Color color) {
@@ -541,7 +546,7 @@ class _CreatePersonalizedTaskScreenState
                         controller: questionController,
                         color: _c,
                         hint: 'Enter the word or question...',
-                        maxLines: selectedType == 'complete_the_chat' ? 1 : 3,
+                        maxLines: 3,
                         validator: (v) =>
                             _hasQuestionField() && (v?.isEmpty ?? true)
                                 ? 'Required'

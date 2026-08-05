@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/models/league_tier.dart';
 import 'package:loringo_app/screens/student/widgets/league_stat_card.dart';
 import 'package:loringo_app/screens/student/widgets/winner_banner.dart';
 
@@ -22,6 +23,15 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
   String? groupId;
   String _leagueReward = '';
   bool _isLeagueWinner = false;
+
+  // The teacher's league campaign (leagueCampaigns/{teacherId}) — kept
+  // separate from the winner-only fields above, since the reward period
+  // and the full prize list are shown regardless of whether this student
+  // happens to be winning their tier right now.
+  Map<String, String> _campaignRewards = {};
+  DateTime? _campaignStartDate;
+  DateTime? _campaignEndDate;
+  bool _campaignApplies = false;
 
   @override
   void initState() {
@@ -61,57 +71,100 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
       if (!myDoc.exists) return;
 
       final myXp = ((myDoc.data()?['xp'] as num?) ?? 0).toInt();
-      final myTier = _getTierForXp(myXp);
+      final myTier = tierForXp(myXp);
       final tierKey = myTier['key'] as String;
       final tierMin = myTier['min'] as int;
       final tierMax = myTier['max'] as int;
       final isLocked = myTier['rewardLocked'] as bool;
 
-      if (isLocked) {
-        if (mounted) setState(() {
-          _leagueReward = '';
-          _isLeagueWinner = false;
-        });
+      // Rewards live per-teacher now (leagueCampaigns/{teacherId}), not
+      // per-group — find this student's teacher first via their own
+      // group doc.
+      final groupDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(gid)
+          .get();
+      final teacherId = groupDoc.data()?['teacherId'] as String?;
+      if (teacherId == null) return;
+
+      final campaignDoc = await FirebaseFirestore.instance
+          .collection('leagueCampaigns')
+          .doc(teacherId)
+          .get();
+      if (!campaignDoc.exists) {
+        if (mounted) setState(_clearCampaign);
         return;
       }
 
-      final groupSnap = await FirebaseFirestore.instance
-          .collection('students')
-          .where('groupId', isEqualTo: gid)
-          .get();
+      final campaign = campaignDoc.data() as Map<String, dynamic>;
+      final scope = (campaign['scope'] as String?) ?? 'all';
+      final campaignGroupId = campaign['groupId'] as String?;
 
-      final sameLeague = groupSnap.docs
-          .where((d) {
-            final xp = ((d.data()['xp'] as num?) ?? 0).toInt();
-            return xp >= tierMin && xp < tierMax;
-          })
-          .toList()
-        ..sort((a, b) {
-          final ax = ((a.data()['xp'] as num?) ?? 0).toInt();
-          final bx = ((b.data()['xp'] as num?) ?? 0).toInt();
-          return bx.compareTo(ax);
-        });
+      // A 'single'-scope campaign only ever applies to the one group it
+      // targets — a student in any other group of the same teacher isn't
+      // part of this competition at all, so nothing about it (dates,
+      // prize list, winner check) is shown to them.
+      if (scope == 'single' && campaignGroupId != gid) {
+        if (mounted) setState(_clearCampaign);
+        return;
+      }
 
-      final isWinner = sameLeague.isNotEmpty &&
-          sameLeague.first.id == widget.studentId;
+      final rewardsMap = (campaign['rewards'] as Map<String, dynamic>?) ?? {};
+      final startDate = (campaign['startDate'] as Timestamp?)?.toDate();
+      final endDate   = (campaign['endDate'] as Timestamp?)?.toDate();
 
-      String reward = '';
-      if (isWinner) {
-        final rewardDoc = await FirebaseFirestore.instance
-            .collection('teacherGroups')
-            .doc(gid)
-            .collection('leagueRewards')
-            .doc('config')
-            .get();
-        if (rewardDoc.exists) {
-          reward = (rewardDoc.data()?[tierKey] as String?) ?? '';
+      // Winner check only makes sense for an unlocked tier — Starter never
+      // has a prize to win regardless of the campaign, so there's nothing
+      // to compute here, but the period/prize list above still applies.
+      var isWinner = false;
+      var reward   = '';
+      if (!isLocked) {
+        // Which groups feed the ranking: just this one for 'single', every
+        // group belonging to the same teacher for 'all' — mirrors
+        // _RankingTab._loadStudents on the teacher side of
+        // teacher_league_screen.dart.
+        List<String> groupIds;
+        if (scope == 'single') {
+          groupIds = [gid];
+        } else {
+          final teacherGroupsSnap = await FirebaseFirestore.instance
+              .collection('teacherGroups')
+              .where('teacherId', isEqualTo: teacherId)
+              .get();
+          groupIds = teacherGroupsSnap.docs.map((d) => d.id).toList();
         }
+
+        final studentsSnap = await FirebaseFirestore.instance
+            .collection('students')
+            .where('groupId', whereIn: groupIds)
+            .get();
+
+        final sameLeague = studentsSnap.docs
+            .where((d) {
+              final xp = ((d.data()['xp'] as num?) ?? 0).toInt();
+              return xp >= tierMin && xp < tierMax;
+            })
+            .toList()
+          ..sort((a, b) {
+            final ax = ((a.data()['xp'] as num?) ?? 0).toInt();
+            final bx = ((b.data()['xp'] as num?) ?? 0).toInt();
+            return bx.compareTo(ax);
+          });
+
+        isWinner = sameLeague.isNotEmpty &&
+            sameLeague.first.id == widget.studentId;
+        reward = isWinner ? ((rewardsMap[tierKey] as String?) ?? '') : '';
       }
 
       if (mounted) {
         setState(() {
           _isLeagueWinner = isWinner && reward.isNotEmpty;
           _leagueReward = reward;
+          _campaignApplies = true;
+          _campaignStartDate = startDate;
+          _campaignEndDate = endDate;
+          _campaignRewards = rewardsMap.map(
+              (key, value) => MapEntry(key, (value as String?) ?? ''));
         });
       }
     } catch (e) {
@@ -119,14 +172,17 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
     }
   }
 
-  Map<String, dynamic> _getTierForXp(int xp) {
-    for (final t in _leagueTiers()) {
-      final min = t['min'] as int? ?? 0;
-      final max = t['max'] as int? ?? 0;
-      if (xp >= min && xp < max) return t;
-    }
-    return _leagueTiers().last;
+  void _clearCampaign() {
+    _leagueReward = '';
+    _isLeagueWinner = false;
+    _campaignApplies = false;
+    _campaignStartDate = null;
+    _campaignEndDate = null;
+    _campaignRewards = {};
   }
+
+  static String _formatDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   @override
   Widget build(BuildContext context) {
@@ -164,13 +220,13 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
                   for (final doc in progressSnap.data!.docs) {
                     final data = doc.data() as Map<String, dynamic>;
                     if (data['isCompleted'] == true) {
-                      if (data.containsKey('activityId')) activitiesCompleted++;
-                      else if (data.containsKey('quizId')) quizzesCompleted++;
+                      if (data['type'] == 'activity') activitiesCompleted++;
+                      else if (data['type'] == 'quiz') quizzesCompleted++;
                     }
                   }
                 }
 
-                final leagueData = _getLeagueLevel(totalXP);
+                final leagueData = tierForXp(totalXP);
                 final String leagueName = leagueData['name'] as String;
                 final int leagueMin = leagueData['min'] as int;
                 final int leagueMax = leagueData['max'] as int;
@@ -188,7 +244,13 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildLeagueHeader(leagueName, leagueColor, leagueImage),
-                      
+
+                      if (_campaignApplies &&
+                          (_campaignStartDate != null || _campaignEndDate != null)) ...[
+                        const SizedBox(height: 16),
+                        _buildRewardsPeriodBanner(),
+                      ],
+
                       if (_isLeagueWinner && _leagueReward.isNotEmpty) ...[
                         const SizedBox(height: 20),
                         WinnerBanner(
@@ -220,14 +282,11 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
       child: Column(
         children: [
           Container(
-            width: 100, height: 100,
+            width: 108, height: 108,
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [leagueColor, leagueColor.withOpacity(0.6)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              color: Colors.white,
               boxShadow: [
                 BoxShadow(
                   color: leagueColor.withOpacity(0.35),
@@ -235,11 +294,21 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
                 ),
               ],
             ),
-            child: leagueImage != null
-                ? Image.asset(leagueImage,
-                    width: 64, height: 64, fit: BoxFit.contain)
-                : Icon(Icons.shield_rounded,
-                    size: 52, color: Colors.white),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [leagueColor, leagueColor.withOpacity(0.6)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: leagueImage != null
+                  ? Image.asset(leagueImage,
+                      width: 64, height: 64, fit: BoxFit.contain)
+                  : Icon(Icons.shield_rounded,
+                      size: 52, color: Colors.white),
+            ),
           ),
           const SizedBox(height: 16),
           Text(leagueName,
@@ -250,6 +319,66 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
           Text(widget.studentName,
               style: const TextStyle(
                   fontSize: 15, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRewardsPeriodBanner() {
+    final now = DateTime.now();
+    final isFinished = _campaignEndDate != null && _campaignEndDate!.isBefore(now);
+    final color = isFinished ? Colors.grey.shade500 : const Color(0xFF4CAF50);
+
+    final String title;
+    final String subtitle;
+    if (isFinished) {
+      title = 'Rewards finished';
+      subtitle = _formatDate(_campaignEndDate!);
+    } else if (_campaignEndDate != null) {
+      title = 'Rewards active';
+      subtitle = 'Until ${_formatDate(_campaignEndDate!)}';
+    } else {
+      title = 'Rewards active';
+      subtitle = 'Since ${_formatDate(_campaignStartDate!)}';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10, offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(
+                color: color.withOpacity(0.12), shape: BoxShape.circle),
+            child: Icon(
+                isFinished ? Icons.event_busy_rounded : Icons.emoji_events_rounded,
+                size: 18, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+                Text(subtitle,
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -379,8 +508,11 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
                 fontSize: 17, fontWeight: FontWeight.bold,
                 color: Colors.black87)),
         const SizedBox(height: 12),
-        ..._leagueTiers().map((tier) {
+        ...kLeagueTiers.map((tier) {
           final bool isCurrent = tier['name'] == currentLeagueName;
+          final bool isLocked  = tier['rewardLocked'] as bool;
+          final String reward  =
+              isLocked ? '' : (_campaignRewards[tier['key']] ?? '');
           return Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.symmetric(
@@ -429,6 +561,34 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
                       Text(tier['range'] as String,
                           style: const TextStyle(
                               fontSize: 12, color: Colors.grey)),
+                      if (reward.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: (tier['color'] as Color).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.card_giftcard_rounded,
+                                  size: 12, color: tier['color'] as Color),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(reward,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: tier['color'] as Color)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -454,32 +614,4 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
     );
   }
 
-  Map<String, dynamic> _getLeagueLevel(int xp) {
-    for (final tier in _leagueTiers()) {
-      final min = tier['min'] as int? ?? 0;
-      final max = tier['max'] as int? ?? 0;
-      if (xp >= min && xp < max) return tier;
-    }
-    return _leagueTiers().last;
-  }
-
-  List<Map<String, dynamic>> _leagueTiers() => [
-    {'name': 'Starter',  'min': 0,    'max': 200,    'range': '0 – 199 XP',
-    'color': const Color(0xFF9E9E9E), 'image': null, 'key': 'starter', 'rewardLocked': true},
-    {'name': 'Bronze',   'min': 200,  'max': 500,    'range': '200 – 499 XP',
-    'color': const Color(0xFFCD7F32), 'image': 'assets/leagues/bronze-league.png', 
-    'key': 'bronze', 'rewardLocked': true},
-    {'name': 'Silver',   'min': 500,  'max': 1000,   'range': '500 – 999 XP',
-    'color': const Color(0xFF78909C), 'image': 'assets/leagues/silver-league.png',
-    'key': 'silver', 'rewardLocked': false},
-    {'name': 'Gold',     'min': 1000, 'max': 2000,   'range': '1000 – 1999 XP',
-    'color': const Color(0xFFFFB300), 'image': 'assets/leagues/gold-league.png',
-    'key': 'gold', 'rewardLocked': false},
-    {'name': 'Platinum', 'min': 2000, 'max': 4000,   'range': '2000 – 3999 XP',
-    'color': const Color(0xFF00BCD4), 'image': 'assets/leagues/platinum-league.png',
-    'key': 'platinum', 'rewardLocked': false},
-    {'name': 'Diamond',  'min': 4000, 'max': 999999, 'range': '4000+ XP',
-    'color': const Color(0xFF1565C0), 'image': 'assets/leagues/diamond-league.png',
-    'key': 'diamond', 'rewardLocked': false},
-  ];
 }

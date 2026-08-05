@@ -1,6 +1,7 @@
 // teacher_unit_editor_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/create_quiz_screen.dart';
 import 'package:loringo_app/screens/teacher/create_unit_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_lesson_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
@@ -93,6 +94,127 @@ class _TeacherUnitEditorScreenState
     );
   }
 
+  // ── Unit Quiz ────────────────────────────────────────────────────────────
+  // Lives here — not on the Lessons screen one level down — because a Unit
+  // Quiz belongs to a specific unit, and units are represented as rows
+  // *on this screen*. It is deliberately NOT inside that row's "⋮" menu
+  // together with Edit/Delete: Edit/Delete act on the unit's own identity
+  // (rename/remove this unit), while a Quiz is a separate piece of
+  // educational content that happens to belong to it — mixing the two
+  // made "Quiz" read as just another housekeeping action on the unit
+  // instead of a distinct thing a teacher builds. Instead it gets its own
+  // always-visible chip on the row (see _buildQuizChip / trailingChip
+  // below): a quick glance down the unit list already shows which units
+  // have a Quiz and which don't, no menu needs to be opened at all.
+
+  void _openUnitQuiz(String unitId, String unitTitle,
+      QueryDocumentSnapshot? existingQuiz) {
+    final data = existingQuiz?.data() as Map<String, dynamic>?;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CreateQuizScreen(
+          groupId:          widget.groupId,
+          contentId:        widget.contentId,
+          unitId:           unitId,
+          groupColor:       _c,
+          scope:            'unit',
+          destinationTitle: unitTitle,
+          quizId:           existingQuiz?.id,
+          existingData:     data,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteUnitQuiz(String quizId) async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadii.md)),
+            title: const Text('Delete Quiz'),
+            content: const Text(
+                'This quiz will be permanently deleted. This cannot be undone.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.danger,
+                  foregroundColor: AppColors.onPrimary,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.sm)),
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirm) return;
+    try {
+      await _db.deleteQuiz(quizId: quizId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Quiz deleted'),
+          backgroundColor: AppColors.primary,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: AppColors.danger,
+        ));
+      }
+    }
+  }
+
+  /// The Quiz status chip for one unit row — outline "+ Quiz" when none
+  /// exists yet for this unit, filled "Quiz ✓" when one does (one-per-unit,
+  /// enforced by Database._assertNoExistingQuiz — this chip only mirrors
+  /// that rule so the teacher never has to guess). Tap always opens
+  /// create-or-edit; long-press deletes, but only once a Quiz exists —
+  /// there's nothing to delete otherwise.
+  Widget _buildQuizChip({
+    required bool hasQuiz,
+    required VoidCallback onTap,
+    required VoidCallback? onLongPress,
+  }) {
+    return Tooltip(
+      message: hasQuiz ? 'Tap to edit • hold to delete' : 'Create Unit Quiz',
+      child: GestureDetector(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+          decoration: BoxDecoration(
+            color: hasQuiz ? _c : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadii.pill),
+            border: Border.all(color: _c, width: hasQuiz ? 0 : 1.4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(hasQuiz ? Icons.check_circle : Icons.add,
+                  size: 14, color: hasQuiz ? AppColors.onPrimary : _c),
+              const SizedBox(width: 3),
+              Text('Quiz',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: hasQuiz ? AppColors.onPrimary : _c)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -148,27 +270,47 @@ class _TeacherUnitEditorScreenState
                     final data  = doc.data() as Map<String, dynamic>;
                     final title = data['title'] ?? 'Untitled';
                     final order = data['order']  ?? 0;
+                    final unitId = doc.id;
 
-                    return HierarchyListCard(
-                      order:    order,
-                      title:    title,
-                      subtitle: 'Tap to view lessons',
-                      color:    _c,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => TeacherLessonEditorScreen(
-                            groupId:       widget.groupId,
-                            contentId:     widget.contentId,
-                            unitId:        doc.id,
-                            unitTitle:     title,
-                            groupColor:    _c,
-                            ancestorTrail: [widget.contentTitle],
+                    // Per-row quiz lookup — scoped to this one unit, so
+                    // each card's menu only ever reflects that unit's own
+                    // Quiz, never another row's.
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: _db.getQuizzesStream(widget.contentId, unitId),
+                      builder: (context, quizSnap) {
+                        final quizDoc = quizSnap.data?.docs.isNotEmpty == true
+                            ? quizSnap.data!.docs.first
+                            : null;
+
+                        return HierarchyListCard(
+                          order:    order,
+                          title:    title,
+                          subtitle: 'Tap to view lessons',
+                          color:    _c,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TeacherLessonEditorScreen(
+                                groupId:       widget.groupId,
+                                contentId:     widget.contentId,
+                                unitId:        unitId,
+                                unitTitle:     title,
+                                groupColor:    _c,
+                                ancestorTrail: [widget.contentTitle],
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                      onEdit:   () => _editUnit(doc.id, data),
-                      onDelete: () => _deleteUnit(doc.id, title),
+                          onEdit:   () => _editUnit(unitId, data),
+                          onDelete: () => _deleteUnit(unitId, title),
+                          trailingChip: _buildQuizChip(
+                            hasQuiz: quizDoc != null,
+                            onTap: () => _openUnitQuiz(unitId, title, quizDoc),
+                            onLongPress: quizDoc != null
+                                ? () => _deleteUnitQuiz(quizDoc.id)
+                                : null,
+                          ),
+                        );
+                      },
                     );
                   },
                 );

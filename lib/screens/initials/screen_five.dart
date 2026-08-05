@@ -15,6 +15,7 @@ import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 // import 'package:lottie/lottie.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 
 class ScreenFive extends StatefulWidget {
   final String contentId;
@@ -22,7 +23,12 @@ class ScreenFive extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect)? onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'image_select_reverse', 'question':
+  // <prompt shown above the image>, 'selected': <chosen phrase>,
+  // 'correct': <correct phrase>}.
+  final TaskCompleteCallback? onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -113,6 +119,13 @@ class _ScreenFiveState extends State<ScreenFive> with RetryableTask {
     );
     final bool isCorrect = option['isCorrect'] == true;
 
+    // Teacher review detail: found independently of the student's pick
+    // so it's accurate even on a wrong answer.
+    final correctOption = textOptions.firstWhere(
+      (o) => o['isCorrect'] == true,
+      orElse: () => {'text': ''},
+    );
+
     TaskFeedback.fire(isCorrect);
 
     if (!isCorrect &&
@@ -131,7 +144,12 @@ class _ScreenFiveState extends State<ScreenFive> with RetryableTask {
         // Both correct and (hard) wrong now advance — ActivityPlayScreen
         // queues wrong tasks for a practice round at the end instead of
         // this screen resetting its selection and retrying in place.
-        widget.onTaskComplete!(isCorrect);
+        widget.onTaskComplete?.call(isCorrect, {
+          'type': 'image_select_reverse',
+          'question': question,
+          'selected': selectedOption,
+          'correct': correctOption['text'] ?? '',
+        });
       },
     );
   }

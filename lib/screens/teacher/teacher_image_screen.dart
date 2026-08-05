@@ -6,6 +6,7 @@ import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/image_service.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_category_card.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_empty_state.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 
 // ── TeacherImageScreen ────────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ class TeacherImageScreen extends StatelessWidget {
   }
 
   Future<void> _deleteCategory(BuildContext context, Database db,
-      String categoryId, String categoryName) async {
+      String ownerId, String categoryId, String categoryName) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -196,13 +197,13 @@ class TeacherImageScreen extends StatelessWidget {
     if (confirm != true || !context.mounted) return;
     try {
       final imageService = ImageService();
-      final images = await db.getImagesByCategory(categoryId);
+      final images = await db.getImagesByCategory(ownerId, categoryId);
       for (final img in images) {
         final pid = img['cloudinaryPublicId'] as String? ?? '';
         if (pid.isNotEmpty) await imageService.deleteImage(pid);
-        await db.deleteImage(categoryId, img['id'] as String);
+        await db.deleteImage(ownerId, categoryId, img['id'] as String);
       }
-      await db.deleteCategory(categoryId);
+      await db.deleteCategory(ownerId, categoryId);
       if (context.mounted) {
         _showSuccessSnackBar(context, '"$categoryName" deleted');
       }
@@ -220,116 +221,117 @@ class TeacherImageScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        title: const Text('Image Categories', style: AppText.appBarTitle),
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-      ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: db.getTeacherCategoriesStream(uid),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(
-                child:
-                    CircularProgressIndicator(color: AppColors.primary));
-          }
-          final docs = snap.data?.docs ?? [];
+      body: Column(
+        children: [
+          const TeacherScreenHeader(title: 'Image Categories'),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: db.getTeacherCategoriesStream(uid),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                      child:
+                          CircularProgressIndicator(color: AppColors.primary));
+                }
+                final docs = snap.data?.docs ?? [];
 
-          if (docs.isEmpty) {
-            return TeacherEmptyState(
-                onTap: () => _showCreateDialog(context));
-          }
+                if (docs.isEmpty) {
+                  return TeacherEmptyState(
+                      onTap: () => _showCreateDialog(context));
+                }
 
-          return CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(
-                  margin: const EdgeInsets.fromLTRB(
-                      AppSpacing.md, AppSpacing.md,
-                      AppSpacing.md, AppSpacing.xs),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                      vertical: AppSpacing.md - 4),
-                  decoration: BoxDecoration(
-                    gradient: AppDecorations.primaryGradient,
-                    borderRadius:
-                        BorderRadius.circular(AppRadii.md),
-                    boxShadow: [
-                      BoxShadow(
-                          color: AppColors.primarySoft(0.3),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4))
-                    ],
-                  ),
-                  child: Row(children: [
-                    const Icon(Icons.folder_special_rounded,
-                        color: AppColors.onPrimary, size: 28),
-                    const SizedBox(width: AppSpacing.md),
-                    Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                              '${docs.length} '
-                              'categor${docs.length != 1 ? 'ies' : 'y'}',
-                              style: const TextStyle(
-                                  color: AppColors.onPrimary,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 17)),
-                          const Text('Tap a category to view images',
-                              style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12)),
-                        ]),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => _showCreateDialog(context),
+                return CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
                       child: Container(
+                        margin: const EdgeInsets.fromLTRB(
+                            AppSpacing.md, AppSpacing.md,
+                            AppSpacing.md, AppSpacing.xs),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md - 4,
-                            vertical: AppSpacing.xs + 3),
+                            horizontal: AppSpacing.md,
+                            vertical: AppSpacing.md - 4),
                         decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius:
-                                BorderRadius.circular(AppRadii.pill),
-                            border: Border.all(
-                                color: Colors.white.withOpacity(0.4))),
-                        child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.add,
-                                  color: AppColors.onPrimary, size: 16),
-                              SizedBox(width: AppSpacing.xs),
-                              Text('New',
-                                  style: TextStyle(
-                                      color: AppColors.onPrimary,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13)),
-                            ]),
+                          gradient: AppDecorations.primaryGradient,
+                          borderRadius:
+                              BorderRadius.circular(AppRadii.md),
+                          boxShadow: [
+                            BoxShadow(
+                                color: AppColors.primarySoft(0.3),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4))
+                          ],
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.folder_special_rounded,
+                              color: AppColors.onPrimary, size: 28),
+                          const SizedBox(width: AppSpacing.md),
+                          Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                    '${docs.length} '
+                                    'categor${docs.length != 1 ? 'ies' : 'y'}',
+                                    style: const TextStyle(
+                                        color: AppColors.onPrimary,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 17)),
+                                const Text('Tap a category to view images',
+                                    style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12)),
+                              ]),
+                          const Spacer(),
+                          GestureDetector(
+                            onTap: () => _showCreateDialog(context),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.md - 4,
+                                  vertical: AppSpacing.xs + 3),
+                              decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadii.pill),
+                                  border: Border.all(
+                                      color: Colors.white.withOpacity(0.4))),
+                              child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.add,
+                                        color: AppColors.onPrimary, size: 16),
+                                    SizedBox(width: AppSpacing.xs),
+                                    Text('New',
+                                        style: TextStyle(
+                                            color: AppColors.onPrimary,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13)),
+                                  ]),
+                            ),
+                          ),
+                        ]),
                       ),
                     ),
-                  ]),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md, AppSpacing.sm,
-                    AppSpacing.md, 100),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (ctx, i) => TeacherCategoryCard(
-                      doc:      docs[i],
-                      db:       db,
-                      onDelete: (id, name) =>
-                          _deleteCategory(context, db, id, name),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.md, AppSpacing.sm,
+                          AppSpacing.md, 100),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (ctx, i) => TeacherCategoryCard(
+                            doc:      docs[i],
+                            db:       db,
+                            onDelete: (id, name) =>
+                                _deleteCategory(context, db, uid, id, name),
+                          ),
+                          childCount: docs.length,
+                        ),
+                      ),
                     ),
-                    childCount: docs.length,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'categories_fab',

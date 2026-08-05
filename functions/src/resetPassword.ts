@@ -59,7 +59,11 @@ export const resetPassword = onCall(async (request) => {
 
     await auth.updateUser(userRecord.uid, { password: newPassword });
 
-    await db.collection("users").doc(normalizedEmail).set(
+    // Was `.doc(normalizedEmail)` — that created a second, junk document in
+    // `users` keyed by the raw email address, separate from the real user
+    // doc (keyed by uid, as every other read/write in the app assumes).
+    // Update the real doc instead.
+    await db.collection("users").doc(userRecord.uid).set(
       {
         password_updated_at: Timestamp.now(),
         updated_at: Timestamp.now(),

@@ -1,7 +1,6 @@
 // task_generator_dialog.dart
 import 'package:flutter/material.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-import 'package:loringo_app/screens/teacher/widgets/task_batch_review_screen.dart';
 
 enum ActivityTaskType {
   vocabulary,
@@ -53,16 +52,16 @@ const int _maxTasksPerBatch = 15;
 
 /// Dialog for choosing WHICH task types and HOW MANY the teacher wants to
 /// create in this batch. It does not generate any task content itself —
-/// it only decides the type of each slot. Confirming here pushes
-/// TaskBatchReviewScreen, where the teacher opens each slot and fills it
-/// in using the normal task editors (same ones used for a single manual
-/// task), then creates all of them in Firestore at once.
+/// it only decides the type of each slot, then hands the resulting
+/// ordered list of concrete type strings back via Navigator.pop(context,
+/// types). The caller (TeacherTaskEditorScreen) is what actually pushes
+/// TaskBatchReviewScreen and awaits ITS result — this dialog used to do
+/// that push itself, but a Dialog route's context becomes unusable well
+/// before a teacher finishes defining a whole batch of tasks, which broke
+/// bubbling a "tasks are ready" result back up to create_activity_screen.dart
+/// for a still-unsaved activity. Keeping this dialog's job to "pick types"
+/// only sidesteps that entirely.
 class TaskGeneratorDialog extends StatefulWidget {
-  final String groupId;
-  final String contentId;
-  final String unitId;
-  final String lessonId;
-  final String activityId;
   final Color groupColor;
 
   /// Upper bound on how many tasks can be picked in THIS dialog — driven
@@ -76,11 +75,6 @@ class TaskGeneratorDialog extends StatefulWidget {
 
   const TaskGeneratorDialog({
     super.key,
-    required this.groupId,
-    required this.contentId,
-    required this.unitId,
-    required this.lessonId,
-    required this.activityId,
     required this.groupColor,
     required this.maxTasks,
   });
@@ -132,26 +126,7 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
   }
 
   void _proceedToReview() {
-    final types = _buildTypeSelection();
-    Navigator.pop(context); // close this dialog first
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => TaskBatchReviewScreen(
-          groupId: widget.groupId,
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          lessonId: widget.lessonId,
-          activityId: widget.activityId,
-          groupColor: _c,
-          types: types,
-          // This dialog assigns concrete types at random from the
-          // selected pedagogical categories — the teacher never picked
-          // exact types, so the review screen should say "Generated".
-          isGenerated: true,
-        ),
-      ),
-    );
+    Navigator.pop(context, _buildTypeSelection());
   }
 
   @override

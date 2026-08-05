@@ -3,13 +3,16 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+// import 'package:flutter_tts/flutter_tts.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/tts/task_tts_service.dart';
+import 'package:loringo_app/services/tts/tts_voices.dart';
 
 /// SOUND MATCH
 /// The student hears a word spoken aloud and taps the matching image.
@@ -23,7 +26,16 @@ class ScreenEleven extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final Function(bool isCorrect)? onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses a shared typedef.
+  // answerDetail shape: {'type': 'sound_match', 'audioText': <word that
+  // was spoken>, 'selected': <text label of the image the student
+  // tapped>, 'correct': <text label of the correct image>}. Image
+  // options in this task don't carry a visible text label on screen
+  // (audio-only prompt), but the option map itself has a 'text' field
+  // used here purely for the teacher-facing review, never shown to the
+  // student.
+  final TaskCompleteCallback? onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -48,7 +60,7 @@ class ScreenEleven extends StatefulWidget {
 }
 
 class _ScreenElevenState extends State<ScreenEleven> with RetryableTask {
-  final FlutterTts flutterTts = FlutterTts();
+  // final FlutterTts flutterTts = FlutterTts();
 
   String audioText = '';
   List<Map<String, dynamic>> options = [];
@@ -99,8 +111,7 @@ class _ScreenElevenState extends State<ScreenEleven> with RetryableTask {
   }
 
   void _speak(String text) async {
-    await flutterTts.setLanguage('en-GB');
-    await flutterTts.speak(text);
+    await TaskTtsService.speak(text, voice: TtsVoiceDefaults.defaultEnglish);
   }
 
   void _handleSelection(int index) {
@@ -118,6 +129,23 @@ class _ScreenElevenState extends State<ScreenEleven> with RetryableTask {
     final option = options[selectedIndex];
     final bool isCorrect = option['isCorrect'] == true;
 
+    // Teacher review detail: correct option's label found independently
+    // of the student's pick, so it's right even on a wrong answer.
+    //
+    // BUGFIX: this task's editor (SoundMatchTask in
+    // screens/teacher/task_types/sound_match_task.dart) stores each
+    // option's display name under the key 'label', not 'text' —
+    // 'options': [{'label': ..., 'image': ..., 'isCorrect': ...}].
+    // Reading option['text'] here always returned null/empty regardless
+    // of the actual data, which is why the teacher review screen showed
+    // "(no answer)" for both selected and correct even on tasks that DO
+    // have a correct option configured. Reading 'label' instead matches
+    // what the editor actually writes.
+    final correctOption = options.firstWhere(
+      (o) => o['isCorrect'] == true,
+      orElse: () => {'label': ''},
+    );
+
     TaskFeedback.fire(isCorrect);
 
     if (!isCorrect &&
@@ -133,9 +161,20 @@ class _ScreenElevenState extends State<ScreenEleven> with RetryableTask {
       isCorrect: isCorrect,
       isPracticeRound: widget.isPracticeRound,
       onContinue: () {
-        widget.onTaskComplete?.call(isCorrect);
+        widget.onTaskComplete?.call(isCorrect, {
+          'type': 'sound_match',
+          'audioText': audioText,
+          'selected': option['label'] ?? 'Option ${selectedIndex + 1}',
+          'correct': correctOption['label'] ?? '',
+        });
       },
     );
+  }
+
+  @override
+  void dispose() {
+    TaskTtsService.stop();
+    super.dispose();
   }
 
   @override

@@ -3,21 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
+import 'package:loringo_app/screens/teacher/widgets/task_batch_review_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_generator_dialog.dart';
+import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_type_selector_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-// Hard ceiling on how many tasks a single Activity may ever contain in
-// total, across every batch (Generate or Add Task) plus any tasks added
-// individually via Edit over time. This is a DIFFERENT limit from the
-// per-batch cap inside TaskGeneratorDialog/TaskTypeSelectorScreen (also
-// 15, coincidentally the same number) — that one bounds a single
-// operation; this one bounds the activity's lifetime total. Kept here
-// since this screen is the only place that knows both the running total
-// (from the tasks stream) and is the sole entry point to both creation
-// flows.
-const int _maxTasksPerActivity = 15;
+// Route name stamped on every MaterialPageRoute that pushes this screen
+// (teacher_activity_editor_screen.dart, teacher_activity_screen.dart,
+// create_activity_screen.dart's post-create "Continue" hop). Lets
+// task_batch_review_screen.dart's Save button walk back here with
+// Navigator.popUntil for the normal (activity-already-exists) case.
+const String kTeacherTaskEditorRoute = 'teacherTaskEditor';
 
 class TeacherTaskEditorScreen extends StatefulWidget {
   final String groupId;
@@ -29,6 +27,20 @@ class TeacherTaskEditorScreen extends StatefulWidget {
   final Color  groupColor;
   final List<String> ancestorTrail;
 
+  /// True only when this screen was reached straight from
+  /// create_activity_screen.dart's "CONTINUE" button for a brand-new
+  /// activity that hasn't been written to Firestore yet. In that state
+  /// the task stream below is legitimately empty (nothing exists yet,
+  /// not even the activity doc), and "Generate"/"Add Task" must bubble
+  /// the eventually-defined batch of tasks all the way back up to
+  /// create_activity_screen.dart (see _openTaskTypeSelector/_openGenerator)
+  /// instead of writing anything themselves — that screen's "CREATE
+  /// ACTIVITY" button is what actually creates the activity + tasks
+  /// together. False for every other entry point (editing, or an
+  /// activity's normal task list), where the activity already exists and
+  /// this screen behaves exactly as it always has.
+  final bool isPendingActivity;
+
   const TeacherTaskEditorScreen({
     super.key,
     required this.groupId,
@@ -39,6 +51,7 @@ class TeacherTaskEditorScreen extends StatefulWidget {
     required this.activityTitle,
     required this.groupColor,
     required this.ancestorTrail,
+    this.isPendingActivity = false,
   });
 
   @override
@@ -156,11 +169,18 @@ class _TeacherTaskEditorScreenState
   // exact count each (e.g. +2 Image Select, +1 Arrange), then
   // reviews/defines each resulting slot via TaskBatchReviewScreen — the
   // same review flow "Generate" uses. [remaining] is how many more tasks
-  // this activity can still hold before hitting _maxTasksPerActivity;
+  // this activity can still hold before hitting kMaxTasksPerActivity;
   // the selector screen uses it as its own selection ceiling so the
   // teacher can never queue up more than actually fits.
-  void _openTaskTypeSelector(int remaining) {
-    Navigator.push(
+  Future<void> _openTaskTypeSelector(int remaining) async {
+    final existingTaskCount = kMaxTasksPerActivity - remaining;
+    // This screen's State outlives normal navigation (it's the same
+    // pushed route throughout), so widget.isPendingActivity alone can't
+    // tell us "still unsaved" once a task genuinely exists. Once a task
+    // exists, the activity is guaranteed to exist too, so only treat this
+    // as the still-pending flow when there's genuinely nothing there yet.
+    final isPending = widget.isPendingActivity && existingTaskCount == 0;
+    final result = await Navigator.push<List<BatchTaskResult>>(
       context,
       MaterialPageRoute(
         builder: (_) => TaskTypeSelectorScreen(
@@ -171,24 +191,62 @@ class _TeacherTaskEditorScreenState
           activityId: widget.activityId,
           groupColor: widget.groupColor,
           maxTasks: remaining,
+          existingTaskCount: existingTaskCount,
+          isPendingActivity: isPending,
         ),
       ),
     );
+    // Bubble the defined batch up to whatever pushed this screen — for
+    // the pending-activity flow, that's create_activity_screen.dart,
+    // whose "CREATE ACTIVITY" button does the actual write.
+    if (isPending && result != null && mounted) {
+      Navigator.pop(context, result);
+    }
   }
 
-  void _openGenerator(int remaining) {
-    showDialog(
+  Future<void> _openGenerator(int remaining) async {
+    final existingTaskCount = kMaxTasksPerActivity - remaining;
+    final isPending = widget.isPendingActivity && existingTaskCount == 0;
+
+    // TaskGeneratorDialog only picks types now — it hands them back via
+    // Navigator.pop(context, types) rather than pushing
+    // TaskBatchReviewScreen itself. That push (and the await on ITS
+    // result) has to happen here instead: a Dialog route's context isn't
+    // safely reusable by the time a teacher finishes defining a whole
+    // batch of tasks, which broke bubbling results for the
+    // pending-activity flow when the dialog tried to do it directly.
+    final types = await showDialog<List<String>>(
       context: context,
       builder: (_) => TaskGeneratorDialog(
-        groupId: widget.groupId,
-        contentId: widget.contentId,
-        unitId: widget.unitId,
-        lessonId: widget.lessonId,
-        activityId: widget.activityId,
         groupColor: widget.groupColor,
         maxTasks: remaining,
       ),
     );
+    if (types == null || types.isEmpty || !mounted) return;
+
+    final result = await Navigator.push<List<BatchTaskResult>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TaskBatchReviewScreen(
+          groupId: widget.groupId,
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
+          activityId: widget.activityId,
+          groupColor: widget.groupColor,
+          types: types,
+          // TaskGeneratorDialog assigns concrete types at random from
+          // the selected pedagogical categories — the teacher never
+          // picked exact types — so the review screen should say
+          // "Generated".
+          isGenerated: true,
+          isPendingActivity: isPending,
+        ),
+      ),
+    );
+    if (isPending && result != null && mounted) {
+      Navigator.pop(context, result);
+    }
   }
 
   String _typeLabel(String type) {
@@ -243,6 +301,50 @@ class _TeacherTaskEditorScreenState
             subtitle: 'Tasks',
             color: c,
           ),
+          // Nothing has been saved to Firestore yet — see the field doc
+          // on isPendingActivity. Makes the deferred-write state visible
+          // instead of leaving the teacher to assume the activity already
+          // exists just because they're looking at its task screen.
+          //
+          // Deliberately re-derived from the live tasks stream (docs
+          // empty) rather than just checking widget.isPendingActivity:
+          // this State object is never disposed across ordinary
+          // navigation (it's the same pushed route throughout), so the
+          // flag alone can't reflect "a task now exists" — reading the
+          // stream instead makes the banner self-correct the moment one
+          // shows up, no manual state to keep in sync.
+          if (widget.isPendingActivity)
+            StreamBuilder(
+              stream: db.getPersonalizedTasksStream(
+                widget.groupId, widget.contentId, widget.unitId,
+                widget.lessonId, widget.activityId,
+              ),
+              builder: (context, snapshot) {
+                final hasAnyTask = (snapshot.data?.docs ?? []).isNotEmpty;
+                if (hasAnyTask) return const SizedBox.shrink();
+                return Container(
+                  width: double.infinity,
+                  color: AppColors.warning.withOpacity(0.12),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: AppColors.warning, size: 16),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          'Not saved yet — define your tasks here, then tap CREATE ACTIVITY back on the activity form to save everything.',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.orange.shade800),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           Expanded(
             child: StreamBuilder(
               stream: db.getPersonalizedTasksStream(
@@ -262,7 +364,7 @@ class _TeacherTaskEditorScreenState
                     subtitle:    'Tap + to create your first task',
                     color:       c,
                     actionLabel: 'Create First Task',
-                    onAction: () => _openTaskTypeSelector(_maxTasksPerActivity),
+                    onAction: () => _openTaskTypeSelector(kMaxTasksPerActivity),
                   );
                 }
 
@@ -362,9 +464,18 @@ class _TeacherTaskEditorScreenState
           widget.lessonId, widget.activityId,
         ),
         builder: (context, snapshot) {
-          final currentCount = snapshot.data?.docs.length ?? 0;
-          final remaining = _maxTasksPerActivity - currentCount;
+          final docs = snapshot.data?.docs ?? [];
+          final currentCount = docs.length;
+          final remaining = kMaxTasksPerActivity - currentCount;
           final isFull = remaining <= 0;
+          // NEW: whether the activity's existing tasks already include a
+          // Reading Comprehension task -- if so, the activity is fully
+          // closed (Reading is always solo), and "Add Task"/"Generate"
+          // should reflect that instead of offering normal slots.
+          final hasExistingReading = docs.any((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return data['type'] == 'reading';
+          });
 
           return Wrap(
             spacing: 12.0,
@@ -386,42 +497,61 @@ class _TeacherTaskEditorScreenState
                     ],
                   ),
                   child: Text(
-                    'Limit reached: $_maxTasksPerActivity tasks max per activity',
+                    'Limit reached: $kMaxTasksPerActivity tasks max per activity',
                     style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Colors.grey[700]),
                   ),
+                )
+              // NEW: activity is closed by an existing Reading task -- show
+              // a clear explanation instead of the normal FABs, since
+              // neither Generate nor Add Task can offer anything here.
+              else if (hasExistingReading)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(AppRadii.md),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3)),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 25.0),
+                    child: Text(
+                      'This activity contains a Reading Comprehension task and can\'t hold any other tasks',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[700]),
+                    ),
+                  ),
+                )
+              else ...[
+                FloatingActionButton.extended(
+                  heroTag: null,
+                  onPressed: () => _openGenerator(remaining),
+                  backgroundColor: AppColors.warning,
+                  elevation: 3,
+                  icon: const Icon(Icons.auto_awesome, color: AppColors.onPrimary),
+                  label: const Text('Generate',
+                      style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
                 ),
-
-              // ── Auto-Generate Button ──────────────────────────────────
-              FloatingActionButton.extended(
-                heroTag: null, // Disable hero animation to avoid conflicts
-                onPressed: isFull ? null : () => _openGenerator(remaining),
-                backgroundColor:
-                    isFull ? Colors.grey.shade300 : AppColors.warning,
-                elevation: isFull ? 0 : 3,
-                icon: Icon(Icons.auto_awesome,
-                    color: isFull ? Colors.grey.shade500 : AppColors.onPrimary),
-                label: Text('Generate',
-                    style: TextStyle(
-                        color: isFull ? Colors.grey.shade500 : AppColors.onPrimary,
-                        fontWeight: FontWeight.bold)),
-              ),
-
-              // ── Add Task Button ───────────────────────────────────────
-              FloatingActionButton.extended(
-                heroTag: null, // Disable hero animation
-                onPressed: isFull ? null : () => _openTaskTypeSelector(remaining),
-                backgroundColor: isFull ? Colors.grey.shade300 : c,
-                elevation: isFull ? 0 : 3,
-                icon: Icon(Icons.add,
-                    color: isFull ? Colors.grey.shade500 : AppColors.onPrimary),
-                label: Text('Add Task',
-                    style: TextStyle(
-                        color: isFull ? Colors.grey.shade500 : AppColors.onPrimary,
-                        fontWeight: FontWeight.bold)),
-              ),
+                FloatingActionButton.extended(
+                  heroTag: null,
+                  onPressed: () => _openTaskTypeSelector(remaining),
+                  backgroundColor: c,
+                  elevation: 3,
+                  icon: const Icon(Icons.add, color: AppColors.onPrimary),
+                  label: const Text('Add Task',
+                      style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
+                ),
+              ],
             ],
           );
         },

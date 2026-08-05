@@ -1,10 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/services/database/database.dart';
-import 'package:loringo_app/services/notifications/notification_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
-class StudentQuizReviewScreen extends StatefulWidget {
+class UnitQuizReviewScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
   final String quizId;
@@ -12,7 +12,7 @@ class StudentQuizReviewScreen extends StatefulWidget {
   final String unitId;
   final String contentId;
 
-  const StudentQuizReviewScreen({
+  const UnitQuizReviewScreen({
     super.key,
     required this.studentId,
     required this.studentName,
@@ -23,10 +23,10 @@ class StudentQuizReviewScreen extends StatefulWidget {
   });
 
   @override
-  State<StudentQuizReviewScreen> createState() => _StudentQuizReviewScreenState();
+  State<UnitQuizReviewScreen> createState() => _UnitQuizReviewScreenState();
 }
 
-class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
+class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
   List<Map<String, dynamic>> _questions = [];
   List<Map<String, dynamic>> _answers = [];
   bool _isLoading = true;
@@ -90,7 +90,7 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
 
       if (progressDoc.exists) {
         final data = progressDoc.data() as Map<String, dynamic>;
-        _score = data['score'] as int? ?? 0;
+        _score = data['correctAnswers'] as int? ?? 0;
         _answers = List<Map<String, dynamic>>.from(data['answers'] ?? []);
       }
 
@@ -138,6 +138,13 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
     try {
       final db = Database();
 
+      // Report generation is ordinary app business logic (score/feedback
+      // tallying, activity totals) — stays client-side. Only the actual
+      // notification send moves server-side, via the sendReportNotification
+      // Cloud Function (functions/src/reportNotifications.ts), which
+      // supersedes the old NotificationService.sendReportNotification:
+      // that function did the parentId lookup + notifications doc write +
+      // OneSignal push all from the client; now it's one server call.
       await db.saveReportOnly(
         studentId: widget.studentId,
         unitId: widget.unitId,
@@ -148,11 +155,20 @@ class _StudentQuizReviewScreenState extends State<StudentQuizReviewScreen> {
         feedback: _feedback,
       );
 
-      await NotificationService.sendReportNotification(
-        studentId: widget.studentId,
-        studentName: widget.studentName,
-        unitTitle: widget.quizTitle,
-      );
+      try {
+        final callable = FirebaseFunctions.instance.httpsCallable('sendReportNotification');
+        await callable.call({
+          'studentId': widget.studentId,
+          'studentName': widget.studentName,
+          'unitTitle': widget.quizTitle,
+        });
+      } on FirebaseFunctionsException catch (e) {
+        // Report itself is already saved above — a notification failure
+        // shouldn't block the teacher from seeing "Report sent" and
+        // moving on, same as the old client-side version's swallowed
+        // try/catch around NotificationService.
+        debugPrint('sendReportNotification failed: ${e.code} - ${e.message}');
+      }
 
       if (mounted) {
         setState(() {

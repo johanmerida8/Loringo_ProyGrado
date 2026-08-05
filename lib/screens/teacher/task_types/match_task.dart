@@ -3,6 +3,7 @@ import 'package:loringo_app/components/image_dialog.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 // import 'task_type_interface.dart';
+import 'package:translator/translator.dart';
 
 class MatchPair {
   TextEditingController englishCtrl;
@@ -50,6 +51,12 @@ class MatchTask extends StatefulWidget {
 class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   late List<MatchPair> pairs;
   late String matchMode;
+
+  final GoogleTranslator _translator = GoogleTranslator();
+
+  int? _translatingIndex;
+
+  static const int _maxPairs = 8;
 
   @override
   void initState() {
@@ -120,7 +127,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
   }
 
   void _addPair() {
-    if (pairs.length < 5) {
+    if (pairs.length < _maxPairs) {
       setState(() {
         pairs.add(MatchPair());
         widget.onChanged();
@@ -135,6 +142,68 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
         pairs.removeAt(index);
         widget.onChanged();
       });
+    }
+  }
+
+  Future<void> _translatePair(int index) async {
+    final pair = pairs[index];
+    final sourceText = pair.englishCtrl.text.trim();
+    if (sourceText.isEmpty) return;
+
+    setState(() => _translatingIndex = index);
+
+    try {
+      final translation = await _translator.translate(
+        sourceText,
+        from: 'en',
+        to: 'es',
+      );
+      if (!mounted) return;
+      setState(() {
+        pair.translatedCtrl.text = translation.text;
+        widget.onChanged();
+      });
+    } catch (e) {
+      debugPrint('MatchTask translation error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Translation failed. You can type it manually.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _translatingIndex = null);
+    }
+  }
+
+  Future<void> _translateAllPairs() async {
+    final indicesToTranslate = <int>[];
+    for (int i = 0; i < pairs.length; i++) {
+      if (pairs[i].englishCtrl.text.trim().isNotEmpty &&
+          pairs[i].translatedCtrl.text.trim().isEmpty) {
+        indicesToTranslate.add(i);
+      }
+    }
+    if (indicesToTranslate.isEmpty) return;
+
+    setState(() => _translatingIndex = -1); // -1 signals "all rows" for the loading UI
+
+    try {
+      for (final i in indicesToTranslate) {
+        final sourceText = pairs[i].englishCtrl.text.trim();
+        final translation = await _translator.translate(sourceText, from: 'en', to: 'es');
+        if (!mounted) return;
+        pairs[i].translatedCtrl.text = translation.text;
+      }
+      setState(() => widget.onChanged());
+    } catch (e) {
+      debugPrint('MatchTask translateAll error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Some translations failed. You can fill them in manually.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _translatingIndex = null);
     }
   }
 
@@ -157,7 +226,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
   Widget _buildEditor() {
     final c = widget.groupColor;
     final isImageMode = matchMode == 'image';
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -174,7 +243,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
-                  'Student taps one from each column to form a match. Min 3, max 5 pairs.',
+                  'Student taps one from each column to form a match. Min 3, max $_maxPairs pairs.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
               ),
@@ -184,14 +253,35 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
         const SizedBox(height: AppSpacing.md),
         _buildModeToggle(c),
         const SizedBox(height: AppSpacing.md),
+        // NEW: single "Translate All" action, replaces the per-row ✨ icon.
+        if (!isImageMode)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _translatingIndex != null ? null : _translateAllPairs,
+                icon: _translatingIndex != null
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Icon(Icons.auto_awesome, color: c, size: 18),
+                label: Text(
+                  _translatingIndex != null ? 'Translating...' : 'Translate All (English → Spanish)',
+                  style: TextStyle(color: c, fontWeight: FontWeight.w600),
+                ),
+                style: OutlinedButton.styleFrom(side: BorderSide(color: c.withOpacity(0.5))),
+              ),
+            ),
+          ),
         _buildColumnHeaders(isImageMode, c),
         const SizedBox(height: AppSpacing.sm),
         ...List.generate(pairs.length, (index) => _buildPairRow(index, isImageMode, c)),
-        if (pairs.length < 5)
+        if (pairs.length < _maxPairs)
           TextButton.icon(
             onPressed: _addPair,
             icon: Icon(Icons.add, color: c, size: 18),
-            label: Text('Add pair (${pairs.length}/5)', style: TextStyle(color: c, fontWeight: FontWeight.w600)),
+            label: Text('Add pair (${pairs.length}/$_maxPairs)', style: TextStyle(color: c, fontWeight: FontWeight.w600)),
           ),
       ],
     );
@@ -251,18 +341,12 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
         Expanded(
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 7),
-            decoration: BoxDecoration(
-              color: c.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(AppRadii.sm),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.flag, size: 13, color: c),
-                const SizedBox(width: 4),
-                Text('English', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c)),
-              ],
-            ),
+            decoration: BoxDecoration(color: c.withOpacity(0.08), borderRadius: BorderRadius.circular(AppRadii.sm)),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.flag, size: 13, color: c),
+              const SizedBox(width: 4),
+              Text('English', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c)),
+            ]),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
@@ -273,14 +357,14 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
               color: (isImageMode ? Colors.purple : Colors.orange).withOpacity(0.08),
               borderRadius: BorderRadius.circular(AppRadii.sm),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(isImageMode ? Icons.image_outlined : Icons.flag, size: 13, color: isImageMode ? Colors.purple : Colors.orange),
-                const SizedBox(width: 4),
-                Text(isImageMode ? 'Image' : 'Translation', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isImageMode ? Colors.purple : Colors.orange)),
-              ],
-            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(isImageMode ? Icons.image_outlined : Icons.flag, size: 13, color: isImageMode ? Colors.purple : Colors.orange),
+              const SizedBox(width: 4),
+              // CHANGED: "Translation" -> "Spanish", matches what this
+              // column actually always is (MatchTask has no direction
+              // toggle -- it's always English -> Spanish).
+              Text(isImageMode ? 'Image' : 'Spanish', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isImageMode ? Colors.purple : Colors.orange)),
+            ]),
           ),
         ),
         const SizedBox(width: 34),
@@ -290,6 +374,8 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
 
   Widget _buildPairRow(int index, bool isImageMode, Color c) {
     final pair = pairs[index];
+    final isTranslatingThisRow = _translatingIndex == index;
+
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Row(
@@ -309,9 +395,28 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
               validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
             ),
           ),
+          // CHANGED: was a static swap_horiz icon. In text mode, this is
+          // now a tappable auto-translate button (same GoogleTranslator
+          // SentenceBuilderTask uses) -- tapping it fills the Translation
+          // field from the current English text. Image mode keeps the
+          // plain swap_horiz glyph since there's nothing to translate
+          // into an image.
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs, vertical: AppSpacing.sm),
-            child: Icon(Icons.swap_horiz, color: Colors.grey[400], size: 20),
+            child: isImageMode
+                ? Icon(Icons.swap_horiz, color: Colors.grey[400], size: 20)
+                : GestureDetector(
+                    onTap: isTranslatingThisRow ? null : () => _translatePair(index),
+                    child: isTranslatingThisRow
+                        ? const SizedBox(
+                            width: 20, height: 20,
+                            child: Padding(
+                              padding: EdgeInsets.all(2),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : Icon(Icons.auto_awesome, color: c, size: 20),
+                  ),
           ),
           Expanded(
             child: isImageMode

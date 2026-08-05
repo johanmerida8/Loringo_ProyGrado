@@ -2,6 +2,7 @@
 // import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
 import 'package:loringo_app/screens/parent/parent_join_group_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -122,6 +123,16 @@ class ParentChildrenScreen extends StatelessWidget {
               ParentJoinGroupScreen(child: child)),
     );
     if (result == true) onRefresh();
+  }
+
+  void _navigateToActivityStatus(
+      BuildContext context, Map<String, dynamic> child) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (context) =>
+              ParentChildActivityStatusScreen(child: child)),
+    );
   }
 
   @override
@@ -279,6 +290,18 @@ class ParentChildrenScreen extends StatelessWidget {
                       isPrimary: true,
                       onPressed: () =>
                           _navigateToJoinGroup(context, child),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                if (hasGroup) ...[
+                  Expanded(
+                    child: _actionButton(
+                      icon: Icons.checklist_rounded,
+                      label: 'Activities',
+                      isPrimary: true,
+                      onPressed: () =>
+                          _navigateToActivityStatus(context, child),
                     ),
                   ),
                   const SizedBox(width: 10),

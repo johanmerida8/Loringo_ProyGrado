@@ -22,28 +22,40 @@ class RepeatAfterMeTask extends StatefulWidget {
 
 class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEditorMixin implements TaskTypeEditor {
   late TextEditingController phraseController;
-  late TextEditingController hintController;
-  
+
+  // CHANGE: replaces the old free-text hint field. The reveal/hidden
+  // mechanic on screen_nine.dart made a free-text hint risky — a
+  // teacher writing something like "it means stand up" defeats the
+  // purpose of hiding the phrase, and there's no way to validate that
+  // server-side. A boolean toggle is the safer surface: it's the
+  // teacher explicitly deciding the exercise's difficulty mode, not
+  // wording that can accidentally leak the answer.
+  //
+  // Default false (phrase hidden) matches the pedagogical intent: the
+  // student listens and recalls, rather than reading along. Teachers
+  // creating easier tasks (e.g. very young students, first lessons)
+  // can flip this on per-task.
+  bool showPhrase = false;
+
   @override
   void initState() {
     super.initState();
     phraseController = TextEditingController();
-    hintController = TextEditingController();
-    
+
     if (widget.existingData != null) {
       loadData(widget.existingData!);
     }
-    
+
     widget.controller.registerEditor(this);
   }
 
   // TaskTypeEditor implementation
   @override
   String get typeId => 'repeat_after_me';
-  
+
   @override
   String get displayName => 'Repeat After Me';
-  
+
   @override
   Widget buildEditor(BuildContext context) {
     return build(context);
@@ -57,14 +69,19 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
   @override
   void loadData(Map<String, dynamic> data) {
     phraseController.text = data['phrase'] ?? '';
-    hintController.text = data['hint'] ?? '';
+    // Backward compatible with existing tasks created before this
+    // toggle existed: absent field defaults to false (hidden), which
+    // is the new default behavior going forward anyway, so old tasks
+    // adopt the new reveal-based UX automatically rather than needing
+    // a data migration.
+    showPhrase = data['showPhrase'] as bool? ?? false;
   }
 
   @override
   Map<String, dynamic> collectData() {
     return {
       'phrase': phraseController.text.trim(),
-      'hint': hintController.text.trim(),
+      'showPhrase': showPhrase,
     };
   }
 
@@ -79,30 +96,25 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
   @override
   void dispose() {
     phraseController.dispose();
-    hintController.dispose();
     super.dispose();
   }
 
   Widget _buildEditor() {
     final c = widget.groupColor;
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── Info Banner ────────────────────────────────────────────────
         _buildInfoBanner(c),
         const SizedBox(height: AppSpacing.md),
-        
+
         // ── Phrase Field ──────────────────────────────────────────────
         _buildPhraseField(c),
         const SizedBox(height: AppSpacing.md),
-        
-        // ── Hint Field ────────────────────────────────────────────────
-        _buildHintField(c),
-        
-        // ── Preview Section ───────────────────────────────────────────
-        // const SizedBox(height: AppSpacing.md),
-        // _buildPreviewSection(c),
+
+        // ── Show Phrase Toggle ───────────────────────────────────────
+        _buildShowPhraseToggle(c),
       ],
     );
   }
@@ -134,13 +146,9 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Text(
-              'English Phrase',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-            ),
-          ],
+        const Text(
+          'English Phrase',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: AppSpacing.xs),
         TextFormField(
@@ -157,39 +165,51 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
         ),
         const SizedBox(height: 8),
         Text(
-          '💡 This phrase will be spoken aloud by the voice assistant. Students must repeat it correctly.',
+          'This phrase will be spoken aloud by the voice assistant. Students must repeat it correctly.',
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],
     );
   }
 
-  Widget _buildHintField(Color c) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Hint (Optional)',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        TextFormField(
-          controller: hintController,
-          decoration: InputDecoration(
-            hintText: 'e.g. "Focus on the pronunciation of \'th\' in \'three\'"',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
-            filled: true,
-            fillColor: Colors.white,
+  Widget _buildShowPhraseToggle(Color c) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Show phrase to students',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  showPhrase
+                      ? 'Students see the written phrase while listening.'
+                      : 'Students only hear the phrase. They can reveal the text if needed.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
           ),
-          maxLines: 2,
-          onChanged: (_) => widget.onChanged(),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '💡 Optional instruction shown to students before the task. Use it to guide their pronunciation.',
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-        ),
-      ],
+          Switch(
+            value: showPhrase,
+            activeColor: c,
+            onChanged: (v) {
+              setState(() => showPhrase = v);
+              widget.onChanged();
+            },
+          ),
+        ],
+      ),
     );
   }
 }

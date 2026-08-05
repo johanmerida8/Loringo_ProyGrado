@@ -13,7 +13,15 @@ class ActivityCompleteScreen extends StatefulWidget {
   final String screenTitle;
   
   // Quiz-specific (only for graded quizzes)
-  final VoidCallback? onRetake;
+  //
+  // BUGFIX: this used to be a plain VoidCallback. QuizPlayScreen's
+  // _onRetakeQuiz needs a BuildContext to navigate with, and it used to
+  // read its OWN (already-unmounted) context — see the doc comment on
+  // _onRetakeQuiz in quiz_play_screen.dart for the full crash trace.
+  // Widening this to take a BuildContext lets _onRetake (below) hand it
+  // THIS screen's context instead, which is guaranteed to still be
+  // mounted at the moment the button is tapped.
+  final void Function(BuildContext context)? onRetake;
   final int attemptsRemaining;
   final int maxAttempts;
   final bool isGraded;
@@ -87,7 +95,19 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
 
   Future<void> _playCelebration() async {
     try {
-      await _player.setAsset('assets/sound/celebration.mp3');
+      // showCelebration mirrors the same condition used in build() for
+      // picking the gradient/animation/colors (!widget.isGraded ||
+      // _isPassed) — an ungraded activity always gets the celebratory
+      // sound, a graded quiz only gets it if the student actually
+      // passed. A failed graded attempt plays unit-failed.mp3 instead,
+      // so the audio cue matches the sad star / orange palette already
+      // shown for that case rather than contradicting it with a
+      // celebration sound.
+      final showCelebration = !widget.isGraded || _isPassed;
+      final asset = showCelebration
+          ? 'assets/sound/celebration.mp3'
+          : 'assets/sound/unit-failed.mp3';
+      await _player.setAsset(asset);
       _player.play();
     } catch (_) {}
   }
@@ -99,10 +119,39 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
     super.dispose();
   }
 
+  // BUGFIX: this used to call Navigator.pop(context) BEFORE
+  // widget.onRetake!(). At the point this screen exists, the nav stack
+  // is [..., student_activities_screen, ActivityCompleteScreen] —
+  // ActivityCompleteScreen is what QuizPlayScreen.pushReplacement'd
+  // itself into on submit, so ActivityCompleteScreen is the top of the
+  // stack, not something layered on top of a still-present
+  // QuizPlayScreen. Popping here therefore revealed
+  // student_activities_screen underneath — visibly, since Navigator
+  // transitions aren't instant — before onRetake's own
+  // Navigator.pushReplacement (in QuizPlayScreen._onRetakeQuiz) pushed
+  // the fresh quiz attempt on top of THAT. The net result was correct
+  // once both animations settled, but the student saw a flash of the
+  // home/activities screen in between, which read as "it kicked me
+  // back to the menu" even though a moment later it recovered into a
+  // new attempt.
+  //
+  // Fix (part 1): don't pop at all. onRetake (QuizPlayScreen's
+  // _onRetakeQuiz) uses pushReplacement internally, which already
+  // correctly swaps out ActivityCompleteScreen (the current top of the
+  // stack) for a fresh QuizPlayScreen — no manual pop needed.
+  //
+  // Fix (part 2): pass THIS screen's own `context` to onRetake rather
+  // than calling it with no arguments. QuizPlayScreen._onRetakeQuiz
+  // needs a BuildContext to call Navigator.of(...).pushReplacement on,
+  // and the QuizPlayScreen instance that owns this callback is already
+  // dead by the time the student taps "Try Again" — its own context
+  // throws "widget has been unmounted" the instant it's read (see that
+  // method's doc comment for the full trace). This screen
+  // (ActivityCompleteScreen) is the one actually mounted and on-screen
+  // right now, so its context is always safe to navigate from.
   void _onRetake() {
-    Navigator.pop(context);
     if (widget.onRetake != null) {
-      widget.onRetake!();
+      widget.onRetake!(context);
     }
   }
 

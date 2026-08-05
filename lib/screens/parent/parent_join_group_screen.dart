@@ -1,8 +1,27 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/theme/app_theme.dart';
 
 /// Parent Join Group Screen
 /// Parent enters group code to join their child to the group
+///
+/// COLOR MIGRATION: this screen previously used a standalone warm
+/// palette (peach/cream — 0xFFFAEDCA, 0xFFFFCFB3, 0xFFB7E0FF,
+/// 0xFFFE5D26, 0xFFA2CA71) that predated app_theme.dart and had no
+/// tokens of its own. Every one of those is replaced below with the
+/// nearest semantic AppColors token:
+///   - scaffold background (0xFFFAEDCA) -> AppColors.scaffoldBackground
+///   - primary action (0xFFFFCFB3)         -> AppColors.primary
+///   - info card (0xFFB7E0FF)              -> AppColors.info
+///   - heading/accent text (0xFFFE5D26)    -> AppColors.primaryDark
+///   - success snackbar/banner (0xFFA2CA71)-> AppColors.success
+///
+/// HEADER CHANGE: the solid-color Scaffold.appBar is removed in favor
+/// of the same inline header pattern used by ParentProfileScreen and
+/// ParentRegisterChildScreen — a circular back button + large title
+/// sitting directly on the scaffold background, no AppBar strip. This
+/// makes all three pushed parent screens visually consistent instead
+/// of this one alone keeping a solid green bar.
 class ParentJoinGroupScreen extends StatefulWidget {
   final Map<String, dynamic> child;
 
@@ -48,6 +67,9 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
       }
 
       final groupDoc = groupSnapshot.docs.first;
+      if (groupDoc.data()['archived'] == true) {
+        throw Exception('This group is no longer accepting new students');
+      }
       final groupId = groupDoc.id;
       final groupName = groupDoc.data()['name'] as String;
       final studentId = widget.child['id'];
@@ -78,7 +100,7 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
             content: Text(
               '✅ ${widget.child['names']} joined the group: $groupName',
             ),
-            backgroundColor: const Color(0xFFA2CA71),
+            backgroundColor: AppColors.success,
           ),
         );
         Navigator.pop(context, true); // Return true to indicate success
@@ -86,7 +108,9 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('❌ Error: $e'),
+              backgroundColor: AppColors.danger),
         );
       }
     } finally {
@@ -94,44 +118,57 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
     }
   }
 
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft(0.1),
+                borderRadius: AppRadii.mdAll,
+              ),
+              child: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: AppColors.primary, size: 18),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          const Text('Join Group', style: AppText.h1),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAEDCA),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFFFCFB3),
-        elevation: 0,
-        leading: IconButton(
-          onPressed: () => Navigator.pop(context),
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-        ),
-        title: const Text(
-          'Join Group',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 20,
-          ),
-        ),
-      ),
+      // NOTE: no Scaffold.appBar — replaced with the inline
+      // _buildHeader() below, matching ParentProfileScreen /
+      // ParentRegisterChildScreen.
+      backgroundColor: AppColors.scaffoldBackground,
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24.0),
+            padding: const EdgeInsets.all(AppSpacing.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 20),
+                _buildHeader(),
+
+                const SizedBox(height: AppSpacing.sm),
 
                 // Info Card
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(AppSpacing.lg),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFB7E0FF).withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(16),
+                    color: AppColors.tint(AppColors.info, 0.12),
+                    borderRadius: AppRadii.lgAll,
                     border: Border.all(
-                      color: const Color(0xFFB7E0FF),
+                      color: AppColors.info,
                       width: 2,
                     ),
                   ),
@@ -140,45 +177,46 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
                       const Icon(
                         Icons.school_rounded,
                         size: 60,
-                        color: Color(0xFF4A90E2),
+                        color: AppColors.info,
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md - 4),
                       Text(
                         widget.child['names'] ?? 'Your child',
                         style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFFFE5D26),
+                          color: AppColors.primaryDark,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppSpacing.sm),
                       const Text(
                         'will join the group',
-                        style: TextStyle(fontSize: 16, color: Colors.black87),
+                        style: TextStyle(
+                            fontSize: 16, color: AppColors.textPrimary),
                       ),
                     ],
                   ),
                 ),
 
-                const SizedBox(height: 40),
+                const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
                 const Text(
                   'Group Code',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFFFE5D26),
+                    color: AppColors.primaryDark,
                   ),
                 ),
 
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
 
                 Text(
                   'Enter the 6-character code shared by the teacher',
                   style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: AppSpacing.lg),
 
                 // Group code textfield
                 TextField(
@@ -198,34 +236,34 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
                     ),
                     prefixIcon: const Icon(
                       Icons.vpn_key_rounded,
-                      color: Color(0xFFFFCFB3),
+                      color: AppColors.primary,
                       size: 28,
                     ),
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: AppColors.surface,
                     counterText: '',
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: AppRadii.lgAll,
                       borderSide: BorderSide.none,
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: AppRadii.lgAll,
                       borderSide: BorderSide(
                         color: Colors.grey.shade300,
                         width: 2,
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: AppRadii.lgAll,
                       borderSide: const BorderSide(
-                        color: Color(0xFFFFCFB3),
+                        color: AppColors.primary,
                         width: 2,
                       ),
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 40),
+                const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
                 // Join button
                 SizedBox(
@@ -233,12 +271,13 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
                   child: ElevatedButton(
                     onPressed: isLoading ? null : _joinGroup,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFCFB3),
-                      foregroundColor: Colors.white,
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.onPrimary,
                       disabledBackgroundColor: Colors.grey[300],
-                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      padding: const EdgeInsets.symmetric(
+                          vertical: AppSpacing.lg - 6),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: AppRadii.lgAll,
                       ),
                       elevation: 4,
                     ),
@@ -248,36 +287,30 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
                             width: 24,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: AppColors.onPrimary,
                             ),
                           )
-                        : const Text(
-                            'Join Group',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                        : const Text('Join Group', style: AppText.button),
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: AppSpacing.lg),
 
                 // Info message
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFA2CA71).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
+                    color: AppColors.tint(AppColors.success, 0.15),
+                    borderRadius: AppRadii.mdAll,
                   ),
                   child: Row(
                     children: [
                       const Icon(
                         Icons.info_outline_rounded,
-                        color: Color(0xFFA2CA71),
+                        color: AppColors.success,
                         size: 24,
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: AppSpacing.md - 4),
                       Expanded(
                         child: Text(
                           'The code is provided by the teacher of the group you want to join',

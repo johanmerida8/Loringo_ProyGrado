@@ -4,10 +4,12 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
+import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
 import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
 import 'package:loringo_app/services/tts/reading_tts_service.dart';
 
 enum _Phase { reading, questions }
@@ -18,7 +20,14 @@ class ScreenSeven extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String taskId;
-  final void Function(bool isCorrect, int correct, int wrong) onTaskComplete;
+  // ── TEACHER REVIEW FEATURE ──────────────────────────────────────────
+  // See widget/task_callbacks.dart for why this uses the multi-part
+  // typedef instead of the single-answer one — this task type has
+  // several independently-scored comprehension questions inside one
+  // task document, so subQuestionDetails carries one answerDetail-shaped
+  // map per question: {'question': <text>, 'selectedIdx': <int>,
+  // 'correctIdx': <int>, 'options': [<text>, ...]}.
+  final MultiPartTaskCompleteCallback onTaskComplete;
   final int currentTaskNumber;
   final int totalTasks;
   final String collectionName;
@@ -42,8 +51,36 @@ class ScreenSeven extends StatefulWidget {
   State<ScreenSeven> createState() => _ScreenSevenState();
 }
 
+// RetryableTask added, applied PER QUESTION rather than once for the
+// whole task. Rationale (design decision, confirmed):
+//
+// Every other task type has exactly one answerable unit, so
+// RetryableTask's "1 retry, then it counts" naturally applies to the
+// whole task. 'reading' is different: one task document contains
+// several independent comprehension questions, and before this change
+// none of them offered a local retry at all — a single wrong answer out
+// of 5 questions was enough to queue the ENTIRE reading passage (title,
+// all pages, all 5 questions) into ActivityPlayScreen's end-of-activity
+// Practice Round, which is a disproportionate amount of re-reading for
+// missing one question.
+//
+// Giving each question its own RetryableTask budget (reset per question
+// via resetAttempts() in _continueToNextQuestion, mirroring how every
+// other screen resets attempts when a fresh task instance loads) means
+// a student who gets a question wrong first try gets an immediate local
+// second chance on THAT question — same mechanic, same "Try Again"
+// sheet, as image_select or any other type. Only a question that's
+// still wrong after the local retry counts against _correctCount.
+//
+// Net effect: 'reading' no longer relies on the end-of-activity Practice
+// Round for reinforcement at all. A reading task can still technically
+// end up in wrongTaskIds (see _continueToNextQuestion: `pass` is false
+// if the student didn't get at least half right even after every
+// question's local retry), but that should now be rare — the local
+// retry handles the common "picked the wrong option once" case
+// immediately, in context, right after the passage was just read.
 class _ScreenSevenState extends State<ScreenSeven>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, RetryableTask<ScreenSeven> {
   Map<String, dynamic>? _taskData;
   bool _loading = true;
 
@@ -64,6 +101,17 @@ class _ScreenSevenState extends State<ScreenSeven>
   bool _answered = false;
   int _correctCount = 0;
   bool _feedbackShown = false;
+
+  // ── TEACHER REVIEW FEATURE ────────────────────────────────────────
+  // One entry appended per question once it's DONE (correct on first
+  // try, or resolved after the local retry) — never for a soft-wrong
+  // first attempt that's about to be retried, since that attempt didn't
+  // count. Shape matches what ActivityPlayScreen expects inside
+  // subQuestionDetails: {'question', 'selectedIdx', 'correctIdx',
+  // 'options'}. selectedIdx/isCorrect reflect the attempt that actually
+  // got scored — the retry attempt if one happened, not the discarded
+  // first guess.
+  final List<Map<String, dynamic>> _questionDetails = [];
 
   late AnimationController _fadeCtrl;
   late Animation<double> _fadeAnim;
@@ -145,7 +193,7 @@ class _ScreenSevenState extends State<ScreenSeven>
       _highlightWordIndex = -1;
     });
 
-    final success = await ReadingTtsService.speak(
+    final result = await ReadingTtsService.speak(
       text,
       onAudioReady: () {
         if (!mounted) return;
@@ -160,11 +208,11 @@ class _ScreenSevenState extends State<ScreenSeven>
     setState(() {
       _isLoadingAudio = false;
       _isSpeaking = false;
-      _ttsCompleted = success;
+      _ttsCompleted = result == SpeakResult.success;
       _highlightWordIndex = -1;
     });
 
-    if (!success) {
+    if (result == SpeakResult.failed) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -176,7 +224,7 @@ class _ScreenSevenState extends State<ScreenSeven>
       return;
     }
 
-    _tryAutoAdvance();
+    if (result == SpeakResult.success) _tryAutoAdvance();
   }
 
   Future<void> _stopTts() async {
@@ -284,12 +332,42 @@ class _ScreenSevenState extends State<ScreenSeven>
     });
   }
 
+  /// Clears just the current question's selection state so it can be
+  /// re-answered — the RetryableTask onRetry callback. Doesn't touch
+  /// _correctCount, _questionDetails, or _currentQ; those only change
+  /// once this question is actually resolved (see _selectAnswer).
+  void _resetCurrentQuestionSelection() {
+    setState(() {
+      _selectedIdx = null;
+      _answered = false;
+      _feedbackShown = false;
+    });
+  }
+
   void _selectAnswer(int index) async {
     if (_answered || _feedbackShown) return;
     _stopTts();
     final opts = (_questions[_currentQ]['options'] as List<dynamic>)
         .cast<Map<String, dynamic>>();
     final isCorrect = opts[index]['isCorrect'] == true;
+
+    TaskFeedback.fire(isCorrect);
+
+    // RetryableTask hook: a wrong answer on this question's FIRST local
+    // attempt offers one immediate retry, right here, before it's
+    // scored or recorded — same mechanic every other task type uses.
+    // offerRetry() increments this question's attempt counter (reset to
+    // 0 per question in _continueToNextQuestion) and, if a retry
+    // remains, shows the "Try Again" sheet and clears this question's
+    // selection via onRetry, returning true so we stop here instead of
+    // marking it answered/correct/wrong yet.
+    if (!isCorrect &&
+        offerRetry(context: context, onRetry: _resetCurrentQuestionSelection)) {
+      return;
+    }
+
+    // Either correct, or wrong with the local retry already used up —
+    // this is now the scored outcome for this question.
     setState(() {
       _selectedIdx = index;
       _answered = true;
@@ -297,12 +375,31 @@ class _ScreenSevenState extends State<ScreenSeven>
       if (isCorrect) _correctCount++;
     });
 
-    TaskFeedback.fire(isCorrect);
+    // Teacher review detail: found independently of the student's pick,
+    // so 'correctIdx' is accurate even on a wrong answer. Recorded once
+    // per question, at the point it's actually resolved (post-retry if
+    // a retry happened) — never for the discarded first-attempt guess.
+    final correctIdx = opts.indexWhere((o) => o['isCorrect'] == true);
+    _questionDetails.add({
+      'question': _questions[_currentQ]['text'] as String? ?? '',
+      'selectedIdx': index,
+      'correctIdx': correctIdx,
+      'options': opts.map((o) => o['text'] as String? ?? '').toList(),
+    });
 
     TaskResultSheet.show(
       context,
       isCorrect: isCorrect,
-      isPracticeRound: widget.isPracticeRound,
+      // Deliberately NOT widget.isPracticeRound here — reading no longer
+      // participates in ActivityPlayScreen's end-of-activity Practice
+      // Round (see class doc comment), so this screen's own per-question
+      // retry sheet above is the only "try again" messaging a student
+      // sees for this task type. isPracticeRound is kept as a widget
+      // param (ActivityPlayScreen still passes it through) purely so
+      // this screen's signature doesn't need special-casing there, but
+      // it's never true in practice for 'reading' once wrongTaskIds
+      // stops collecting it — see _continueToNextQuestion.
+      isPracticeRound: false,
       buttonLabel: _currentQ < _questions.length - 1 ? 'CONTINUE' : 'FINISH',
       onContinue: _continueToNextQuestion,
     );
@@ -311,6 +408,10 @@ class _ScreenSevenState extends State<ScreenSeven>
   void _continueToNextQuestion() {
     if (_currentQ < _questions.length - 1) {
       _fadeCtrl.reset();
+      // Fresh attempt budget for the NEXT question — mirrors how every
+      // other RetryableTask screen resets on a fresh task instance;
+      // here each question is its own "instance" for retry purposes.
+      resetAttempts();
       setState(() {
         _currentQ++;
         _selectedIdx = null;
@@ -322,7 +423,7 @@ class _ScreenSevenState extends State<ScreenSeven>
       final totalQs = _questions.length;
       final wrong = totalQs - _correctCount;
       final pass = _correctCount >= (totalQs / 2).ceil();
-      widget.onTaskComplete(pass, _correctCount, wrong);
+      widget.onTaskComplete(pass, _correctCount, wrong, _questionDetails);
     }
   }
 
@@ -343,7 +444,7 @@ class _ScreenSevenState extends State<ScreenSeven>
             Text('No reading content found', style: TextStyle(color: Colors.grey.shade500, fontSize: 16)),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () => widget.onTaskComplete(false, 0, 0),
+              onPressed: () => widget.onTaskComplete(false, 0, 0, const []),
               style: ElevatedButton.styleFrom(backgroundColor: _green, foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
               child: const Text('Continue'),
@@ -638,7 +739,8 @@ class _ScreenSevenState extends State<ScreenSeven>
 
   Widget _buildQuestionsPhase() {
     if (_questions.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => widget.onTaskComplete(true, 0, 0));
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => widget.onTaskComplete(true, 0, 0, const []));
       return const Center(child: CircularProgressIndicator(color: _green));
     }
     final q = _questions[_currentQ];

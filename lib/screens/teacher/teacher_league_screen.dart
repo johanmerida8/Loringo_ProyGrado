@@ -2,79 +2,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/models/league_tier.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-
-// ── League tiers ─────────────────────────────────────────────────────────────
-
-const List<Map<String, dynamic>> kLeagueTiers = [
-  {
-    'key':          'starter',
-    'name':         'Starter',
-    'range':        '0 – 199 XP',
-    'min':          0,
-    'max':          200,
-    'color':        Color(0xFF9E9E9E),
-    'image':        null,
-    'rewardLocked': true,
-  },
-  {
-    'key':          'bronze',
-    'name':         'Bronze',
-    'range':        '200 – 499 XP',
-    'min':          200,
-    'max':          500,
-    'color':        Color(0xFFCD7F32),
-    'image':        'assets/leagues/bronze-league.png',
-    'rewardLocked': true,
-  },
-  {
-    'key':          'silver',
-    'name':         'Silver',
-    'range':        '500 – 999 XP',
-    'min':          500,
-    'max':          1000,
-    'color':        Color(0xFF78909C),
-    'image':        'assets/leagues/silver-league.png',
-    'rewardLocked': false,
-  },
-  {
-    'key':          'gold',
-    'name':         'Gold',
-    'range':        '1000 – 1999 XP',
-    'min':          1000,
-    'max':          2000,
-    'color':        Color(0xFFFFB300),
-    'image':        'assets/leagues/gold-league.png',
-    'rewardLocked': false,
-  },
-  {
-    'key':          'platinum',
-    'name':         'Platinum',
-    'range':        '2000 – 3999 XP',
-    'min':          2000,
-    'max':          4000,
-    'color':        Color(0xFF00BCD4),
-    'image':        'assets/leagues/platinum-league.png',
-    'rewardLocked': false,
-  },
-  {
-    'key':          'diamond',
-    'name':         'Diamond',
-    'range':        '4000+ XP',
-    'min':          4000,
-    'max':          999999,
-    'color':        Color(0xFF1565C0),
-    'image':        'assets/leagues/diamond-league.png',
-    'rewardLocked': false,
-  },
-];
-
-Map<String, dynamic> tierForXp(int xp) {
-  for (final t in kLeagueTiers) {
-    if (xp >= (t['min'] as int) && xp < (t['max'] as int)) return t;
-  }
-  return kLeagueTiers.last;
-}
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 
@@ -105,27 +36,37 @@ class _TeacherLeagueScreenState extends State<TeacherLeagueScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: const Text('League & Ranking', style: AppText.appBarTitle),
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: AppColors.onPrimary,
-          indicatorWeight: 3,
-          labelColor: AppColors.onPrimary,
-          unselectedLabelColor: Colors.white60,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-          tabs: const [
-            Tab(icon: Icon(Icons.leaderboard_rounded), text: 'Ranking'),
-            Tab(icon: Icon(Icons.card_giftcard_rounded), text: 'Rewards'),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: const [_RankingTab(), _RewardsTab()],
+      body: Column(
+        children: [
+          const TeacherScreenHeader(title: 'League & Ranking'),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: AppRadii.mdAll,
+              boxShadow: AppShadows.card,
+            ),
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: AppColors.primary,
+              indicatorWeight: 3,
+              labelColor: AppColors.primary,
+              unselectedLabelColor: AppColors.textSecondary,
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              tabs: const [
+                Tab(icon: Icon(Icons.leaderboard_rounded), text: 'Ranking'),
+                Tab(icon: Icon(Icons.card_giftcard_rounded), text: 'Rewards'),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: const [_RankingTab(), _RewardsTab()],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -142,6 +83,7 @@ class _RankingTab extends StatefulWidget {
 
 class _RankingTabState extends State<_RankingTab> {
   int _selectedTierIndex = 0;
+  final Database _db = Database();
 
   static Color _parseHex(String hex) {
     try {
@@ -154,7 +96,7 @@ class _RankingTabState extends State<_RankingTab> {
 
   @override
   Widget build(BuildContext context) {
-    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    final teacherId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -183,45 +125,61 @@ class _RankingTabState extends State<_RankingTab> {
             }
         };
 
-        return FutureBuilder<List<_StudentEntry>>(
-          future: _loadStudents(groups.keys.toList()),
-          builder: (context, studentSnap) {
-            if (studentSnap.connectionState == ConnectionState.waiting) {
-              return const Center(
-                  child: CircularProgressIndicator(color: AppColors.primary));
-            }
+        // The campaign decides which groups feed the ranking: 'single'
+        // narrows it down to one specific group, 'all' (or no campaign
+        // configured yet) keeps merging every group this teacher has,
+        // same as the always-on behavior before this screen had a scope
+        // setting at all.
+        return FutureBuilder<DocumentSnapshot>(
+          future: _db.getLeagueCampaign(teacherId),
+          builder: (context, campaignSnap) {
+            final campaign = campaignSnap.data?.exists == true
+                ? campaignSnap.data!.data() as Map<String, dynamic>
+                : null;
+            final scope = (campaign?['scope'] as String?) ?? 'all';
+            final campaignGroupId = campaign?['groupId'] as String?;
+            final rewards =
+                (campaign?['rewards'] as Map<String, dynamic>?) ?? const {};
 
-            final allStudents = studentSnap.data ?? [];
-            final tier    = kLeagueTiers[_selectedTierIndex];
-            final tierMin = tier['min'] as int;
-            final tierMax = tier['max'] as int;
+            final activeGroupIds =
+                (scope == 'single' && groups.containsKey(campaignGroupId))
+                    ? [campaignGroupId!]
+                    : groups.keys.toList();
 
-            final tierStudents = allStudents
-                .where((s) => s.xp >= tierMin && s.xp < tierMax)
-                .toList()
-              ..sort((a, b) => b.xp.compareTo(a.xp));
+            return FutureBuilder<List<_StudentEntry>>(
+              future: _loadStudents(activeGroupIds),
+              builder: (context, studentSnap) {
+                if (studentSnap.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                      child: CircularProgressIndicator(color: AppColors.primary));
+                }
 
-            return Column(
-              children: [
-                _LeagueFilterBar(
-                  selectedIndex: _selectedTierIndex,
-                  onSelected: (i) => setState(() => _selectedTierIndex = i),
-                ),
-                Expanded(
-                  child: tierStudents.isEmpty
-                      ? _LeagueEmptyState(
-                          icon: Icons.emoji_events_rounded,
-                          message: 'No students in ${tier['name']}',
-                          hint: 'Students reach this league by earning XP',
-                        )
-                      : FutureBuilder<String>(
-                          future: _loadRewardForTier(
-                            groupIds: groups.keys.toList(),
-                            tierKey:  tier['key'] as String,
-                          ),
-                          builder: (context, rewardSnap) {
-                            final reward = rewardSnap.data ?? '';
-                            return ListView.builder(
+                final allStudents = studentSnap.data ?? [];
+                final tier    = kLeagueTiers[_selectedTierIndex];
+                final tierMin = tier['min'] as int;
+                final tierMax = tier['max'] as int;
+
+                final tierStudents = allStudents
+                    .where((s) => s.xp >= tierMin && s.xp < tierMax)
+                    .toList()
+                  ..sort((a, b) => b.xp.compareTo(a.xp));
+
+                final reward = (rewards[tier['key']] as String?) ?? '';
+
+                return Column(
+                  children: [
+                    _LeagueFilterBar(
+                      selectedIndex: _selectedTierIndex,
+                      onSelected: (i) => setState(() => _selectedTierIndex = i),
+                    ),
+                    Expanded(
+                      child: tierStudents.isEmpty
+                          ? _LeagueEmptyState(
+                              icon: Icons.emoji_events_rounded,
+                              message: 'No students in ${tier['name']}',
+                              hint: 'Students reach this league by earning XP',
+                            )
+                          : ListView.builder(
                               padding: const EdgeInsets.fromLTRB(
                                   AppSpacing.md, AppSpacing.sm,
                                   AppSpacing.md, AppSpacing.xl),
@@ -247,11 +205,11 @@ class _RankingTabState extends State<_RankingTab> {
                                   isWinner:    isWinner,
                                 );
                               },
-                            );
-                          },
-                        ),
-                ),
-              ],
+                            ),
+                    ),
+                  ],
+                );
+              },
             );
           },
         );
@@ -278,27 +236,6 @@ class _RankingTabState extends State<_RankingTab> {
     } catch (_) {
       return [];
     }
-  }
-
-  Future<String> _loadRewardForTier({
-    required List<String> groupIds,
-    required String tierKey,
-  }) async {
-    for (final gid in groupIds) {
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('teacherGroups')
-            .doc(gid)
-            .collection('leagueRewards')
-            .doc('config')
-            .get();
-        if (doc.exists) {
-          final val = (doc.data() as Map<String, dynamic>)[tierKey] as String?;
-          if (val != null && val.isNotEmpty) return val;
-        }
-      } catch (_) {}
-    }
-    return '';
   }
 }
 
@@ -642,15 +579,37 @@ class _RewardsTab extends StatefulWidget {
 }
 
 class _RewardsTabState extends State<_RewardsTab> {
+  final Database _db = Database();
+
+  // 'single' = one specific group; 'all' = every group ("paralelos") this
+  // teacher has — merged the same way _RankingTab already merges them.
+  String _scope = 'all';
   String? _selectedGroupId;
-  String  _selectedGroupName = '';
+  DateTime? _startDate;
+  DateTime? _endDate;
 
   final Map<String, TextEditingController> _controllers = {
     for (final t in kLeagueTiers) t['key'] as String: TextEditingController(),
   };
 
-  bool _isSaving         = false;
-  bool _isLoadingRewards = false;
+  bool _isSaving  = false;
+  bool _isLoading = true;
+
+  // Snapshot of what's actually saved, taken once _loadCampaign finishes —
+  // compared against the live form by _hasChanges so Save can tell
+  // "nothing changed" apart from a real edit (same pattern as _hasChanges
+  // in create_quiz_screen.dart).
+  String _originalScope = 'all';
+  String? _originalGroupId;
+  DateTime? _originalStartDate;
+  DateTime? _originalEndDate;
+  Map<String, String> _originalRewards = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCampaign();
+  }
 
   @override
   void dispose() {
@@ -658,48 +617,109 @@ class _RewardsTabState extends State<_RewardsTab> {
     super.dispose();
   }
 
-  Future<void> _loadRewards(String groupId) async {
-    setState(() => _isLoadingRewards = true);
+  Future<void> _loadCampaign() async {
+    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    if (teacherId == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .doc(groupId)
-          .collection('leagueRewards')
-          .doc('config')
-          .get();
+      final doc = await _db.getLeagueCampaign(teacherId);
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
+        _scope = (data['scope'] as String?) ?? 'all';
+        _selectedGroupId = data['groupId'] as String?;
+        _startDate = (data['startDate'] as Timestamp?)?.toDate();
+        _endDate = (data['endDate'] as Timestamp?)?.toDate();
+        final rewardsMap = (data['rewards'] as Map<String, dynamic>?) ?? {};
         for (final key in _controllers.keys) {
-          _controllers[key]!.text = (data[key] as String?) ?? '';
+          _controllers[key]!.text = (rewardsMap[key] as String?) ?? '';
         }
-      } else {
-        for (final c in _controllers.values) c.clear();
       }
     } catch (e) {
       _showError('Could not load rewards: $e');
     } finally {
-      if (mounted) setState(() => _isLoadingRewards = false);
+      _originalScope = _scope;
+      _originalGroupId = _selectedGroupId;
+      _originalStartDate = _startDate;
+      _originalEndDate = _endDate;
+      _originalRewards = {
+        for (final key in _controllers.keys) key: _controllers[key]!.text,
+      };
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  bool _hasChanges() {
+    if (_scope != _originalScope) return true;
+    if (_scope == 'single' && _selectedGroupId != _originalGroupId) return true;
+    if (_startDate != _originalStartDate) return true;
+    if (_endDate != _originalEndDate) return true;
+    for (final key in _controllers.keys) {
+      if (_controllers[key]!.text.trim() != (_originalRewards[key] ?? '')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _pickDate({required bool isStart}) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: (isStart ? _startDate : _endDate) ?? now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked == null) return;
+    setState(() {
+      if (isStart) {
+        _startDate = picked;
+      } else {
+        _endDate = picked;
+      }
+    });
+  }
+
   Future<void> _saveRewards() async {
-    if (_selectedGroupId == null) return;
+    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    if (teacherId == null) return;
+
+    if (_scope == 'single' && _selectedGroupId == null) {
+      _showError('Select a group first', color: AppColors.warning);
+      return;
+    }
+    if (_startDate != null && _endDate != null && _endDate!.isBefore(_startDate!)) {
+      _showError('The end date must be after the start date', color: AppColors.warning);
+      return;
+    }
+
+    if (!_hasChanges()) {
+      _showError('No changes made', color: AppColors.muted);
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
-      final data = <String, dynamic>{
-        'updatedAt': FieldValue.serverTimestamp()
+      final rewards = {
+        for (final tier in kLeagueTiers)
+          (tier['key'] as String): (tier['rewardLocked'] as bool)
+              ? ''
+              : _controllers[tier['key']]!.text.trim(),
       };
-      for (final tier in kLeagueTiers) {
-        final key    = tier['key']          as String;
-        final locked = tier['rewardLocked'] as bool;
-        data[key] = locked ? '' : _controllers[key]!.text.trim();
-      }
-      await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .doc(_selectedGroupId)
-          .collection('leagueRewards')
-          .doc('config')
-          .set(data);
+      await _db.saveLeagueCampaign(
+        teacherId: teacherId,
+        scope: _scope,
+        groupId: _scope == 'single' ? _selectedGroupId : null,
+        startDate: _startDate,
+        endDate: _endDate,
+        rewards: rewards,
+      );
+      _originalScope = _scope;
+      _originalGroupId = _selectedGroupId;
+      _originalStartDate = _startDate;
+      _originalEndDate = _endDate;
+      _originalRewards = rewards;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Text('Rewards saved successfully'),
@@ -716,18 +736,26 @@ class _RewardsTabState extends State<_RewardsTab> {
     }
   }
 
-  void _showError(String msg) {
+  void _showError(String msg, {Color color = AppColors.danger}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: AppColors.danger,
+      backgroundColor: color,
       behavior: SnackBarBehavior.floating,
     ));
   }
 
+  static String _formatDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
   @override
   Widget build(BuildContext context) {
     final teacherId = FirebaseAuth.instance.currentUser?.uid;
+
+    if (_isLoading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.primary));
+    }
 
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -749,17 +777,25 @@ class _RewardsTabState extends State<_RewardsTab> {
 
         final groupDocs = snap.data!.docs;
 
-        if (_selectedGroupId == null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final first = groupDocs.first;
-            setState(() {
-              _selectedGroupId   = first.id;
-              _selectedGroupName =
-                  (first.data() as Map<String, dynamic>)['name'] ?? '';
-            });
-            _loadRewards(first.id);
-          });
+        // If scope is 'single' but nothing (or a since-deleted group) is
+        // selected yet, default to the first available group so the
+        // dropdown never starts empty.
+        if (_scope == 'single' &&
+            (_selectedGroupId == null ||
+                !groupDocs.any((d) => d.id == _selectedGroupId))) {
+          _selectedGroupId = groupDocs.first.id;
         }
+
+        final selectedGroupName = _selectedGroupId == null
+            ? ''
+            : (groupDocs
+                    .firstWhere((d) => d.id == _selectedGroupId)
+                    .data() as Map<String, dynamic>)['name'] as String? ??
+                '';
+
+        final now = DateTime.now();
+        final hasDuration = _startDate != null || _endDate != null;
+        final isFinished = _endDate != null && _endDate!.isBefore(now);
 
         return SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(
@@ -767,74 +803,116 @@ class _RewardsTabState extends State<_RewardsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Multi-group selector
-              if (groupDocs.length > 1) ...[
-                Text('Select Group',
-                    style: AppText.caption.copyWith(
-                        fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: AppSpacing.sm),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: groupDocs.map((doc) {
-                      final data       = doc.data() as Map<String, dynamic>;
-                      final id         = doc.id;
-                      final name       = (data['name'] as String?) ?? '';
-                      final isSelected = _selectedGroupId == id;
-                      Color chipColor;
-                      try {
-                        chipColor = Color(int.parse(
-                          'FF${(data['color'] as String? ?? '#4CAF50').replaceAll('#', '')}',
-                          radix: 16,
-                        ));
-                      } catch (_) {
-                        chipColor = AppColors.primary;
-                      }
-                      return Padding(
-                        padding:
-                            const EdgeInsets.only(right: AppSpacing.sm),
-                        child: GestureDetector(
-                          onTap: () {
-                            if (_selectedGroupId == id) return;
-                            setState(() {
-                              _selectedGroupId   = id;
-                              _selectedGroupName = name;
-                            });
-                            _loadRewards(id);
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: AppSpacing.md,
-                                vertical: AppSpacing.sm),
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? chipColor
-                                  : chipColor.withOpacity(0.1),
-                              borderRadius:
-                                  BorderRadius.circular(AppRadii.pill),
-                              border: Border.all(
-                                color: isSelected
-                                    ? chipColor
-                                    : chipColor.withOpacity(0.3),
-                              ),
-                            ),
-                            child: Text(name,
-                                style: TextStyle(
-                                  color: isSelected
-                                      ? AppColors.onPrimary
-                                      : chipColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                )),
-                          ),
-                        ),
-                      );
-                    }).toList(),
+              // ── Scope: single group vs. all this teacher's groups ──────
+              Text('Applies to',
+                  style: AppText.caption.copyWith(
+                      fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(height: AppSpacing.sm),
+              Row(children: [
+                Expanded(
+                  child: _ScopeChip(
+                    label: 'This group only',
+                    selected: _scope == 'single',
+                    onTap: () => setState(() => _scope = 'single'),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.lg),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: _ScopeChip(
+                    label: 'All my groups',
+                    selected: _scope == 'all',
+                    onTap: () => setState(() => _scope = 'all'),
+                  ),
+                ),
+              ]),
+
+              if (_scope == 'single') ...[
+                const SizedBox(height: AppSpacing.md),
+                DropdownButtonFormField<String>(
+                  // Deliberately using `value` (not the newer
+                  // `initialValue`): this field must reflect
+                  // _selectedGroupId on every rebuild, including when the
+                  // "default to first group" fallback above sets it
+                  // outside of onChanged — `initialValue` only seeds the
+                  // field once and would miss that.
+                  value: _selectedGroupId,
+                  items: groupDocs.map((doc) {
+                    final name =
+                        (doc.data() as Map<String, dynamic>)['name'] as String? ?? '';
+                    return DropdownMenuItem(value: doc.id, child: Text(name));
+                  }).toList(),
+                  onChanged: (v) => setState(() => _selectedGroupId = v),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.sm)),
+                  ),
+                ),
               ],
+              const SizedBox(height: AppSpacing.lg),
+
+              // ── Duration — informational only, nothing resets automatically ──
+              Text('Duration',
+                  style: AppText.caption.copyWith(
+                      fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(height: AppSpacing.sm),
+              Row(children: [
+                Expanded(
+                  child: _DateField(
+                    label: 'From',
+                    date: _startDate,
+                    formatter: _formatDate,
+                    onTap: () => _pickDate(isStart: true),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: _DateField(
+                    label: 'Until',
+                    date: _endDate,
+                    formatter: _formatDate,
+                    onTap: () => _pickDate(isStart: false),
+                  ),
+                ),
+              ]),
+              if (hasDuration) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md - 2, vertical: AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    color: (isFinished ? AppColors.muted : AppColors.success)
+                        .withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(AppRadii.md),
+                  ),
+                  child: Row(children: [
+                    Icon(
+                      isFinished
+                          ? Icons.event_busy_rounded
+                          : Icons.event_available_rounded,
+                      size: 18,
+                      color: isFinished ? AppColors.muted : AppColors.success,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text(
+                      isFinished
+                          ? 'Finished on ${_formatDate(_endDate!)}'
+                          : _endDate != null
+                              ? 'Active until ${_formatDate(_endDate!)}'
+                              : 'Active — no end date set',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: isFinished ? AppColors.muted : AppColors.success,
+                      ),
+                    ),
+                  ]),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.lg),
 
               // Info banner
               Container(
@@ -850,10 +928,11 @@ class _RewardsTabState extends State<_RewardsTab> {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
-                      _selectedGroupId == null
-                          ? 'Loading...'
-                          : 'Rewards for $_selectedGroupName — '
-                              '1st place of Silver and above wins the prize.',
+                      _scope == 'single'
+                          ? 'Rewards for $selectedGroupName — '
+                              '1st place of Bronze and above wins the prize.'
+                          : 'Rewards for all your groups combined — '
+                              '1st place of Bronze and above wins the prize.',
                       style: const TextStyle(
                         fontSize: 13,
                         color: AppColors.primary,
@@ -865,26 +944,17 @@ class _RewardsTabState extends State<_RewardsTab> {
               ),
               const SizedBox(height: AppSpacing.lg),
 
-              if (_isLoadingRewards)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(AppSpacing.xl),
-                    child: CircularProgressIndicator(color: AppColors.primary),
-                  ),
-                )
-              else
-                ...kLeagueTiers.map((tier) => _LeagueTierRewardField(
-                      tier:       tier,
-                      controller: _controllers[tier['key']]!,
-                    )),
+              ...kLeagueTiers.map((tier) => _LeagueTierRewardField(
+                    tier:       tier,
+                    controller: _controllers[tier['key']]!,
+                  )),
 
               const SizedBox(height: AppSpacing.lg),
 
               SizedBox(
                 width: double.infinity, height: 52,
                 child: ElevatedButton.icon(
-                  onPressed:
-                      (_isSaving || _selectedGroupId == null) ? null : _saveRewards,
+                  onPressed: _isSaving ? null : _saveRewards,
                   icon: _isSaving
                       ? const SizedBox(
                           width: 18, height: 18,
@@ -911,6 +981,92 @@ class _RewardsTabState extends State<_RewardsTab> {
           ),
         );
       },
+    );
+  }
+}
+
+// ── Scope chip (this group only / all my groups) ────────────────────────────
+
+class _ScopeChip extends StatelessWidget {
+  final String label;
+  final bool   selected;
+  final VoidCallback onTap;
+
+  const _ScopeChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.primary : AppColors.primarySoft(0.08),
+          borderRadius: BorderRadius.circular(AppRadii.md),
+          border: Border.all(
+            color: selected ? AppColors.primary : AppColors.primarySoft(0.3),
+          ),
+        ),
+        child: Text(label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: selected ? AppColors.onPrimary : AppColors.primary,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            )),
+      ),
+    );
+  }
+}
+
+// ── Date field (From / Until pickers) ────────────────────────────────────────
+
+class _DateField extends StatelessWidget {
+  final String label;
+  final DateTime? date;
+  final String Function(DateTime) formatter;
+  final VoidCallback onTap;
+
+  const _DateField({
+    required this.label,
+    required this.date,
+    required this.formatter,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+          border: Border.all(color: AppColors.divider),
+        ),
+        child: Row(children: [
+          const Icon(Icons.calendar_today_rounded,
+              size: 16, color: AppColors.muted),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              date != null ? formatter(date!) : label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: date != null ? FontWeight.w600 : FontWeight.normal,
+                color: date != null ? Colors.black87 : AppColors.muted,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ]),
+      ),
     );
   }
 }

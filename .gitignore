@@ -48,6 +48,10 @@ app.*.map.json
 .env
 lib/firebase_options.dart
 
+# Local-only project docs / rules (not shared via git)
+CLAUDE.md
+firestore.rules
+
 # Ignore all tests
 /test/*.dart
 !/test/widget_test.dart

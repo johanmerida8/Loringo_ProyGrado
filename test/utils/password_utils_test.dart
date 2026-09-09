@@ -13,7 +13,7 @@ void main() {
   group('PasswordUtils - AAA Pattern', () {
     test('ARRANGE-ACT-ASSERT: a password satisfying all 5 rules is valid', () {
       // ARRANGE
-      const password = 'Sup3r\$ecret!';
+      const password = 'TestQA#2024';
 
       // ACT
       final isValid = PasswordUtils.isPasswordValid(password);

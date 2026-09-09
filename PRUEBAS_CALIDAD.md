@@ -65,7 +65,7 @@ Archivo: `test/utils/password_utils_test.dart`.
 
 | Caso | Arrange | Act | Assert | Resultado |
 |---|---|---|---|---|
-| Contraseña válida | Se define la cadena `'Sup3r$ecret!'` | `PasswordUtils.isPasswordValid(password)` | `isValid == true` — **verifica valor de retorno puro** | PASS |
+| Contraseña válida | Se define la cadena `'TestQA#2024'` | `PasswordUtils.isPasswordValid(password)` | `isValid == true` — **verifica valor de retorno puro** | PASS |
 | Requisitos faltantes | Se define la cadena `'password1'` (sin mayúscula ni símbolo) | `PasswordUtils.getPasswordRequirements(password)` | La lista contiene `'At least 1 uppercase letter (A-Z)'` y `'At least 1 special character...'` | PASS |
 
 ---

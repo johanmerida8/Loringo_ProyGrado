@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/components/image_dialog.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -46,10 +49,10 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
   String get typeId => 'image_select_reverse';
   
   @override
-  String get displayName => 'Image Select Reverse';
-  
+  String get displayName => 'teacher.image_select_reverse_task.displayName'.tr();
+
   @override
-  String get defaultQuestion => 'Select the correct phrase';
+  String get defaultQuestion => 'teacher.image_select_reverse_task.defaultQuestion'.tr();
 
   @override
   void loadData(Map<String, dynamic> data) {
@@ -81,16 +84,16 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
   @override
   String? validate() {
     final hasImage = pickedImage != null || imageUrlController.text.trim().isNotEmpty;
-    if (!hasImage) return 'Image is required';
-    
+    if (!hasImage) return 'teacher.image_select_reverse_task.imageRequiredError'.tr();
+
     bool hasCorrect = false;
     int filled = 0;
     for (int i = 0; i < options.length; i++) {
       if (optionControllers[i].text.trim().isNotEmpty) filled++;
       if (options[i]['isCorrect'] == true) hasCorrect = true;
     }
-    if (filled < 3) return 'Provide at least 3 options';
-    if (!hasCorrect) return 'Mark at least one option as correct';
+    if (filled < 3) return 'teacher.image_select_reverse_task.atLeastThreeOptionsError'.tr();
+    if (!hasCorrect) return 'teacher.image_select_reverse_task.markOneCorrect'.tr();
     return null;
   }
 
@@ -129,6 +132,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -148,7 +152,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
             child: TextButton.icon(
               onPressed: _addOption,
               icon: Icon(Icons.add_circle_outline, color: c),
-              label: Text('Add option (${options.length}/4)', style: TextStyle(color: c)),
+              label: Text('teacher.image_select_reverse_task.addOptionButton'.tr(namedArgs: {'count': '${options.length}'}), style: TextStyle(color: c)),
             ),
           ),
       ],
@@ -160,7 +164,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Image', style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+        Text('teacher.image_select_reverse_task.imageLabel'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
         const SizedBox(height: AppSpacing.sm),
         Row(
           children: [
@@ -183,7 +187,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
                           errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 40),
                         ),
                       )
-                    : Center(child: Text('No image', style: TextStyle(color: Colors.grey[500]))),
+                    : Center(child: Text('teacher.image_select_reverse_task.noImagePlaceholder'.tr(), style: TextStyle(color: Colors.grey[500]))),
               ),
             ),
             const SizedBox(width: AppSpacing.md),
@@ -202,7 +206,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
                 }
               },
               icon: const Icon(Icons.image, size: 20),
-              label: const Text('Select Image'),
+              label: Text('teacher.image_select_reverse_task.selectImageButton'.tr()),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.grey[200],
                 foregroundColor: Colors.black87,
@@ -217,7 +221,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
   Widget _buildOptionsHeader(Color c) {
     return Row(
       children: [
-        Text('Text Options (3–4)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text('teacher.image_select_reverse_task.textOptionsHeader'.tr(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         const Spacer(),
       ],
     );
@@ -238,7 +242,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
         children: [
           Row(
             children: [
-              Text('Option ${index + 1}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              Text('teacher.image_select_reverse_task.optionLabel'.tr(namedArgs: {'number': '${index + 1}'}), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               const Spacer(),
               Row(
                 children: [
@@ -250,7 +254,7 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
                       widget.onChanged();
                     }),
                   ),
-                  const Text('Correct', style: TextStyle(fontSize: 13)),
+                  Text('teacher.image_select_reverse_task.correctLabel'.tr(), style: const TextStyle(fontSize: 13)),
                 ],
               ),
               if (options.length > 3)
@@ -263,9 +267,9 @@ class _ImageSelectReverseTaskState extends State<ImageSelectReverseTask> with Ta
           const SizedBox(height: AppSpacing.sm),
           TextFormField(
             controller: optionControllers[index],
-            decoration: _inputDecoration(c, 'e.g. "Stand up"'),
+            decoration: _inputDecoration(c, 'teacher.image_select_reverse_task.optionTextHint'.tr()),
             onChanged: (_) => widget.onChanged(),
-            validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+            validator: (v) => v?.isEmpty ?? true ? 'teacher.image_select_reverse_task.requiredError'.tr() : null,
           ),
         ],
       ),

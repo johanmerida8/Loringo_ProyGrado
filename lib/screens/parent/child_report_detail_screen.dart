@@ -2,17 +2,28 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:loringo_app/utils/unit_report_pdf.dart';
 
 /// Full report history for a single child — reached by tapping a child's
 /// card on ParentReportsScreen. Owns the same per-report card UI and PDF
 /// export the old flat ParentReportsScreen used to render inline for
 /// every child at once.
-class ChildReportDetailScreen extends StatelessWidget {
+///
+/// Split into a "Recent Report" (the latest one, expanded by default) and
+/// "Previous Reports" (everything older, collapsed by default) so the
+/// list reads as organized history rather than a flat dump. Each
+/// collapsed row only shows the unit title, date, and an Export PDF
+/// button — the score/activity/feedback breakdown only renders once a
+/// card is expanded, keeping the collapsed list scannable while still
+/// putting every detail one tap away (or straight into the PDF without
+/// expanding at all).
+class ChildReportDetailScreen extends StatefulWidget {
   final Map<String, dynamic> child;
   final List<Map<String, dynamic>> reports;
   final String Function(DateTime) formatDate;
@@ -25,32 +36,71 @@ class ChildReportDetailScreen extends StatelessWidget {
   });
 
   @override
+  State<ChildReportDetailScreen> createState() =>
+      _ChildReportDetailScreenState();
+}
+
+class _ChildReportDetailScreenState extends State<ChildReportDetailScreen> {
+  // Recent report (index 0) starts expanded since that's what a parent
+  // opening this screen most likely wants to see right away; every
+  // previous report starts collapsed.
+  final Set<int> _expanded = {0};
+
+  String get _childName =>
+      widget.child['names'] as String? ?? 'parent.child_report_detail_screen.fallbackChild'.tr();
+
+  @override
   Widget build(BuildContext context) {
-    final childName = child['names'] as String? ?? 'Child';
+    context.watch<LocaleProvider>();
+    final reports = widget.reports;
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: Row(
-          children: [
-            _childAvatar(child, radius: 16),
-            const SizedBox(width: 10),
-            Text('$childName\'s Reports'),
-          ],
-        ),
+      body: Column(
+        children: [
+          ParentScreenHeader(
+              title: 'parent.child_report_detail_screen.titleReports'
+                  .tr(namedArgs: {'name': _childName})),
+          Expanded(
+            child: reports.isEmpty ? _emptyState() : _buildReportsList(reports),
+          ),
+        ],
       ),
-      body: reports.isEmpty
-          ? _emptyState()
-          : ListView.separated(
-              padding: const EdgeInsets.all(20),
-              itemCount: reports.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 14),
-              itemBuilder: (context, i) =>
-                  _buildReportCard(context, child, reports[i]),
-            ),
+    );
+  }
+
+  Widget _buildReportsList(List<Map<String, dynamic>> reports) {
+    final recent = reports.first;
+    final previous = reports.skip(1).toList();
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      children: [
+        _sectionLabel('parent.child_report_detail_screen.recentReport'.tr()),
+        const SizedBox(height: 8),
+        _buildReportCard(0, recent, reports),
+        if (previous.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _sectionLabel('parent.child_report_detail_screen.previousReports'.tr()),
+          const SizedBox(height: 8),
+          for (var i = 0; i < previous.length; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
+            _buildReportCard(i + 1, previous[i], reports),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+        letterSpacing: 0.8,
+        color: Colors.grey[500],
+      ),
     );
   }
 
@@ -62,12 +112,17 @@ class ChildReportDetailScreen extends StatelessWidget {
           children: [
             Icon(Icons.description_outlined, size: 80, color: Colors.grey[300]),
             const SizedBox(height: 16),
-            const Text('No reports yet',
-                style: TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
+            Text(
+              'common.noReports'.tr(),
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
             const SizedBox(height: 6),
             Text(
-              'Reports appear here once your child\ncompletes a unit quiz',
+              'common.noReportsSub'.tr(),
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: Colors.grey[500]),
             ),
@@ -78,30 +133,49 @@ class ChildReportDetailScreen extends StatelessWidget {
   }
 
   Widget _buildReportCard(
-      BuildContext context, Map<String, dynamic> child, Map<String, dynamic> report) {
-    final unitTitle = report['unitTitle'] as String? ?? 'Unknown Unit';
+    int index,
+    Map<String, dynamic> report,
+    List<Map<String, dynamic>> allReports,
+  ) {
+    final unitTitle = report['unitTitle'] as String? ??
+        'parent.child_report_detail_screen.unknownUnit'.tr();
     final quizPercent = (report['quizPercent'] as num?)?.toInt() ?? 0;
     final quizCorrect = (report['quizCorrect'] as num?)?.toInt() ?? 0;
     final quizTotal = (report['quizTotalQuestions'] as num?)?.toInt() ?? 0;
-    final activitiesCompleted = (report['activitiesCompleted'] as num?)?.toInt() ?? 0;
+    final activitiesCompleted =
+        (report['activitiesCompleted'] as num?)?.toInt() ?? 0;
     final totalActivities = (report['totalActivities'] as num?)?.toInt() ?? 0;
-    final activitiesPercent = (report['activitiesPercent'] as num?)?.toInt() ?? 0;
+    final activitiesPercent =
+        (report['activitiesPercent'] as num?)?.toInt() ?? 0;
     final previousScores = List<int>.from(
-        ((report['previousUnitScores'] as List?) ?? []).map((e) => (e as num).toInt()));
+      ((report['previousUnitScores'] as List?) ?? []).map(
+        (e) => (e as num).toInt(),
+      ),
+    );
     final generatedAt = report['generatedAt'] as Timestamp?;
-    final dateStr = generatedAt != null ? formatDate(generatedAt.toDate()) : 'Recently';
+    final dateStr = generatedAt != null
+        ? widget.formatDate(generatedAt.toDate())
+        : 'parent.child_report_detail_screen.recently'.tr();
     final feedback = (report['feedback'] as String?) ?? '';
 
     final scoreColor = quizPercent >= 80
         ? const Color(0xFF4CAF50)
-        : (quizPercent >= 60 ? const Color(0xFFFFC107) : const Color(0xFFFF7043));
+        : (quizPercent >= 60
+              ? const Color(0xFFFFC107)
+              : const Color(0xFFFF7043));
+
+    final isExpanded = _expanded.contains(index);
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
       ),
       child: Padding(
@@ -109,102 +183,179 @@ class ChildReportDetailScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                    child: Text(unitTitle,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold))),
-                Text(dateStr, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Divider(height: 1, thickness: 1, color: Color(0xFFF0F0F0)),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _statBlock(
-                    label: 'Quiz Score',
-                    value: '$quizPercent%',
-                    sub: '$quizCorrect✓ / $quizTotal',
-                    valueColor: scoreColor,
-                  ),
-                ),
-                Container(width: 1, height: 50, color: const Color(0xFFF0F0F0)),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _statBlock(
-                    label: 'Activities',
-                    value: '$activitiesPercent%',
-                    sub: '$activitiesCompleted / $totalActivities done',
-                    valueColor: const Color(0xFF4CAF50),
-                  ),
-                ),
-              ],
-            ),
-            if (feedback.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.primarySoft(0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.primarySoft(0.2)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        Icon(Icons.comment_rounded, size: 14, color: AppColors.primary),
-                        const SizedBox(width: 6),
-                        Text('Teacher Feedback',
-                            style: TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                      ]),
-                      const SizedBox(height: 6),
-                      Text(feedback,
-                          style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic)),
-                    ],
-                  ),
-                ),
-              ),
-            if (previousScores.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(height: 1, thickness: 1, color: Color(0xFFF0F0F0)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 4,
+            // ── Always-visible row: unit title, date, Export PDF, expand
+            // toggle. This is deliberately the ONLY thing shown while
+            // collapsed — score/activities/feedback below only render
+            // when expanded.
+            InkWell(
+              onTap: () => setState(() {
+                if (isExpanded) {
+                  _expanded.remove(index);
+                } else {
+                  _expanded.add(index);
+                }
+              }),
+              borderRadius: BorderRadius.circular(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  ...previousScores.map((s) => Chip(
-                      label: Text('$s%', style: const TextStyle(fontSize: 12)),
-                      backgroundColor: Colors.grey[100],
-                      padding: EdgeInsets.zero,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap)),
-                  Chip(
-                      label: Text('$quizPercent%',
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                      backgroundColor: scoreColor.withOpacity(0.18),
-                      padding: EdgeInsets.zero,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          unitTitle,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          dateStr,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => exportUnitReportPdf(
+                      studentName:
+                          (widget.child['names'] as String?) ?? 'common.student'.tr(),
+                      report: report,
+                      allReports: allReports,
+                    ),
+                    icon: const Icon(Icons.picture_as_pdf_rounded, size: 20),
+                    color: AppColors.primary,
+                    tooltip: 'common.exportPdf'.tr(),
+                  ),
+                  Icon(
+                    isExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: Colors.grey[500],
+                  ),
                 ],
               ),
-            ],
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _exportReportPdf(context, child, report),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  side: BorderSide(color: AppColors.primary.withOpacity(0.4), width: 1.2),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                icon: const Icon(Icons.picture_as_pdf_rounded, size: 16),
-                label: const Text('Export PDF', style: TextStyle(fontSize: 13)),
-              ),
             ),
+            if (isExpanded) ...[
+              const SizedBox(height: 8),
+              const Divider(height: 1, thickness: 1, color: Color(0xFFF0F0F0)),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: _statBlock(
+                      label: 'parent.child_report_detail_screen.quizScore'.tr(),
+                      value: '$quizPercent%',
+                      sub: '$quizCorrect✓ / $quizTotal',
+                      valueColor: scoreColor,
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 50,
+                    color: const Color(0xFFF0F0F0),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _statBlock(
+                      label: 'common.activities'.tr(),
+                      value: '$activitiesPercent%',
+                      sub: 'parent.child_report_detail_screen.activitiesDone'
+                          .tr(namedArgs: {
+                        'completed': '$activitiesCompleted',
+                        'total': '$totalActivities',
+                      }),
+                      valueColor: const Color(0xFF4CAF50),
+                    ),
+                  ),
+                ],
+              ),
+              if (feedback.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.primarySoft(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.primarySoft(0.2)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.comment_rounded,
+                              size: 14,
+                              color: AppColors.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'common.teacherFeedback'.tr(),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          feedback,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (previousScores.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: Color(0xFFF0F0F0),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 4,
+                  children: [
+                    ...previousScores.map(
+                      (s) => Chip(
+                        label: Text(
+                          '$s%',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        backgroundColor: Colors.grey[100],
+                        padding: EdgeInsets.zero,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    Chip(
+                      label: Text(
+                        '$quizPercent%',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      backgroundColor: scoreColor.withOpacity(0.18),
+                      padding: EdgeInsets.zero,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ],
+                ),
+              ],
+            ],
           ],
         ),
       ),
@@ -220,200 +371,20 @@ class ChildReportDetailScreen extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-        Text(value,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: valueColor)),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: valueColor,
+          ),
+        ),
         Text(sub, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
       ],
     );
-  }
-
-  Widget _childAvatar(Map<String, dynamic> child, {required double radius}) {
-    final avatar = child['avatar'] as String?;
-    if (avatar != null && avatar.isNotEmpty) {
-      return CircleAvatar(radius: radius, backgroundImage: AssetImage(avatar));
-    }
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: Colors.white.withOpacity(0.25),
-      child: Text(
-        (child['names'] as String? ?? 'S')[0].toUpperCase(),
-        style: TextStyle(fontSize: radius * 0.8, fontWeight: FontWeight.bold, color: Colors.white),
-      ),
-    );
-  }
-
-  Future<void> _exportReportPdf(
-      BuildContext context, Map<String, dynamic> child, Map<String, dynamic> report) async {
-    final pdf = pw.Document();
-    final childName = (child['names'] as String?) ?? 'Student';
-    final unitTitle = (report['unitTitle'] as String?) ?? 'Unit';
-
-    final quizPercent = (report['quizPercent'] as num?)?.toInt() ?? 0;
-    final quizCorrect = (report['quizCorrect'] as num?)?.toInt() ?? 0;
-    final quizTotal = (report['quizTotalQuestions'] as num?)?.toInt() ?? 0;
-    final activitiesCompleted = (report['activitiesCompleted'] as num?)?.toInt() ?? 0;
-    final totalActivities = (report['totalActivities'] as num?)?.toInt() ?? 0;
-    final activitiesPercent = totalActivities == 0
-        ? 0
-        : (activitiesCompleted / totalActivities * 100).round().clamp(0, 100);
-    final previousScores = List<int>.from(
-        ((report['previousUnitScores'] as List?) ?? []).map((e) => (e as num).toInt()));
-    final feedback = (report['feedback'] as String?) ?? '';
-    final generatedAt = report['generatedAt'] as Timestamp?;
-    final dateStr = generatedAt != null
-        ? '${generatedAt.toDate().day}/${generatedAt.toDate().month}/${generatedAt.toDate().year}'
-        : 'N/A';
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
-        build: (context) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text('Loringo Unit Report',
-                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 4),
-            pw.Divider(thickness: 1),
-            pw.SizedBox(height: 6),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('Student: $childName', style: const pw.TextStyle(fontSize: 10)),
-                pw.Text('Date: $dateStr', style: const pw.TextStyle(fontSize: 10)),
-              ],
-            ),
-            pw.Text('Unit: $unitTitle',
-                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 16),
-            pw.Text('Activity Details',
-                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 6),
-            pw.Table.fromTextArray(
-              headers: ['Metric', 'Value'],
-              data: [
-                ['Activities completed', '$activitiesCompleted / $totalActivities'],
-                ['Completion rate', '$activitiesPercent%'],
-              ],
-              cellAlignment: pw.Alignment.centerLeft,
-              headerStyle: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-              cellStyle: pw.TextStyle(fontSize: 9),
-              columnWidths: {0: const pw.FixedColumnWidth(80), 1: const pw.FlexColumnWidth()},
-            ),
-            pw.SizedBox(height: 12),
-            pw.Text('Quiz Details',
-                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 6),
-            pw.Table.fromTextArray(
-              headers: ['Metric', 'Value'],
-              data: [
-                ['Score', '$quizPercent%'],
-                ['Correct answers', '$quizCorrect / $quizTotal'],
-              ],
-              cellAlignment: pw.Alignment.centerLeft,
-              headerStyle: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-              cellStyle: pw.TextStyle(fontSize: 9),
-              columnWidths: {0: const pw.FixedColumnWidth(80), 1: const pw.FlexColumnWidth()},
-            ),
-            pw.SizedBox(height: 12),
-            pw.Text('Progress Trend',
-                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 6),
-            if (previousScores.isNotEmpty) ...[
-              pw.Container(
-                padding: const pw.EdgeInsets.all(6),
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(color: PdfColors.grey300),
-                  borderRadius: pw.BorderRadius.circular(6),
-                ),
-                child: pw.Column(children: [
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
-                    children: [
-                      ...previousScores.asMap().entries.map((entry) => pw.Column(children: [
-                            pw.Text('Unit ${entry.key + 1}',
-                                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey)),
-                            pw.Text('${entry.value}%',
-                                style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
-                          ])),
-                      pw.Column(children: [
-                        pw.Text('Current', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey)),
-                        pw.Text('$quizPercent%',
-                            style: pw.TextStyle(
-                                fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.blue)),
-                      ]),
-                    ],
-                  ),
-                  pw.SizedBox(height: 4),
-                  pw.Text(_getTrendMessage(previousScores, quizPercent),
-                      style: pw.TextStyle(fontSize: 8, fontStyle: pw.FontStyle.italic)),
-                ]),
-              ),
-            ] else ...[
-              pw.Container(
-                padding: const pw.EdgeInsets.all(6),
-                decoration: pw.BoxDecoration(
-                  color: PdfColors.grey100,
-                  border: pw.Border.all(color: PdfColors.grey300),
-                  borderRadius: pw.BorderRadius.circular(6),
-                ),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.center,
-                  children: [
-                    pw.Text(
-                        'First unit completed. Complete more units to see progress trends.',
-                        style: pw.TextStyle(
-                            fontSize: 9, color: PdfColors.grey, fontStyle: pw.FontStyle.italic)),
-                  ],
-                ),
-              ),
-            ],
-            pw.SizedBox(height: 12),
-            pw.Divider(thickness: 0.5),
-            pw.SizedBox(height: 6),
-            pw.Text('Teacher Feedback',
-                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 4),
-            pw.Container(
-              padding: const pw.EdgeInsets.all(8),
-              decoration: pw.BoxDecoration(
-                color: PdfColors.grey100,
-                borderRadius: pw.BorderRadius.circular(6),
-                border: pw.Border.all(color: PdfColors.grey300),
-              ),
-              child: feedback.isNotEmpty
-                  ? pw.Text(feedback,
-                      style: pw.TextStyle(fontSize: 9, fontStyle: pw.FontStyle.italic, height: 1.4))
-                  : pw.Text('No feedback provided yet.',
-                      style: pw.TextStyle(
-                          fontSize: 9, color: PdfColors.grey, fontStyle: pw.FontStyle.italic)),
-            ),
-            pw.SizedBox(height: 8),
-            pw.Divider(thickness: 0.5),
-            pw.Text('Generated by Loringo ${DateTime.now().year}',
-                style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey)),
-          ],
-        ),
-      ),
-    );
-
-    await Printing.layoutPdf(
-      onLayout: (format) async => pdf.save(),
-      name: '${childName.replaceAll(' ', '_')}_${unitTitle.replaceAll(' ', '_')}_report.pdf',
-    );
-  }
-
-  String _getTrendMessage(List<int> previousScores, int currentScore) {
-    if (previousScores.isEmpty) {
-      return 'First unit completed! Complete more units to see your progress trend.';
-    }
-    final lastScore = previousScores.last;
-    final difference = currentScore - lastScore;
-    if (difference >= 10) return 'Excellent improvement! +$difference% compared to previous unit.';
-    if (difference >= 5) return 'Good progress! +$difference% improvement. Keep it up!';
-    if (difference > 0) return 'Slight improvement of +$difference%. Consistency is key!';
-    if (difference == 0) return 'Maintained the same score. Try some extra practice!';
-    return 'Score decreased by ${difference.abs()}%. Review the material again!';
   }
 }

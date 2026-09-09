@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/components/image_dialog.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -43,7 +46,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
   String get typeId => 'image_select';
   
   @override
-  String get displayName => 'Image Select';
+  String get displayName => 'teacher.image_select_task.displayName'.tr();
   
   @override
   // String get defaultQuestion => 'Which of these is ___?';
@@ -89,11 +92,11 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
     for (int i = 0; i < options.length; i++) {
       final hasImage = pickedImages[i] != null || imageControllers[i].text.trim().isNotEmpty;
       if (textControllers[i].text.trim().isEmpty || !hasImage) {
-        return 'Option ${i + 1} must have text and image';
+        return 'teacher.image_select_task.optionMissingTextOrImage'.tr(namedArgs: {'number': '${i + 1}'});
       }
       if (options[i]['isCorrect'] == true) hasCorrect = true;
     }
-    if (!hasCorrect) return 'Mark at least one option as correct';
+    if (!hasCorrect) return 'teacher.image_select_task.markOneCorrect'.tr();
     return null;
   }
 
@@ -137,6 +140,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -154,7 +158,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
             child: TextButton.icon(
               onPressed: _addOption,
               icon: Icon(Icons.add_circle_outline, color: c),
-              label: Text('Add option (${options.length}/4)', style: TextStyle(color: c)),
+              label: Text('teacher.image_select_task.addOptionButton'.tr(namedArgs: {'count': '${options.length}'}), style: TextStyle(color: c)),
             ),
           ),
       ],
@@ -174,7 +178,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Students select the correct image based on the word shown.',
+              'teacher.image_select_task.infoBanner'.tr(),
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -198,7 +202,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
         children: [
           Row(
             children: [
-              Text('Option ${index + 1}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              Text('teacher.image_select_task.optionLabel'.tr(namedArgs: {'number': '${index + 1}'}), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               const Spacer(),
               Row(
                 children: [
@@ -210,7 +214,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
                       widget.onChanged();
                     }),
                   ),
-                  const Text('Correct', style: TextStyle(fontSize: 13)),
+                  Text('teacher.image_select_task.correctLabel'.tr(), style: const TextStyle(fontSize: 13)),
                 ],
               ),
               if (options.length > 3)
@@ -223,9 +227,9 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
           const SizedBox(height: AppSpacing.sm),
           TextFormField(
             controller: textControllers[index],
-            decoration: _inputDecoration(c, 'e.g. "Apple"'),
+            decoration: _inputDecoration(c, 'teacher.image_select_task.optionTextHint'.tr()),
             onChanged: (_) => widget.onChanged(),
-            validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+            validator: (v) => v?.isEmpty ?? true ? 'teacher.image_select_task.requiredError'.tr() : null,
           ),
           const SizedBox(height: AppSpacing.sm),
           _buildImagePicker(index, c),
@@ -257,7 +261,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
                       errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 40),
                     ),
                   )
-                : Center(child: Text('No image', style: TextStyle(color: Colors.grey[500]))),
+                : Center(child: Text('teacher.image_select_task.noImagePlaceholder'.tr(), style: TextStyle(color: Colors.grey[500]))),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
@@ -276,7 +280,7 @@ class _ImageSelectTaskState extends State<ImageSelectTask> with TaskTypeEditorMi
             }
           },
           icon: const Icon(Icons.image, size: 18),
-          label: const Text('Select'),
+          label: Text('teacher.image_select_task.selectButton'.tr()),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey[200],
             foregroundColor: Colors.black87,

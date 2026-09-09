@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/screens/teacher/teacher_view_images_screen.dart';
@@ -26,8 +29,15 @@ class TeacherCategoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final data         = doc.data() as Map<String, dynamic>;
-    final categoryName = data['categoryName'] as String? ?? 'Unnamed';
+    // folderName is the folder-safe form (e.g. "sea_animals") used as the
+    // Cloudinary folder; categoryName here is what's shown to the user
+    // (e.g. "Sea Animals"), falling back to folderName for categories
+    // created before displayName existed. See Database.createCategory.
+    final folderName = data['categoryName'] as String? ??
+        'teacher.teacher_category_card.unnamed'.tr();
+    final categoryName = data['displayName'] as String? ?? folderName;
     final categoryId   = doc.id;
     final ownerId      = data['ownerId'] as String? ?? '';
     final accent       = _accentFor(categoryName);
@@ -41,7 +51,8 @@ class TeacherCategoryCard extends StatelessWidget {
               builder: (_) => TeacherViewImagesScreen(
                   ownerId:      ownerId,
                   categoryId:   categoryId,
-                  categoryName: categoryName))),
+                  categoryName: folderName,
+                  categoryDisplayName: categoryName))),
       child: Container(
         margin: const EdgeInsets.only(bottom: AppSpacing.sm + 2),
         decoration: BoxDecoration(
@@ -104,7 +115,9 @@ class TeacherCategoryCard extends StatelessWidget {
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Icon(Icons.image_rounded, size: 12, color: accent),
                       const SizedBox(width: AppSpacing.xs),
-                      Text('$count image${count != 1 ? 's' : ''}',
+                      Text(
+                          'teacher.teacher_category_card.imageCount'
+                              .plural(count),
                           style: TextStyle(
                               fontSize: 11,
                               color: accent,

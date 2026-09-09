@@ -1,7 +1,10 @@
 // create_content_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -46,6 +49,12 @@ class _CreatePersonalizedContentScreenState
   bool _orderResolved = false;
   bool get _isEditing => widget.contentId != null;
   Color get _c => widget.groupColor;
+
+  // Content is now owned by exactly one group, fixed at creation -- picked
+  // here since this screen is reached from "My Content" (teacher-wide, not
+  // already inside a specific group's context). Not editable afterward:
+  // editing an existing content item never touches ownership.
+  String? _selectedGroupId;
 
   @override
   void initState() {
@@ -101,6 +110,12 @@ class _CreatePersonalizedContentScreenState
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (!_isEditing && _selectedGroupId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('teacher.create_content_screen.pickGroup'.tr()), backgroundColor: AppColors.danger),
+      );
+      return;
+    }
     setState(() => isLoading = true);
 
     try {
@@ -120,7 +135,7 @@ class _CreatePersonalizedContentScreenState
         if (noChanges) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
+            SnackBar(content: Text('common.noChangesMade'.tr()), backgroundColor: AppColors.muted),
           );
           return;
         }
@@ -139,13 +154,16 @@ class _CreatePersonalizedContentScreenState
           ageGroup: selectedAgeGroup,
           order: int.parse(orderController.text.trim()),
           teacherId: teacherId,
+          groupId: _selectedGroupId!,
         );
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_isEditing ? 'Content updated successfully!' : 'Content created successfully!'),
+            content: Text(_isEditing
+                ? 'teacher.create_content_screen.contentUpdatedSuccess'.tr()
+                : 'teacher.create_content_screen.contentCreatedSuccess'.tr()),
             backgroundColor: AppColors.success,
           ),
         );
@@ -154,7 +172,7 @@ class _CreatePersonalizedContentScreenState
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})), backgroundColor: AppColors.danger),
         );
       }
     } finally {
@@ -164,6 +182,7 @@ class _CreatePersonalizedContentScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader, same
       // as the rest of the content hierarchy (list/editor screens). This
@@ -173,7 +192,9 @@ class _CreatePersonalizedContentScreenState
       body: Column(
         children: [
           TeacherScreenHeader(
-            title: _isEditing ? 'Edit Content' : 'Create New Content',
+            title: _isEditing
+                ? 'teacher.create_content_screen.editContent'.tr()
+                : 'teacher.create_content_screen.createNewContent'.tr(),
             color: _c,
           ),
           Expanded(
@@ -188,35 +209,52 @@ class _CreatePersonalizedContentScreenState
                     CreateFormBanner(
                       color: _c,
                       icon: Icons.folder_open_rounded,
-                      label: _isEditing ? 'Editing Content' : 'New Content',
-                      description: 'A top-level subject area, like "English Essentials I"',
+                      label: _isEditing
+                          ? 'teacher.create_content_screen.editingContent'.tr()
+                          : 'teacher.create_content_screen.newContent'.tr(),
+                      description: 'teacher.create_content_screen.bannerDescription'.tr(),
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Title'),
+                    if (!_isEditing) ...[
+                      CreateFormLabel('teacher.create_content_screen.group'.tr()),
+                      const SizedBox(height: AppSpacing.sm),
+                      _GroupPicker(
+                        color: _c,
+                        selectedGroupId: _selectedGroupId,
+                        onSelected: (id) => setState(() => _selectedGroupId = id),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                    ],
+
+                    CreateFormLabel('teacher.create_content_screen.titleLabel'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     CreateFormField(
                       controller: titleController,
                       color: _c,
                       icon: Icons.title,
-                      hint: 'e.g. Present Tense Verbs, Numbers 1-100',
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
+                      hint: 'teacher.create_content_screen.titleHint'.tr(),
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'teacher.create_content_screen.titleRequired'.tr()
+                          : null,
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Description'),
+                    CreateFormLabel('teacher.create_content_screen.descriptionLabel'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     CreateFormField(
                       controller: descriptionController,
                       color: _c,
                       icon: Icons.description,
-                      hint: 'Brief description of the content',
+                      hint: 'teacher.create_content_screen.descriptionHint'.tr(),
                       maxLines: 3,
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Description is required' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'teacher.create_content_screen.descriptionRequired'.tr()
+                          : null,
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Age Group'),
+                    CreateFormLabel('teacher.create_content_screen.ageGroupLabel'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     ...['5-6 years', '7-8 years', '9+ years'].map((age) => RadioListTile<String>(
                           contentPadding: EdgeInsets.zero,
@@ -230,7 +268,9 @@ class _CreatePersonalizedContentScreenState
 
                     CreateFormSubmitButton(
                       color: _c,
-                      label: _isEditing ? 'UPDATE CONTENT' : 'CREATE CONTENT',
+                      label: _isEditing
+                          ? 'teacher.create_content_screen.updateContent'.tr()
+                          : 'teacher.create_content_screen.createContent'.tr(),
                       isLoading: isLoading || !_orderResolved,
                       onPressed: _submit,
                     ),
@@ -241,6 +281,73 @@ class _CreatePersonalizedContentScreenState
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Group picker ─────────────────────────────────────────────────────────
+// Lists the teacher's active (non-archived) groups as selectable chips --
+// content needs exactly one owning group decided up front now that
+// `assignedTo` (many-to-many) is gone.
+class _GroupPicker extends StatelessWidget {
+  const _GroupPicker({
+    required this.color,
+    required this.selectedGroupId,
+    required this.onSelected,
+  });
+
+  final Color color;
+  final String? selectedGroupId;
+  final void Function(String groupId) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    if (teacherId == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: Database().getTeacherGroupsStream(teacherId),
+      builder: (context, snap) {
+        final groups = (snap.data?.docs ?? const <QueryDocumentSnapshot>[])
+            .where((d) => (d.data() as Map)['archived'] != true)
+            .toList();
+
+        if (groups.isEmpty) {
+          return Text(
+            'teacher.create_content_screen.createGroupFirst'.tr(),
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+          );
+        }
+
+        return Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: groups.map((d) {
+            final id = d.id;
+            final name = (d.data() as Map)['name'] as String? ??
+                'teacher.teacher_content_editor_screen.group'.tr();
+            final isSelected = id == selectedGroupId;
+            return GestureDetector(
+              onTap: () => onSelected(id),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  color: isSelected ? color : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(AppRadii.pill),
+                  border: Border.all(color: isSelected ? color : Colors.grey.shade300),
+                ),
+                child: Text(name,
+                    style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13)),
+              ),
+            );
+          }).toList(),
+        );
+      },
     );
   }
 }

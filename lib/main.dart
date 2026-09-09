@@ -1,5 +1,6 @@
 import 'package:cloudinary_flutter/cloudinary_context.dart';
 import 'package:cloudinary_url_gen/cloudinary.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:loringo_app/firebase_options.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/initials/splash_screen.dart';
 import 'package:loringo_app/services/audio/feedback_sound_service.dart';
@@ -16,6 +18,7 @@ import 'package:provider/provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await EasyLocalization.ensureInitialized();
 
   if (!kIsWeb) {
     await SystemChrome.setPreferredOrientations([
@@ -55,13 +58,23 @@ void main() async {
   }
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => BiometricProvider()),
-        ChangeNotifierProvider(create: (_) => NotificationProvider()),
-      ],
-      child: const MyApp(),
-    )
+    EasyLocalization(
+      supportedLocales: const [Locale('en'), Locale('es')],
+      path: 'assets/translations',
+      fallbackLocale: const Locale('en'),
+      // false: no manual language toggle anymore — always re-detect the
+      // live device locale on every launch instead of freezing on
+      // whatever was picked once and persisting it.
+      saveLocale: false,
+      child: MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => BiometricProvider()),
+          ChangeNotifierProvider(create: (_) => NotificationProvider()),
+          ChangeNotifierProvider(create: (_) => LocaleProvider()),
+        ],
+        child: const MyApp(),
+      ),
+    ),
   );
 
   // loads the success/fail sounds once so the first
@@ -78,6 +91,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Loringo',
+      localizationsDelegates: context.localizationDelegates,
+      supportedLocales: context.supportedLocales,
+      locale: context.locale,
       home: kIsWeb ? const AuthGate() : const SplashScreen(),
     );
   }

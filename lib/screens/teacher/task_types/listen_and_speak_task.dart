@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -41,7 +44,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
   String get typeId => 'listen_and_speak';
   
   @override
-  String get displayName => 'Listen & Speak';
+  String get displayName => 'teacher.listen_and_speak_task.displayName'.tr();
   
   @override
   Widget buildEditor(BuildContext context) {
@@ -50,6 +53,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -71,7 +75,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
   @override
   String? validate() {
     if (phraseController.text.trim().isEmpty) {
-      return 'Please enter a phrase for students to listen and repeat';
+      return 'teacher.listen_and_speak_task.phraseRequiredError'.tr();
     }
     return null;
   }
@@ -85,7 +89,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
 
   Widget _buildEditor() {
     final c = widget.groupColor;
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -112,7 +116,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Students ONLY hear the audio (no text shown). They must listen and repeat from memory.',
+              'teacher.listen_and_speak_task.infoBanner'.tr(),
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ),
@@ -127,9 +131,9 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
       children: [
         Row(
           children: [
-            const Text(
-              'English Phrase (Audio Only)',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            Text(
+              'teacher.listen_and_speak_task.phraseLabel'.tr(),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
             ),
             const SizedBox(width: 8),
             Container(
@@ -138,9 +142,9 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
                 color: Colors.red.shade100,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Text(
-                'Required',
-                style: TextStyle(fontSize: 10, color: Colors.red),
+              child: Text(
+                'teacher.listen_and_speak_task.requiredBadge'.tr(),
+                style: const TextStyle(fontSize: 10, color: Colors.red),
               ),
             ),
           ],
@@ -149,14 +153,14 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
         TextFormField(
           controller: phraseController,
           decoration: InputDecoration(
-            hintText: 'Enter the phrase students will hear',
+            hintText: 'teacher.listen_and_speak_task.phraseHint'.tr(),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
             filled: true,
             fillColor: Colors.white,
           ),
           maxLines: 3,
           onChanged: (_) => widget.onChanged(),
-          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+          validator: (v) => v?.trim().isEmpty ?? true ? 'teacher.listen_and_speak_task.requiredError'.tr() : null,
         ),
         const SizedBox(height: 8),
         Row(
@@ -165,7 +169,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
             const SizedBox(width: 4),
             Expanded(
               child: Text(
-                'This text is hidden from students. They only hear the audio.',
+                'teacher.listen_and_speak_task.phraseHiddenNote'.tr(),
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
               ),
             ),
@@ -179,15 +183,15 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Hint (Optional)',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+        Text(
+          'teacher.listen_and_speak_task.hintLabel'.tr(),
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: AppSpacing.xs),
         TextFormField(
           controller: hintController,
           decoration: InputDecoration(
-            hintText: 'e.g. "Focus on the number of words"',
+            hintText: 'teacher.listen_and_speak_task.hintFieldHint'.tr(),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
             filled: true,
             fillColor: Colors.white,
@@ -197,7 +201,7 @@ class _ListenAndSpeakTaskState extends State<ListenAndSpeakTask> with TaskTypeEd
         ),
         const SizedBox(height: 8),
         Text(
-          'Hint shown to students before they listen (e.g., what to focus on).',
+          'teacher.listen_and_speak_task.hintHelperText'.tr(),
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],

@@ -1,9 +1,12 @@
 // task_batch_review_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_task_editor_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:provider/provider.dart';
 
 /// One slot in the batch: a task type + order that's already decided, and
 /// an optional [result] once the teacher has gone in and defined its
@@ -19,19 +22,19 @@ class TaskBatchSlot {
 }
 
 String typeLabel(String type) {
-  const map = {
-    'image_select': 'Image Selection',
-    'image_select_reverse': 'Image Select Reverse',
-    'fill_blank': 'Fill the Blank',
-    'arrange': 'Arrange Words',
-    'complete_the_chat': 'Complete Chat',
-    'match': 'Match',
-    'reading': 'Reading',
-    'sentence_builder': 'Sentence Builder',
-    'repeat_after_me': 'Repeat After Me',
-    'listen_and_speak': 'Listen & Speak',
-    'sound_match': 'Sound Match',
-    'odd_one_out': 'Odd One Out',
+  final map = {
+    'image_select': 'teacher.task_batch_review_screen.typeImageSelect'.tr(),
+    'image_select_reverse': 'teacher.task_batch_review_screen.typeImageSelectReverse'.tr(),
+    'fill_blank': 'teacher.task_batch_review_screen.typeFillBlank'.tr(),
+    'arrange': 'teacher.task_batch_review_screen.typeArrange'.tr(),
+    'complete_the_chat': 'teacher.task_batch_review_screen.typeCompleteTheChat'.tr(),
+    'match': 'teacher.task_batch_review_screen.typeMatch'.tr(),
+    'reading': 'teacher.task_batch_review_screen.typeReading'.tr(),
+    'sentence_builder': 'teacher.task_batch_review_screen.typeSentenceBuilder'.tr(),
+    'repeat_after_me': 'teacher.task_batch_review_screen.typeRepeatAfterMe'.tr(),
+    'listen_and_speak': 'teacher.task_batch_review_screen.typeListenAndSpeak'.tr(),
+    'sound_match': 'teacher.task_batch_review_screen.typeSoundMatch'.tr(),
+    'odd_one_out': 'teacher.task_batch_review_screen.typeOddOneOut'.tr(),
   };
   return map[type] ?? type;
 }
@@ -215,7 +218,7 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
             backgroundColor: AppColors.danger,
             behavior: SnackBarBehavior.floating,
           ),
@@ -247,7 +250,7 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
     if (ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${_slots.length} tasks created successfully!'),
+          content: Text('teacher.task_batch_review_screen.tasksCreatedSuccessfully'.plural(_slots.length)),
           backgroundColor: AppColors.success,
           behavior: SnackBarBehavior.floating,
         ),
@@ -261,6 +264,7 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final definedCount = _slots.where((s) => s.isDefined).length;
 
     return Scaffold(
@@ -274,12 +278,18 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              widget.isGenerated ? 'Review Generated Tasks' : 'Review Added Tasks',
+              widget.isGenerated
+                  ? 'teacher.task_batch_review_screen.reviewGeneratedTasks'.tr()
+                  : 'teacher.task_batch_review_screen.reviewAddedTasks'.tr(),
               style: const TextStyle(
                   color: AppColors.onPrimary,
                   fontWeight: FontWeight.bold,
                   fontSize: 17)),
-            Text('$definedCount / ${_slots.length} defined',
+            Text(
+                'teacher.task_batch_review_screen.definedProgress'.tr(namedArgs: {
+                  'count': '$definedCount',
+                  'total': '${_slots.length}',
+                }),
                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ],
         ),
@@ -337,7 +347,10 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
                       title: Text(
                         slot.isDefined
                             ? slot.result!.title
-                            : '${slot.order}. ${typeLabel(slot.type)}',
+                            : 'teacher.task_batch_review_screen.orderAndType'.tr(namedArgs: {
+                                'order': '${slot.order}',
+                                'type': typeLabel(slot.type),
+                              }),
                         style: const TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 14),
                         maxLines: 1,
@@ -346,7 +359,7 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
                       subtitle: Text(
                         slot.isDefined
                             ? typeLabel(slot.type)
-                            : 'Not defined yet — tap to configure',
+                            : 'teacher.task_batch_review_screen.notDefinedYet'.tr(),
                         style: TextStyle(
                           fontSize: 12,
                           color: slot.isDefined
@@ -393,8 +406,8 @@ class _TaskBatchReviewScreenState extends State<TaskBatchReviewScreen> {
                     )
                   : Text(
                       !_allDefined
-                          ? 'Define all tasks to continue'
-                          : (widget.isPendingActivity ? 'Continue' : 'Save'),
+                          ? 'teacher.task_batch_review_screen.defineAllTasksToContinue'.tr()
+                          : (widget.isPendingActivity ? 'common.continue'.tr() : 'common.save'.tr()),
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
             ),

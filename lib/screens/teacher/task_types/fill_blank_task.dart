@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class FillBlankTask extends StatefulWidget {
   final Color groupColor;
@@ -93,18 +96,18 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
 
   @override
   String? validate() {
-    if (_sentenceController.text.trim().isEmpty) return 'Write the sentence first';
+    if (_sentenceController.text.trim().isEmpty) return 'teacher.fill_blank_task.writeSentenceFirst'.tr();
     final blanks = _blankCount;
-    if (blanks == 0) return 'Add at least one blank';
+    if (blanks == 0) return 'teacher.fill_blank_task.addAtLeastOneBlank'.tr();
 
     for (int b = 0; b < blanks; b++) {
       if (options.where((o) => o['isCorrect'] == true && o['blankIndex'] == b).isEmpty) {
-        return 'Blank ${b + 1} has no correct answer';
+        return 'teacher.fill_blank_task.blankHasNoCorrectAnswer'.tr(namedArgs: {'number': '${b + 1}'});
       }
     }
 
     if (options.where((o) => o['isCorrect'] == false && optionControllers[options.indexOf(o)].text.isNotEmpty).isEmpty) {
-      return 'Add at least one distractor';
+      return 'teacher.fill_blank_task.addAtLeastOneDistractor'.tr();
     }
     return null;
   }
@@ -177,7 +180,10 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
   Widget buildEditor(BuildContext context) => build(context);
 
   @override
-  Widget build(BuildContext context) => _buildEditor();
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    return _buildEditor();
+  }
 
   Widget _buildEditor() {
     final c = widget.groupColor;
@@ -194,7 +200,10 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
           child: TextButton.icon(
             onPressed: _addOption,
             icon: Icon(Icons.add_circle_outline, color: c),
-            label: Text('Add option (${options.length})', style: TextStyle(color: c)),
+            label: Text(
+              'teacher.fill_blank_task.addOption'.tr(namedArgs: {'count': '${options.length}'}),
+              style: TextStyle(color: c),
+            ),
           ),
         ),
       ],
@@ -205,7 +214,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Question', style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+        Text('teacher.fill_blank_task.question'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
         const SizedBox(height: AppSpacing.sm),
         Container(
           decoration: BoxDecoration(
@@ -218,7 +227,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
             focusNode: _sentenceFocusNode,
             maxLines: 4,
             decoration: InputDecoration(
-              hintText: 'e.g. "Good morning everyone, rise and shine"',
+              hintText: 'teacher.fill_blank_task.sentenceHint'.tr(),
               hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
               border: InputBorder.none,
               contentPadding: const EdgeInsets.all(AppSpacing.md),
@@ -234,7 +243,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
         TextButton.icon(
           onPressed: _insertBlankAtCursor,
           icon: Icon(Icons.add_box_outlined, color: c, size: 20),
-          label: Text('Add Blank', style: TextStyle(color: c, fontWeight: FontWeight.w600)),
+          label: Text('teacher.fill_blank_task.addBlank'.tr(), style: TextStyle(color: c, fontWeight: FontWeight.w600)),
           style: TextButton.styleFrom(
             backgroundColor: c.withOpacity(0.08),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -244,7 +253,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
         Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Text(
-            'Tap in the sentence to place your cursor, then tap "Add Blank" to insert one there.',
+            'teacher.fill_blank_task.addBlankHint'.tr(),
             style: TextStyle(fontSize: 11, color: Colors.grey[500]),
           ),
         ),
@@ -255,7 +264,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
         // unchanged. Only shown once there's something to preview.
         if (_sentenceController.text.trim().isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
-          Text('Preview', style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+          Text('teacher.fill_blank_task.preview'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
           const SizedBox(height: AppSpacing.sm),
           Container(
             width: double.infinity,
@@ -282,7 +291,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
               borderRadius: BorderRadius.circular(AppRadii.pill),
             ),
             child: Text(
-              '$_blankCount blank${_blankCount > 1 ? 's' : ''} added — assign each one below',
+              'teacher.fill_blank_task.blanksAddedBanner'.plural(_blankCount),
               style: TextStyle(fontSize: 12, color: c, fontWeight: FontWeight.w500),
             ),
           ),
@@ -323,7 +332,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
         children: [
           Icon(isAssigned ? Icons.check_circle : Icons.help_outline, size: 14, color: isAssigned ? c : Colors.grey[500]),
           const SizedBox(width: 4),
-          Text('Blank ${ordinal + 1}',
+          Text('teacher.fill_blank_task.blankOrdinal'.tr(namedArgs: {'number': '${ordinal + 1}'}),
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isAssigned ? c : Colors.grey[600])),
         ],
       ),
@@ -333,7 +342,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
   Widget _buildOptionsHeader(Color c) {
     return Row(
       children: [
-        const Text('Options', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text('teacher.fill_blank_task.options'.tr(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(width: AppSpacing.sm),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 2),
@@ -342,7 +351,10 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
             borderRadius: BorderRadius.circular(AppRadii.pill),
           ),
           child: Text(
-            '${_assignedBlankIndices.length} correct · ${options.where((o) => !o['isCorrect']).length} distractors',
+            'teacher.fill_blank_task.correctDistractorsCount'.tr(namedArgs: {
+              'correct': '${_assignedBlankIndices.length}',
+              'distractors': '${options.where((o) => !o['isCorrect']).length}',
+            }),
             style: TextStyle(fontSize: 11, color: c, fontWeight: FontWeight.w500),
           ),
         ),
@@ -369,22 +381,22 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
         children: [
           Row(
             children: [
-              Text('Option ${index + 1}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              Text('teacher.fill_blank_task.optionOrdinal'.tr(namedArgs: {'number': '${index + 1}'}), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               const Spacer(),
               if (blanks > 0)
                 DropdownButton<int?>(
                   value: isCorrect ? opt['blankIndex'] as int? : null,
-                  hint: Text('Distractor', style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+                  hint: Text('teacher.fill_blank_task.distractor'.tr(), style: TextStyle(fontSize: 13, color: Colors.grey[500])),
                   isDense: true,
                   underline: const SizedBox.shrink(),
                   items: [
-                    const DropdownMenuItem<int?>(value: null, child: Text('Distractor')),
+                    DropdownMenuItem<int?>(value: null, child: Text('teacher.fill_blank_task.distractor'.tr())),
                     for (int b = 0; b < blanks; b++)
                       DropdownMenuItem<int?>(
                         value: b,
                         enabled: !(assignedIndices.contains(b) && !(isCorrect && opt['blankIndex'] == b)),
                         child: Text(
-                          'Blank ${b + 1} answer',
+                          'teacher.fill_blank_task.blankAnswerOrdinal'.tr(namedArgs: {'number': '${b + 1}'}),
                           style: TextStyle(
                             fontSize: 13,
                             color: (assignedIndices.contains(b) && !(isCorrect && opt['blankIndex'] == b))
@@ -415,7 +427,7 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(4)),
-                  child: Text('Add blanks first', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                  child: Text('teacher.fill_blank_task.addBlanksFirst'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 ),
               if (options.length > (_blankCount + 1).clamp(3, 99))
                 IconButton(
@@ -429,14 +441,14 @@ class _FillBlankTaskState extends State<FillBlankTask> with TaskTypeEditorMixin 
             controller: optionControllers[index],
             decoration: InputDecoration(
               labelText: isCorrect && blanks > 0 && opt['blankIndex'] != null
-                  ? 'Answer for Blank ${(opt['blankIndex'] as int) + 1}'
-                  : (blanks > 0 ? 'Distractor word' : 'Option text'),
+                  ? 'teacher.fill_blank_task.answerForBlank'.tr(namedArgs: {'number': '${(opt['blankIndex'] as int) + 1}'})
+                  : (blanks > 0 ? 'teacher.fill_blank_task.distractorWord'.tr() : 'teacher.fill_blank_task.optionText'.tr()),
               border: const OutlineInputBorder(),
               filled: true,
               fillColor: Colors.grey[50],
             ),
             onChanged: (_) => widget.onChanged(),
-            validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+            validator: (v) => v?.isEmpty ?? true ? 'teacher.fill_blank_task.required'.tr() : null,
           ),
         ],
       ),

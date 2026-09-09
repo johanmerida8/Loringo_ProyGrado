@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -39,30 +42,37 @@ class CreateQuizScreen extends StatefulWidget {
     this.quizId,
     this.existingData,
   }) : assert(
-          scope != 'lesson' || lessonId != null,
-          'lessonId is required when scope is lesson',
-        );
+         scope != 'lesson' || lessonId != null,
+         'lessonId is required when scope is lesson',
+       );
 
   bool get isEditing => quizId != null;
   bool get isLessonScope => scope == 'lesson';
 
   @override
-  State<CreateQuizScreen> createState() =>
-      _CreateQuizScreenState();
+  State<CreateQuizScreen> createState() => _CreateQuizScreenState();
 }
 
 // ── Question model ────────────────────────────────────────────────────────────
 class _QuizQuestion {
   TextEditingController questionCtrl;
   List<TextEditingController> optionCtrls;
-  int correctIndex;
+
+  /// null until the teacher explicitly taps an option. Deliberately has NO
+  /// default of 0 ("Option A") — that silent default was the bug: a
+  /// question left untouched saved with whatever text the teacher typed
+  /// first marked "correct", regardless of which option was actually
+  /// right. _validateQuestions rejects a save while this is still null.
+  int? correctIndex;
 
   _QuizQuestion({
     String question = '',
     List<String> options = const ['', '', '', ''],
-    this.correctIndex = 0,
-  })  : questionCtrl = TextEditingController(text: question),
-        optionCtrls  = options.map((o) => TextEditingController(text: o)).toList();
+    this.correctIndex,
+  }) : questionCtrl = TextEditingController(text: question),
+       optionCtrls = options
+           .map((o) => TextEditingController(text: o))
+           .toList();
 
   void dispose() {
     questionCtrl.dispose();
@@ -70,8 +80,7 @@ class _QuizQuestion {
   }
 }
 
-class _CreateQuizScreenState
-    extends State<CreateQuizScreen> {
+class _CreateQuizScreenState extends State<CreateQuizScreen> {
   final _formKey = GlobalKey<FormState>();
   final Database _db = Database();
 
@@ -121,10 +130,13 @@ class _CreateQuizScreenState
       // fixed sentinels in _save() are what get written on next save
       // regardless of what an older graded Lesson Quiz doc had stored.
       if (!widget.isLessonScope) {
-        _passingScore = (widget.existingData!['passingScore'] as num?)?.toInt() ?? 1;
-        _maxAttempts  = (widget.existingData!['maxAttempts'] as num?)?.toInt() ?? 0;
+        _passingScore =
+            (widget.existingData!['passingScore'] as num?)?.toInt() ?? 1;
+        _maxAttempts =
+            (widget.existingData!['maxAttempts'] as num?)?.toInt() ?? 0;
       }
-      _xpReward = (widget.existingData!['xpReward'] as num?)?.toInt() ?? _xpReward;
+      _xpReward =
+          (widget.existingData!['xpReward'] as num?)?.toInt() ?? _xpReward;
 
       // Load questions from the subcollection
       _isLoadingQuestions = true;
@@ -152,10 +164,17 @@ class _CreateQuizScreenState
             .personalizedLessons(widget.contentId, widget.unitId)
             .doc(widget.lessonId)
             .get();
-        name = (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'this lesson';
+        name =
+            (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
+            'teacher.create_quiz_screen.thisLesson'.tr();
       } else {
-        final unitDoc = await _db.personalizedUnits(widget.contentId).doc(widget.unitId).get();
-        name = (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'this unit';
+        final unitDoc = await _db
+            .personalizedUnits(widget.contentId)
+            .doc(widget.unitId)
+            .get();
+        name =
+            (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
+            'teacher.create_quiz_screen.thisUnit'.tr();
       }
       if (mounted) setState(() => _destinationName = name);
     } catch (_) {
@@ -176,27 +195,41 @@ class _CreateQuizScreenState
           .personalizedLessons(widget.contentId, widget.unitId)
           .doc(widget.lessonId)
           .get();
-      final lessonName = (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'Lesson';
+      final lessonName =
+          (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
+          'Lesson';
       return '$lessonName — Lesson Quiz';
     } else {
-      final unitDoc = await _db.personalizedUnits(widget.contentId).doc(widget.unitId).get();
-      final unitName = (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ?? 'Unit';
+      final unitDoc = await _db
+          .personalizedUnits(widget.contentId)
+          .doc(widget.unitId)
+          .get();
+      final unitName =
+          (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
+          'Unit';
       return '$unitName — Unit Test';
     }
   }
 
   Future<void> _loadExistingQuestions() async {
     try {
-      final snap = await _db.getQuizQuestions(widget.quizId!);
+      final snap = await _db.getQuizQuestions(
+        widget.contentId,
+        widget.unitId,
+        widget.quizId!,
+        lessonId: widget.lessonId,
+      );
 
       final loaded = snap.docs.map((doc) {
         final d = doc.data() as Map<String, dynamic>;
-        final opts = List<String>.from((d['options'] as List? ?? []).map((e) => e.toString()));
+        final opts = List<String>.from(
+          (d['options'] as List? ?? []).map((e) => e.toString()),
+        );
         // Pad to 4 if needed (safety)
         while (opts.length < 4) opts.add('');
         return _QuizQuestion(
-          question:     d['question'] as String? ?? '',
-          options:      opts,
+          question: d['question'] as String? ?? '',
+          options: opts,
           correctIndex: (d['correctIndex'] as num?)?.toInt() ?? 0,
         );
       }).toList();
@@ -205,17 +238,19 @@ class _CreateQuizScreenState
       // purely so the form has something to edit, it must not count as
       // part of the original saved state.
       _originalQuestions = loaded
-          .map((q) => {
-                'question': q.questionCtrl.text.trim(),
-                'options': q.optionCtrls.map((c) => c.text.trim()).toList(),
-                'correctIndex': q.correctIndex,
-              })
+          .map(
+            (q) => {
+              'question': q.questionCtrl.text.trim(),
+              'options': q.optionCtrls.map((c) => c.text.trim()).toList(),
+              'correctIndex': q.correctIndex,
+            },
+          )
           .toList();
 
       if (loaded.isEmpty) loaded.add(_QuizQuestion());
 
       setState(() {
-        _questions          = loaded;
+        _questions = loaded;
         _isLoadingQuestions = false;
         // Re-clamp passing score now that we know question count —
         // only meaningful for unit scope, where the field is shown.
@@ -225,12 +260,14 @@ class _CreateQuizScreenState
       });
     } catch (e) {
       setState(() {
-        _questions          = [_QuizQuestion(), _QuizQuestion()];
+        _questions = [_QuizQuestion(), _QuizQuestion()];
         _isLoadingQuestions = false;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load existing questions: $e')),
+          SnackBar(content: Text(
+              'teacher.create_quiz_screen.couldNotLoadQuestions'
+                  .tr(namedArgs: {'error': '$e'}))),
         );
       }
     }
@@ -266,21 +303,34 @@ class _CreateQuizScreenState
     for (int i = 0; i < _questions.length; i++) {
       final q = _questions[i];
       if (q.questionCtrl.text.trim().isEmpty) {
-        _showSnack('Question ${i + 1}: question text is required');
+        _showSnack('teacher.create_quiz_screen.questionTextRequired'
+            .tr(namedArgs: {'num': '${i + 1}'}));
         return false;
       }
       for (int o = 0; o < 4; o++) {
         if (q.optionCtrls[o].text.trim().isEmpty) {
-          _showSnack('Question ${i + 1}: option ${String.fromCharCode(65 + o)} is required');
+          _showSnack(
+            'teacher.create_quiz_screen.optionRequired'.tr(namedArgs: {
+              'num': '${i + 1}',
+              'letter': String.fromCharCode(65 + o),
+            }),
+          );
           return false;
         }
+      }
+      if (q.correctIndex == null) {
+        _showSnack('teacher.create_quiz_screen.tapCorrectAnswerBeforeSaving'
+            .tr(namedArgs: {'num': '${i + 1}'}));
+        return false;
       }
     }
     return true;
   }
 
   void _showSnack(String msg, {Color color = AppColors.danger}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
   /// True if the form's current values differ from what was actually
@@ -301,11 +351,14 @@ class _CreateQuizScreenState
     final original = widget.existingData!;
 
     if (resolvedTitle != (original['title'] as String? ?? '')) return true;
-    if (effectivePassingScore != ((original['passingScore'] as num?)?.toInt() ?? 0)) {
+    if (effectivePassingScore !=
+        ((original['passingScore'] as num?)?.toInt() ?? 0)) {
       return true;
     }
-    if (_xpReward != ((original['xpReward'] as num?)?.toInt() ?? 0)) return true;
-    if (effectiveMaxAttempts != ((original['maxAttempts'] as num?)?.toInt() ?? 0)) {
+    if (_xpReward != ((original['xpReward'] as num?)?.toInt() ?? 0))
+      return true;
+    if (effectiveMaxAttempts !=
+        ((original['maxAttempts'] as num?)?.toInt() ?? 0)) {
       return true;
     }
 
@@ -335,7 +388,8 @@ class _CreateQuizScreenState
     // Attempts validation only applies to Unit Quiz — Lesson Quiz never
     // shows this field and always sends the fixed unlimited sentinel.
     if (!widget.isLessonScope && (_maxAttempts < 1 || _maxAttempts > 5)) {
-      _showSnack('Please set maximum attempts (1-5)', color: AppColors.warning);
+      _showSnack('teacher.create_quiz_screen.setMaxAttempts'.tr(),
+          color: AppColors.warning);
       return;
     }
 
@@ -343,19 +397,29 @@ class _CreateQuizScreenState
     try {
       final resolvedTitle = await _resolveTitle();
 
-      final questionsList = _questions.asMap().entries.map((e) => {
-        'question':     e.value.questionCtrl.text.trim(),
-        'options':      e.value.optionCtrls.map((c) => c.text.trim()).toList(),
-        'correctIndex': e.value.correctIndex,
-        'order':        e.key + 1,
-      }).toList();
+      // _validateQuestions (called above) already rejected any question
+      // still missing a correctIndex, so the ! here is safe.
+      final questionsList = _questions
+          .asMap()
+          .entries
+          .map(
+            (e) => {
+              'question': e.value.questionCtrl.text.trim(),
+              'options': e.value.optionCtrls.map((c) => c.text.trim()).toList(),
+              'correctIndex': e.value.correctIndex!,
+              'order': e.key + 1,
+            },
+          )
+          .toList();
 
       // Lesson Quiz is ungraded: passingScore is sent as "all questions"
       // (irrelevant in practice — saveQuizCompletion no longer branches
       // on it for lesson scope) and maxAttempts as a large fixed value
       // since retries are unlimited by design. See class-level comment.
-      final effectivePassingScore = widget.isLessonScope ? questionsList.length : _passingScore;
-      final effectiveMaxAttempts  = widget.isLessonScope ? 99 : _maxAttempts;
+      final effectivePassingScore = widget.isLessonScope
+          ? questionsList.length
+          : _passingScore;
+      final effectiveMaxAttempts = widget.isLessonScope ? 99 : _maxAttempts;
 
       if (widget.isEditing) {
         // Nothing to write if the form matches what's already saved —
@@ -369,7 +433,7 @@ class _CreateQuizScreenState
           questionsList: questionsList,
         )) {
           if (mounted) {
-            _showSnack('No changes made', color: AppColors.muted);
+            _showSnack('common.noChangesMade'.tr(), color: AppColors.muted);
             Navigator.pop(context);
           }
           return;
@@ -379,6 +443,9 @@ class _CreateQuizScreenState
         // title re-derived above so editing an existing Quiz refreshes it
         // to match the Unit/Lesson's current name.
         await _db.updateQuiz(
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
           quizId: widget.quizId!,
           title: resolvedTitle,
           questions: questionsList,
@@ -388,7 +455,9 @@ class _CreateQuizScreenState
         );
         if (mounted) {
           _showSnack(
-            widget.isLessonScope ? 'Lesson Quiz updated successfully' : 'Quiz updated successfully',
+            widget.isLessonScope
+                ? 'teacher.create_quiz_screen.lessonQuizUpdated'.tr()
+                : 'teacher.create_quiz_screen.quizUpdated'.tr(),
             color: AppColors.success,
           );
           Navigator.pop(context);
@@ -396,20 +465,22 @@ class _CreateQuizScreenState
       } else {
         final quizId = 'quiz_${DateTime.now().millisecondsSinceEpoch}';
         await _db.createQuiz(
-          contentId:    widget.contentId,
-          unitId:       widget.unitId,
-          quizId:       quizId,
-          title:        resolvedTitle,
-          questions:    questionsList,
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          quizId: quizId,
+          title: resolvedTitle,
+          questions: questionsList,
           passingScore: effectivePassingScore,
-          xpReward:     _xpReward,
-          maxAttempts:  effectiveMaxAttempts,
-          scope:        widget.scope,
-          lessonId:     widget.lessonId,
+          xpReward: _xpReward,
+          maxAttempts: effectiveMaxAttempts,
+          groupId: widget.groupId,
+          lessonId: widget.lessonId,
         );
         if (mounted) {
           _showSnack(
-            widget.isLessonScope ? 'Lesson Quiz created successfully' : 'Quiz created successfully',
+            widget.isLessonScope
+                ? 'teacher.create_quiz_screen.lessonQuizCreated'.tr()
+                : 'teacher.create_quiz_screen.quizCreated'.tr(),
             color: AppColors.success,
           );
           Navigator.pop(context);
@@ -420,7 +491,7 @@ class _CreateQuizScreenState
       // database.dart's _assertNoExistingQuiz as-is — it's already
       // written to be teacher-readable ("This unit/lesson already has a
       // Quiz...").
-      _showSnack('Error: $e');
+      _showSnack('common.errorWithMessage'.tr(namedArgs: {'error': '$e'}));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -432,111 +503,211 @@ class _CreateQuizScreenState
     final c = widget.groupColor;
     final n = _questions.isEmpty ? 1 : _questions.length;
 
-    return Column(children: [
-      // Identity indicator — read-only, replaces the old free-text
-      // title field. The Quiz's title is derived automatically from
-      // the Unit/Lesson name (see _resolveTitle); showing it here as a
-      // non-editable chip confirms to the teacher what this Quiz is
-      // tied to without inviting them to type a name for it.
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
-        decoration: BoxDecoration(
-          color: c.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(AppRadii.md),
-          border: Border.all(color: c.withOpacity(0.2)),
-        ),
-        child: Row(children: [
-          Icon(widget.isLessonScope ? Icons.bookmark_outline : Icons.layers_outlined, color: c, size: 18),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Text(
-              widget.isLessonScope
-                  ? 'Lesson Quiz for: ${_destinationName ?? "this lesson"}'
-                  : 'Unit Test for: ${_destinationName ?? "this unit"}',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c),
-            ),
-          ),
-        ]),
-      ),
-      const SizedBox(height: AppSpacing.md),
-
-      // Passing score — Unit Quiz only. Lesson Quiz is ungraded, so this
-      // whole card is skipped for scope: lesson.
-      if (!widget.isLessonScope) ...[
+    return Column(
+      children: [
+        // Identity indicator — read-only, replaces the old free-text
+        // title field. The Quiz's title is derived automatically from
+        // the Unit/Lesson name (see _resolveTitle); showing it here as a
+        // non-editable chip confirms to the teacher what this Quiz is
+        // tied to without inviting them to type a name for it.
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-          decoration: BoxDecoration(color: AppColors.info.withOpacity(0.05), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.info.withOpacity(0.3))),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              const Icon(Icons.trending_up, color: AppColors.info, size: 18),
-              const SizedBox(width: 8),
-              const Text('Passing Score', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-              const Spacer(),
-              RichText(text: TextSpan(children: [
-                TextSpan(text: '$_passingScore / $n', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.info)),
-                TextSpan(text: '  (${((_passingScore / n) * 100).round()}%)', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
-              ])),
-            ]),
-            Slider(value: _passingScore.toDouble(), min: 1, max: n.toDouble(), divisions: n > 1 ? n - 1 : 1, activeColor: AppColors.info, label: '$_passingScore / $n', onChanged: (v) => setState(() => _passingScore = v.round())),
-            const Text(
-              'Students must answer at least this many questions correctly to pass',
-              style: TextStyle(fontSize: 11, color: AppColors.muted),
-            ),
-          ]),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm + 2,
+          ),
+          decoration: BoxDecoration(
+            color: c.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(AppRadii.md),
+            border: Border.all(color: c.withOpacity(0.2)),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                widget.isLessonScope
+                    ? Icons.bookmark_outline
+                    : Icons.layers_outlined,
+                color: c,
+                size: 18,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  widget.isLessonScope
+                      ? 'teacher.create_quiz_screen.lessonQuizFor'.tr(
+                          namedArgs: {
+                            'name': _destinationName ??
+                                'teacher.create_quiz_screen.thisLesson'.tr()
+                          })
+                      : 'teacher.create_quiz_screen.unitTestFor'.tr(
+                          namedArgs: {
+                            'name': _destinationName ??
+                                'teacher.create_quiz_screen.thisUnit'.tr()
+                          }),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: c,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: AppSpacing.sm),
-      ],
+        const SizedBox(height: AppSpacing.md),
 
-      // XP reward — max and default now derive from scope via _maxXp.
-      // For Lesson Quiz this is the ONLY setting shown besides the
-      // identity chip: no passing threshold, no attempts cap — just how
-      // much XP a first-time completion is worth (retries drop to a
-      // flat 5 XP, enforced in database.dart's saveQuizCompletion, same
-      // pattern as saveActivityCompletion already uses).
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-        decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.06), borderRadius: BorderRadius.circular(AppRadii.md), border: Border.all(color: AppColors.warning.withOpacity(0.35))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.star_rounded, color: AppColors.warning, size: 18),
-            const SizedBox(width: 8),
-            const Text('XP Reward', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-            const Spacer(),
-            Text('$_xpReward XP', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.warning)),
-          ]),
-          Slider(
-            value: _xpReward.toDouble().clamp(0, _maxXp.toDouble()),
-            min: 0,
-            max: _maxXp.toDouble(),
-            divisions: _maxXp ~/ 5,
-            activeColor: AppColors.warning,
-            label: '$_xpReward XP',
-            onChanged: (v) => setState(() => _xpReward = v.round()),
+        // Passing score — Unit Quiz only. Lesson Quiz is ungraded, so this
+        // whole card is skipped for scope: lesson.
+        if (!widget.isLessonScope) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.trending_up,
+                      color: AppColors.primary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'teacher.create_quiz_screen.passingScore'.tr(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const Spacer(),
+                    RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: '$_passingScore / $n',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '  (${((_passingScore / n) * 100).round()}%)',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: _passingScore.toDouble(),
+                  min: 1,
+                  max: n.toDouble(),
+                  divisions: n > 1 ? n - 1 : 1,
+                  activeColor: AppColors.primary,
+                  label: '$_passingScore / $n',
+                  onChanged: (v) => setState(() => _passingScore = v.round()),
+                ),
+                Text(
+                  'teacher.create_quiz_screen.passingScoreHelp'.tr(),
+                  style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                ),
+              ],
+            ),
           ),
-          Text(
-            widget.isLessonScope
-                ? 'Awarded on first completion (max $_maxXp XP). Retries after that earn a flat 5 XP only — no threshold to pass, just complete it.'
-                : 'Awarded on passing this graded test (max $_maxXp XP)',
-            style: const TextStyle(fontSize: 11, color: AppColors.muted),
+          const SizedBox(height: AppSpacing.sm),
+        ],
+
+        // XP reward — max and default now derive from scope via _maxXp.
+        // For Lesson Quiz this is the ONLY setting shown besides the
+        // identity chip: no passing threshold, no attempts cap — just how
+        // much XP a first-time completion is worth (retries drop to a
+        // flat 5 XP, enforced in database.dart's saveQuizCompletion, same
+        // pattern as saveActivityCompletion already uses).
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
           ),
-        ]),
-      ),
-    ]);
+          decoration: BoxDecoration(
+            color: AppColors.warning.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(AppRadii.md),
+            border: Border.all(color: AppColors.warning.withOpacity(0.35)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.star_rounded,
+                    color: AppColors.warning,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'teacher.create_quiz_screen.xpReward'.tr(),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '$_xpReward XP',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: AppColors.warning,
+                    ),
+                  ),
+                ],
+              ),
+              Slider(
+                value: _xpReward.toDouble().clamp(0, _maxXp.toDouble()),
+                min: 0,
+                max: _maxXp.toDouble(),
+                divisions: _maxXp ~/ 5,
+                activeColor: AppColors.warning,
+                label: '$_xpReward XP',
+                onChanged: (v) => setState(() => _xpReward = v.round()),
+              ),
+              Text(
+                widget.isLessonScope
+                    ? 'teacher.create_quiz_screen.xpRewardLessonHelp'
+                        .tr(namedArgs: {'maxXp': '$_maxXp'})
+                    : 'teacher.create_quiz_screen.xpRewardUnitHelp'
+                        .tr(namedArgs: {'maxXp': '$_maxXp'}),
+                style: const TextStyle(fontSize: 11, color: AppColors.muted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildAttemptsCard() {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.accent.withOpacity(0.05),
+        color: AppColors.primaryDark.withOpacity(0.05),
         borderRadius: BorderRadius.circular(AppRadii.md),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Maximum Attempts',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          Text(
+            'teacher.create_quiz_screen.maximumAttempts'.tr(),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
           const SizedBox(height: 8),
 
@@ -549,7 +720,7 @@ class _CreateQuizScreenState
                       if (_maxAttempts > 1) _maxAttempts--;
                     }),
                     icon: const Icon(Icons.remove_circle_outline),
-                    color: AppColors.accent,
+                    color: AppColors.primaryDark,
                   ),
                   Container(
                     width: 60,
@@ -565,7 +736,9 @@ class _CreateQuizScreenState
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: _maxAttempts == 0 ? AppColors.warning : Colors.black,
+                        color: _maxAttempts == 0
+                            ? AppColors.warning
+                            : Colors.black,
                       ),
                     ),
                   ),
@@ -574,7 +747,7 @@ class _CreateQuizScreenState
                       if (_maxAttempts < 5) _maxAttempts++;
                     }),
                     icon: const Icon(Icons.add_circle_outline),
-                    color: AppColors.accent,
+                    color: AppColors.primaryDark,
                   ),
                 ],
               ),
@@ -584,7 +757,10 @@ class _CreateQuizScreenState
               // Warning if not set
               if (_maxAttempts == 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 4,
+                    horizontal: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.warning.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(8),
@@ -592,20 +768,26 @@ class _CreateQuizScreenState
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.info_outline, size: 14, color: AppColors.warning),
+                      const Icon(
+                        Icons.info_outline,
+                        size: 14,
+                        color: AppColors.warning,
+                      ),
                       const SizedBox(width: 4),
                       Text(
-                        'Select 1-5 attempts',
-                        style: TextStyle(fontSize: 12, color: AppColors.warning.withOpacity(0.9)),
+                        'teacher.create_quiz_screen.select1to5Attempts'.tr(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.warning.withOpacity(0.9),
+                        ),
                       ),
                     ],
                   ),
                 )
               else
                 Text(
-                  _maxAttempts == 1
-                      ? 'Students can take this quiz once (no retakes)'
-                      : 'Students can take this quiz up to $_maxAttempts times',
+                  'teacher.create_quiz_screen.attemptsAllowed'
+                      .plural(_maxAttempts),
                   style: const TextStyle(fontSize: 12, color: AppColors.muted),
                 ),
             ],
@@ -622,10 +804,10 @@ class _CreateQuizScreenState
               children: [
                 Icon(Icons.psychology, size: 20, color: AppColors.success),
                 const SizedBox(width: AppSpacing.sm),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Set attempts to 1 for no retakes, or 2-5 to allow retakes.',
-                    style: TextStyle(fontSize: 11),
+                    'teacher.create_quiz_screen.attemptsHelp'.tr(),
+                    style: const TextStyle(fontSize: 11),
                   ),
                 ),
               ],
@@ -643,106 +825,276 @@ class _CreateQuizScreenState
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.lg),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(AppRadii.lg),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(color: c.withOpacity(0.2), width: 1.5),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 10),
-          decoration: BoxDecoration(
-            color: c.withOpacity(0.06),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadii.md)),
-            border: Border(bottom: BorderSide(color: c.withOpacity(0.1))),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-          child: Row(children: [
-            Container(width: 28, height: 28, decoration: BoxDecoration(color: c, shape: BoxShape.circle), child: Center(child: Text('${index + 1}', style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold, fontSize: 13)))),
-            const SizedBox(width: 10),
-            Text('Question ${index + 1}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: c)),
-            const Spacer(),
-            if (_questions.length > 1)
-              GestureDetector(
-                onTap: () => _removeQuestion(index),
-                child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: AppColors.danger.withOpacity(0.08), shape: BoxShape.circle), child: Icon(Icons.close, size: 16, color: AppColors.danger.withOpacity(0.7))),
-              ),
-          ]),
-        ),
-
-        Padding(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Question text
-            TextFormField(
-              controller: q.questionCtrl,
-              decoration: InputDecoration(
-                hintText: 'e.g. "What does \'Stand up\' mean?"',
-                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm), borderSide: const BorderSide(color: AppColors.divider)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm), borderSide: BorderSide(color: c, width: 2)),
-                filled: true, fillColor: Colors.grey.shade50,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                prefixIcon: Icon(Icons.help_outline_rounded, color: Colors.grey.shade400, size: 18),
-              ),
-              maxLines: 2,
-              validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: 10,
             ),
-            const SizedBox(height: AppSpacing.md),
-
-            const Text('Options', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.muted)),
-            const SizedBox(height: 8),
-
-            // Options A–D
-            ...List.generate(4, (oi) {
-              final label     = String.fromCharCode(65 + oi);
-              final isCorrect = q.correctIndex == oi;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isCorrect ? AppColors.success.withOpacity(0.08) : Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(AppRadii.sm),
-                  border: Border.all(color: isCorrect ? AppColors.success : Colors.grey.shade200, width: isCorrect ? 2 : 1),
-                ),
-                child: Row(children: [
-                  GestureDetector(
-                    onTap: () => setState(() => q.correctIndex = oi),
-                    child: Container(
-                      width: 28, height: 28,
-                      decoration: BoxDecoration(shape: BoxShape.circle, color: isCorrect ? AppColors.success : Colors.white, border: Border.all(color: isCorrect ? AppColors.success : Colors.grey.shade400, width: 2)),
-                      child: Center(child: isCorrect ? const Icon(Icons.check, size: 15, color: AppColors.onPrimary) : Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade500))),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: q.optionCtrls[oi],
-                      decoration: InputDecoration(
-                        hintText: isCorrect ? 'Correct answer...' : 'Wrong option...',
-                        hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                        border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero,
+            decoration: BoxDecoration(
+              color: c.withOpacity(0.06),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(AppRadii.md),
+              ),
+              border: Border(bottom: BorderSide(color: c.withOpacity(0.1))),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+                  child: Center(
+                    child: Text(
+                      '${index + 1}',
+                      style: const TextStyle(
+                        color: AppColors.onPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
                       ),
-                      style: TextStyle(fontSize: 14, color: isCorrect ? AppColors.success : Colors.black87),
                     ),
                   ),
-                ]),
-              );
-            }),
-
-            // Hint
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: AppColors.success.withOpacity(0.06), borderRadius: BorderRadius.circular(8)),
-              child: Row(children: [
-                const Icon(Icons.check_circle_outline, size: 14, color: AppColors.success),
-                const SizedBox(width: 6),
-                Flexible(child: Text('Tap a letter to mark it as the correct answer (currently: ${String.fromCharCode(65 + q.correctIndex)})', style: const TextStyle(fontSize: 11, color: AppColors.success))),
-              ]),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'teacher.create_quiz_screen.questionNum'
+                      .tr(namedArgs: {'num': '${index + 1}'}),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: c,
+                  ),
+                ),
+                const Spacer(),
+                if (_questions.length > 1)
+                  GestureDetector(
+                    onTap: () => _removeQuestion(index),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: AppColors.danger.withOpacity(0.08),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.close,
+                        size: 16,
+                        color: AppColors.danger.withOpacity(0.7),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          ]),
-        ),
-      ]),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Question text
+                TextFormField(
+                  controller: q.questionCtrl,
+                  decoration: InputDecoration(
+                    hintText: 'teacher.create_quiz_screen.questionHint'.tr(),
+                    hintStyle: TextStyle(
+                      color: Colors.grey.shade400,
+                      fontSize: 13,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                      borderSide: const BorderSide(color: AppColors.divider),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                      borderSide: BorderSide(color: c, width: 2),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    prefixIcon: Icon(
+                      Icons.help_outline_rounded,
+                      color: Colors.grey.shade400,
+                      size: 18,
+                    ),
+                  ),
+                  maxLines: 2,
+                  validator: (v) => v?.trim().isEmpty ?? true
+                      ? 'teacher.create_quiz_screen.required'.tr()
+                      : null,
+                ),
+                const SizedBox(height: AppSpacing.md),
+
+                Text(
+                  'teacher.create_quiz_screen.options'.tr(),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.muted,
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Options A–D
+                ...List.generate(4, (oi) {
+                  final label = String.fromCharCode(65 + oi);
+                  final isCorrect = q.correctIndex == oi;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isCorrect
+                          ? AppColors.success.withOpacity(0.08)
+                          : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                      border: Border.all(
+                        color: isCorrect
+                            ? AppColors.success
+                            : Colors.grey.shade200,
+                        width: isCorrect ? 2 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () => setState(() => q.correctIndex = oi),
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isCorrect
+                                  ? AppColors.success
+                                  : Colors.white,
+                              border: Border.all(
+                                color: isCorrect
+                                    ? AppColors.success
+                                    : Colors.grey.shade400,
+                                width: 2,
+                              ),
+                            ),
+                            child: Center(
+                              child: isCorrect
+                                  ? const Icon(
+                                      Icons.check,
+                                      size: 15,
+                                      color: AppColors.onPrimary,
+                                    )
+                                  : Text(
+                                      label,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: q.optionCtrls[oi],
+                            decoration: InputDecoration(
+                              hintText: isCorrect
+                                  ? 'teacher.create_quiz_screen.correctAnswerHint'.tr()
+                                  : 'teacher.create_quiz_screen.wrongOptionHint'.tr(),
+                              hintStyle: TextStyle(
+                                color: Colors.grey.shade400,
+                                fontSize: 12,
+                              ),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: isCorrect
+                                  ? AppColors.success
+                                  : Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+
+                // Hint — warns (not just informs) while no option has been
+                // marked correct yet, since that's the state that used to
+                // silently save as "Option A is correct".
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color:
+                        (q.correctIndex == null
+                                ? AppColors.warning
+                                : AppColors.success)
+                            .withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        q.correctIndex == null
+                            ? Icons.error_outline
+                            : Icons.check_circle_outline,
+                        size: 14,
+                        color: q.correctIndex == null
+                            ? AppColors.warning
+                            : AppColors.success,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          q.correctIndex == null
+                              ? 'teacher.create_quiz_screen.tapLetterRequired'.tr()
+                              : 'teacher.create_quiz_screen.tapLetterCurrent'.tr(
+                                  namedArgs: {
+                                    'letter': String.fromCharCode(
+                                        65 + q.correctIndex!)
+                                  }),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: q.correctIndex == null
+                                ? AppColors.warning
+                                : AppColors.success,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -750,6 +1102,7 @@ class _CreateQuizScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final c = widget.groupColor;
 
     return Scaffold(
@@ -758,17 +1111,29 @@ class _CreateQuizScreenState
         children: [
           TeacherScreenHeader(
             title: widget.isEditing
-                ? (widget.isLessonScope ? 'Edit Lesson Quiz' : 'Edit Quiz')
-                : (widget.isLessonScope ? 'Create Lesson Quiz' : 'Create Quiz'),
+                ? (widget.isLessonScope
+                    ? 'teacher.create_quiz_screen.editLessonQuiz'.tr()
+                    : 'teacher.create_quiz_screen.editQuiz'.tr())
+                : (widget.isLessonScope
+                    ? 'teacher.create_quiz_screen.createLessonQuiz'.tr()
+                    : 'teacher.create_quiz_screen.createQuiz'.tr()),
             color: c,
           ),
           Expanded(
             child: _isLoadingQuestions
-                ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    CircularProgressIndicator(color: c),
-                    const SizedBox(height: AppSpacing.md),
-                    const Text('Loading questions...', style: TextStyle(color: AppColors.muted)),
-                  ]))
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(color: c),
+                        const SizedBox(height: AppSpacing.md),
+                        Text(
+                          'teacher.create_quiz_screen.loadingQuestions'.tr(),
+                          style: const TextStyle(color: AppColors.muted),
+                        ),
+                      ],
+                    ),
+                  )
                 : Form(
                     key: _formKey,
                     child: SingleChildScrollView(
@@ -780,9 +1145,22 @@ class _CreateQuizScreenState
                           Align(
                             alignment: Alignment.centerRight,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-                              child: Text('${_questions.length} Q', style: TextStyle(color: c, fontSize: 13, fontWeight: FontWeight.bold)),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: c.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${_questions.length} Q',
+                                style: TextStyle(
+                                  color: c,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
                           const SizedBox(height: AppSpacing.md),
@@ -808,24 +1186,43 @@ class _CreateQuizScreenState
                           Container(
                             padding: const EdgeInsets.all(AppSpacing.md),
                             decoration: BoxDecoration(
-                              color: (widget.isLessonScope ? AppColors.info : AppColors.danger).withOpacity(0.07),
+                              color:
+                                  (widget.isLessonScope
+                                          ? AppColors.primaryLight
+                                          : AppColors.primaryDark)
+                                      .withOpacity(0.07),
                               borderRadius: BorderRadius.circular(AppRadii.md),
-                              border: Border.all(color: (widget.isLessonScope ? AppColors.info : AppColors.danger).withOpacity(0.25)),
+                              border: Border.all(
+                                color:
+                                    (widget.isLessonScope
+                                            ? AppColors.primaryLight
+                                            : AppColors.primaryDark)
+                                        .withOpacity(0.25),
+                              ),
                             ),
                             child: Row(
                               children: [
                                 Icon(
-                                  widget.isLessonScope ? Icons.school_outlined : Icons.info_outline,
-                                  color: (widget.isLessonScope ? AppColors.info : AppColors.danger).withOpacity(0.85),
+                                  widget.isLessonScope
+                                      ? Icons.school_outlined
+                                      : Icons.info_outline,
+                                  color:
+                                      (widget.isLessonScope
+                                              ? AppColors.primaryLight
+                                              : AppColors.primaryDark)
+                                          .withOpacity(0.85),
                                   size: 20,
                                 ),
                                 const SizedBox(width: AppSpacing.sm),
                                 Expanded(
                                   child: Text(
                                     widget.isLessonScope
-                                        ? 'Ungraded check-in for this lesson. No pass/fail, doesn\'t block progress, not reported to parents — just XP for completing it. Students can retry anytime, but only the first completion earns full XP.'
-                                        : 'This is a graded exam. Scores will be reported to parents.',
-                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                        ? 'teacher.create_quiz_screen.ungradedBanner'.tr()
+                                        : 'teacher.create_quiz_screen.gradedBanner'.tr(),
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -834,29 +1231,71 @@ class _CreateQuizScreenState
                           const SizedBox(height: AppSpacing.md),
 
                           // Questions header
-                          Row(children: [
-                            const Text('Questions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(color: c.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                              child: Text('${_questions.length}/20', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: c)),
-                            ),
-                            const Spacer(),
-                            if (_questions.length < 20)
-                              TextButton.icon(
-                                onPressed: _addQuestion,
-                                icon: Icon(Icons.add, size: 18, color: c),
-                                label: Text('Add', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 13)),
-                                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+                          Row(
+                            children: [
+                              Text(
+                                'teacher.create_quiz_screen.questionsHeader'.tr(),
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
                               ),
-                          ]),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: c.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  '${_questions.length}/20',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: c,
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              if (_questions.length < 20)
+                                TextButton.icon(
+                                  onPressed: _addQuestion,
+                                  icon: Icon(Icons.add, size: 18, color: c),
+                                  label: Text(
+                                    'common.add'.tr(),
+                                    style: TextStyle(
+                                      color: c,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                           const SizedBox(height: 4),
-                          const Text('Each question has 4 options (A–D). Tap a letter to mark the correct answer.', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                          Text(
+                            'teacher.create_quiz_screen.questionsHelp'.tr(),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.muted,
+                            ),
+                          ),
                           const SizedBox(height: AppSpacing.md),
 
                           // Question cards
-                          ...List.generate(_questions.length, (i) => _buildQuestionCard(i)),
+                          ...List.generate(
+                            _questions.length,
+                            (i) => _buildQuestionCard(i),
+                          ),
 
                           // Add question button (bottom)
                           if (_questions.length < 20)
@@ -864,19 +1303,42 @@ class _CreateQuizScreenState
                               onTap: _addQuestion,
                               child: Container(
                                 width: double.infinity,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                margin: const EdgeInsets.only(bottom: AppSpacing.lg),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                margin: const EdgeInsets.only(
+                                  bottom: AppSpacing.lg,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.white,
-                                  borderRadius: BorderRadius.circular(AppRadii.lg),
-                                  border: Border.all(color: c.withOpacity(0.3), width: 1.5),
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadii.lg,
+                                  ),
+                                  border: Border.all(
+                                    color: c.withOpacity(0.3),
+                                    width: 1.5,
+                                  ),
                                 ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.add_circle_outline, color: c, size: 20),
+                                    Icon(
+                                      Icons.add_circle_outline,
+                                      color: c,
+                                      size: 20,
+                                    ),
                                     const SizedBox(width: 8),
-                                    Text('Add Question (${_questions.length}/20)', style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: 14)),
+                                    Text(
+                                      'teacher.create_quiz_screen.addQuestionCount'
+                                          .tr(namedArgs: {
+                                        'count': '${_questions.length}'
+                                      }),
+                                      style: TextStyle(
+                                        color: c,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 14,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -891,16 +1353,33 @@ class _CreateQuizScreenState
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: c,
                                 disabledBackgroundColor: AppColors.divider,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.lg)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadii.lg,
+                                  ),
+                                ),
                                 elevation: 0,
                               ),
                               child: _isSaving
-                                  ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: AppColors.onPrimary, strokeWidth: 2))
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        color: AppColors.onPrimary,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
                                   : Text(
                                       widget.isEditing
-                                          ? 'Save Changes'
-                                          : (widget.isLessonScope ? 'Create Lesson Quiz' : 'Create Quiz'),
-                                      style: const TextStyle(color: AppColors.onPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+                                          ? 'teacher.create_quiz_screen.saveChanges'.tr()
+                                          : (widget.isLessonScope
+                                                ? 'teacher.create_quiz_screen.createLessonQuiz'.tr()
+                                                : 'teacher.create_quiz_screen.createQuiz'.tr()),
+                                      style: const TextStyle(
+                                        color: AppColors.onPrimary,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                             ),
                           ),

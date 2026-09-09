@@ -1,5 +1,9 @@
 // create_unit_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/teacher/widgets/continue_bookmark_button.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -95,7 +99,7 @@ class _CreatePersonalizedUnitScreenState extends State<CreatePersonalizedUnitScr
         if (titleController.text.trim() == origTitle) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
+            SnackBar(content: Text('common.noChangesMade'.tr()), backgroundColor: AppColors.muted),
           );
           return;
         }
@@ -119,7 +123,9 @@ class _CreatePersonalizedUnitScreenState extends State<CreatePersonalizedUnitScr
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_isEditing ? 'Unit updated successfully!' : 'Unit created successfully!'),
+            content: Text(_isEditing
+                ? 'teacher.create_unit_screen.unitUpdatedSuccess'.tr()
+                : 'teacher.create_unit_screen.unitCreatedSuccess'.tr()),
             backgroundColor: AppColors.success,
           ),
         );
@@ -128,7 +134,7 @@ class _CreatePersonalizedUnitScreenState extends State<CreatePersonalizedUnitScr
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
+          SnackBar(content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})), backgroundColor: AppColors.danger),
         );
       }
     } finally {
@@ -138,14 +144,22 @@ class _CreatePersonalizedUnitScreenState extends State<CreatePersonalizedUnitScr
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader.
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
         children: [
           TeacherScreenHeader(
-            title: _isEditing ? 'Edit Unit' : 'Create Unit',
+            title: _isEditing
+                ? 'teacher.create_unit_screen.editUnit'.tr()
+                : 'teacher.create_unit_screen.createUnit'.tr(),
             color: _c,
+            trailing: ContinueBookmarkButton(
+              level: 'unit',
+              contentId: widget.contentId,
+              getFormData: () => {'title': titleController.text.trim()},
+            ),
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -159,25 +173,31 @@ class _CreatePersonalizedUnitScreenState extends State<CreatePersonalizedUnitScr
                     CreateFormBanner(
                       color: _c,
                       icon: Icons.layers_rounded,
-                      label: _isEditing ? 'Editing Unit' : 'New Unit',
-                      description: 'Groups several lessons under one theme',
+                      label: _isEditing
+                          ? 'teacher.create_unit_screen.editingUnit'.tr()
+                          : 'teacher.create_unit_screen.newUnit'.tr(),
+                      description: 'teacher.create_unit_screen.bannerDescription'.tr(),
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Unit Title'),
+                    CreateFormLabel('teacher.create_unit_screen.unitTitleLabel'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     CreateFormField(
                       controller: titleController,
                       color: _c,
                       icon: Icons.title_rounded,
-                      hint: 'e.g. Introduction to Numbers',
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
+                      hint: 'teacher.create_unit_screen.titleHint'.tr(),
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'teacher.create_content_screen.titleRequired'.tr()
+                          : null,
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
                     CreateFormSubmitButton(
                       color: _c,
-                      label: _isEditing ? 'UPDATE UNIT' : 'CREATE UNIT',
+                      label: _isEditing
+                          ? 'teacher.create_unit_screen.updateUnit'.tr()
+                          : 'teacher.create_unit_screen.createUnitButton'.tr(),
                       isLoading: isLoading || !_orderResolved,
                       onPressed: _submit,
                     ),

@@ -1,7 +1,10 @@
 // archived_groups_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/widgets/group_card.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -12,28 +15,48 @@ import 'package:loringo_app/theme/app_theme.dart';
 /// group_navigation_screen.dart's Settings tab) land here. Opening one
 /// still goes to the normal TeacherGroupDetailsScreen (via GroupCard), so
 /// unarchiving is just the same Settings action in reverse.
-class ArchivedGroupsScreen extends StatelessWidget {
+class ArchivedGroupsScreen extends StatefulWidget {
   const ArchivedGroupsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  State<ArchivedGroupsScreen> createState() => _ArchivedGroupsScreenState();
+}
+
+class _ArchivedGroupsScreenState extends State<ArchivedGroupsScreen> {
+  // Created once here rather than inline in build()'s StreamBuilder: a
+  // fresh Stream<QuerySnapshot> from .snapshots() is a new object every
+  // call, and StreamBuilder resubscribes (briefly dropping back to
+  // ConnectionState.waiting, replacing the whole list with a spinner)
+  // whenever the stream instance it's given changes — see the identical
+  // fix in teacher_home_screen.dart.
+  late final Stream<QuerySnapshot> _groupsStream;
+
+  @override
+  void initState() {
+    super.initState();
     final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    _groupsStream = FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .where('teacherId', isEqualTo: teacherId)
+        .snapshots();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
         children: [
-          const TeacherScreenHeader(
-            title: 'Archived Groups',
-            subtitle: 'Hidden from My Groups — nothing was deleted',
+          TeacherScreenHeader(
+            title: 'teacher.archived_groups_screen.title'.tr(),
+            subtitle: 'teacher.archived_groups_screen.subtitle'.tr(),
             color: AppColors.primary,
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('teacherGroups')
-                  .where('teacherId', isEqualTo: teacherId)
-                  .snapshots(),
+              stream: _groupsStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(
@@ -58,11 +81,12 @@ class ArchivedGroupsScreen extends StatelessWidget {
                 if (groups.isEmpty) {
                   return HierarchyEmptyState(
                     icon:        Icons.archive_outlined,
-                    title:       'No Archived Groups',
-                    subtitle:    'Groups you archive from a group\'s Settings '
-                                 'tab will show up here.',
+                    title:       'teacher.archived_groups_screen.noArchivedGroupsTitle'
+                        .tr(),
+                    subtitle:    'teacher.archived_groups_screen.noArchivedGroupsSubtitle'
+                        .tr(),
                     color:       AppColors.primary,
-                    actionLabel: 'Back to My Groups',
+                    actionLabel: 'teacher.archived_groups_screen.backToMyGroups'.tr(),
                     onAction:    () => Navigator.pop(context),
                   );
                 }
@@ -78,9 +102,8 @@ class ArchivedGroupsScreen extends StatelessWidget {
                       padding: const EdgeInsets.only(bottom: AppSpacing.md),
                       child: GroupCard(
                         groupId: doc.id,
-                        name: data['name'] ?? 'Untitled',
+                        name: data['name'] ?? 'common.untitled'.tr(),
                         colorHex: data['color'] ?? '#4CAF50',
-                        groupCode: data['groupCode'] ?? '',
                         academicYear:
                             (data['academicYear'] as int?) ?? DateTime.now().year,
                         classroom: (data['classroom'] as String?) ??

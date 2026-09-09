@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 // import 'task_type_interface.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class ChatTurn {
   TextEditingController bubbleCtrl;
@@ -109,7 +112,7 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
     for (int i = 0; i < turns.length; i++) {
       final turn = turns[i];
       if (turn.bubbleCtrl.text.trim().isEmpty) {
-        return 'Turn ${i + 1}: chat message cannot be empty';
+        return 'teacher.complete_chat_task.turnMessageEmpty'.tr(namedArgs: {'number': '${i + 1}'});
       }
       bool hasCorrect = false;
       int filled = 0;
@@ -118,10 +121,10 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
         if (turn.options[j]['isCorrect'] == true) hasCorrect = true;
       }
       if (filled < 3) {
-        return 'Turn ${i + 1}: provide at least 3 reply options';
+        return 'teacher.complete_chat_task.turnNeedsThreeOptions'.tr(namedArgs: {'number': '${i + 1}'});
       }
       if (!hasCorrect) {
-        return 'Turn ${i + 1}: mark one reply as correct';
+        return 'teacher.complete_chat_task.turnNeedsCorrectReply'.tr(namedArgs: {'number': '${i + 1}'});
       }
     }
     return null;
@@ -140,6 +143,7 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -157,7 +161,7 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
             child: TextButton.icon(
               onPressed: _addTurn,
               icon: Icon(Icons.add_comment_outlined, color: c),
-              label: Text('Add turn (${turns.length}/6)', style: TextStyle(color: c)),
+              label: Text('teacher.complete_chat_task.addTurn'.tr(namedArgs: {'count': '${turns.length}'}), style: TextStyle(color: c)),
             ),
           ),
       ],
@@ -177,7 +181,7 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Each turn = one chat bubble the student must reply to. Turns play in order.',
+              'teacher.complete_chat_task.infoBanner'.tr(),
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -223,7 +227,9 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
-                      turn.bubbleCtrl.text.isNotEmpty ? turn.bubbleCtrl.text : 'Turn ${index + 1} — tap to edit',
+                      turn.bubbleCtrl.text.isNotEmpty
+                          ? turn.bubbleCtrl.text
+                          : 'teacher.complete_chat_task.turnTapToEdit'.tr(namedArgs: {'number': '${index + 1}'}),
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -234,7 +240,10 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
                     ),
                   ),
                   if (!turn.expanded) ...[
-                    _statusChip(hasCorrect ? '✓ ready' : 'needs reply', hasCorrect ? c : Colors.orange),
+                    _statusChip(
+                      hasCorrect ? 'teacher.complete_chat_task.ready'.tr() : 'teacher.complete_chat_task.needsReply'.tr(),
+                      hasCorrect ? c : Colors.orange,
+                    ),
                     const SizedBox(width: AppSpacing.sm),
                   ],
                   Icon(turn.expanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
@@ -259,12 +268,12 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Divider(height: 20),
-                  Text('Chat bubble message', style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+                  Text('teacher.complete_chat_task.chatBubbleMessage'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
                   const SizedBox(height: AppSpacing.xs),
                   TextFormField(
                     controller: turn.bubbleCtrl,
                     decoration: InputDecoration(
-                      hintText: 'e.g. "Good morning, Leo! How are you?"',
+                      hintText: 'teacher.complete_chat_task.bubbleHint'.tr(),
                       prefixIcon: Icon(Icons.chat_bubble_outline, color: c, size: 20),
                       border: const OutlineInputBorder(),
                       filled: true,
@@ -272,12 +281,12 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
                     ),
                     maxLines: 2,
                     onChanged: (_) => widget.onChanged(),
-                    validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+                    validator: (v) => v?.trim().isEmpty ?? true ? 'teacher.complete_chat_task.required'.tr() : null,
                   ),
                   const SizedBox(height: AppSpacing.md),
                   Row(
                     children: [
-                      Text('Reply options (3–4)', style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+                      Text('teacher.complete_chat_task.replyOptions'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
                       const Spacer(),
                       if (turn.options.length < 4)
                         GestureDetector(
@@ -290,7 +299,7 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
                               children: [
                                 Icon(Icons.add, size: 14, color: c),
                                 const SizedBox(width: AppSpacing.xs),
-                                Text('Add reply', style: TextStyle(fontSize: 12, color: c, fontWeight: FontWeight.w600)),
+                                Text('teacher.complete_chat_task.addReply'.tr(), style: TextStyle(fontSize: 12, color: c, fontWeight: FontWeight.w600)),
                               ],
                             ),
                           ),
@@ -336,7 +345,9 @@ class _CompleteChatTaskState extends State<CompleteChatTask> with TaskTypeEditor
                             child: TextField(
                               controller: turn.optionCtrls[oi],
                               decoration: InputDecoration(
-                                hintText: isCorrect ? 'Correct reply…' : 'Wrong reply…',
+                                hintText: isCorrect
+                                    ? 'teacher.complete_chat_task.correctReplyHint'.tr()
+                                    : 'teacher.complete_chat_task.wrongReplyHint'.tr(),
                                 hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
                                 border: InputBorder.none,
                                 isDense: true,

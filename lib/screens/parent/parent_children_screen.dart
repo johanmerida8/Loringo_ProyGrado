@@ -1,11 +1,19 @@
 // parent_children_screen.dart
-// import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
+import 'package:loringo_app/screens/parent/parent_child_progress_path_screen.dart';
 import 'package:loringo_app/screens/parent/parent_join_group_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
+import 'package:loringo_app/components/avatar_image.dart';
+import 'package:loringo_app/services/auth/identity_confirmation.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/access_code_hasher.dart';
 
 class ParentChildrenScreen extends StatelessWidget {
   final List<Map<String, dynamic>> myChildren;
@@ -19,16 +27,44 @@ class ParentChildrenScreen extends StatelessWidget {
     required this.onRefresh,
   });
 
-  void _showAccessCodeDialog(
-      BuildContext context, Map<String, dynamic> child) {
-    final accessCode = child['accessCode'] as String?;
-    if (accessCode == null || accessCode.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Access code not available'),
-        backgroundColor: Colors.red,
-      ));
+  /// The access code is static (set once at registration, never rotated)
+  /// and is never stored as recoverable plaintext (see database.dart's
+  /// STUDENTS section) — only encrypted. This decrypts it back for
+  /// display, gated behind identity confirmation (biometric, with password
+  /// fallback — see identity_confirmation.dart) since it hands back the
+  /// real code in the clear.
+  Future<void> _revealAccessCodeFlow(
+      BuildContext context, Map<String, dynamic> child) async {
+    final confirmed = await confirmIdentity(
+      context,
+      reason: 'common.confirmIdentityBody'.tr(),
+    );
+    if (!confirmed || !context.mounted) return;
+
+    String accessCode;
+    try {
+      accessCode = await Database(firestore: firestoreInstance)
+          .revealAccessCode(child['id'] as String);
+      // ignore: avoid_print
+      print('[REVEAL CODE] student=${child['id']} code=$accessCode '
+          'hash=${AccessCodeHasher.hash(accessCode)}');
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${'common.error'.tr()}: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
       return;
     }
+
+    if (context.mounted) {
+      _showAccessCodeDialog(context, child, accessCode);
+    }
+  }
+
+  void _showAccessCodeDialog(
+      BuildContext context, Map<String, dynamic> child, String accessCode) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -47,7 +83,9 @@ class ParentChildrenScreen extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text("${child['names']}'s Code",
+              child: Text(
+                  'parent.parent_children_screen.childsCode'
+                      .tr(namedArgs: {'name': '${child['names']}'}),
                   style: const TextStyle(fontSize: 18)),
             ),
           ],
@@ -55,10 +93,10 @@ class ParentChildrenScreen extends StatelessWidget {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Share this code with your child to log in:',
+            Text(
+              'common.shareCodeToChild'.tr(),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14),
+              style: const TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 20),
             Container(
@@ -85,10 +123,10 @@ class ParentChildrenScreen extends StatelessWidget {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: accessCode));
                 ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                  content: Text('Code copied'),
+                    SnackBar(
+                  content: Text('common.codeCopied'.tr()),
                   backgroundColor: Colors.green,
-                  duration: Duration(seconds: 2),
+                  duration: const Duration(seconds: 2),
                 ));
               },
               style: ElevatedButton.styleFrom(
@@ -100,18 +138,68 @@ class ParentChildrenScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10)),
               ),
               icon: const Icon(Icons.copy_rounded),
-              label: const Text('Copy Code'),
+              label: Text('common.copyCode'.tr()),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text('common.close'.tr()),
           ),
         ],
       ),
     );
+  }
+
+  /// Permanently removes a single child — deletes their profile and every
+  /// group's progress/reports for them (see
+  /// Database.deleteStudentCascade), but leaves groups/teachers
+  /// untouched. Distinct from deleting the whole parent account
+  /// (parent_navigation_screen.dart), which loops this same cascade over
+  /// every child.
+  Future<void> _removeChildFlow(
+      BuildContext context, Map<String, dynamic> child) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('parent.parent_children_screen.removeChildTitle'.tr()),
+        content: Text('parent.parent_children_screen.removeChildMsg'
+            .tr(namedArgs: {'name': '${child['names']}'})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('common.cancel'.tr()),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('common.delete'.tr(),
+                style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await Database(firestore: firestoreInstance)
+          .deleteStudentCascade(child['id'] as String);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('parent.parent_children_screen.childRemoved'
+              .tr(namedArgs: {'name': '${child['names']}'})),
+          backgroundColor: Colors.green,
+        ));
+      }
+      onRefresh();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${'common.error'.tr()}: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
   void _navigateToJoinGroup(
@@ -135,8 +223,19 @@ class ParentChildrenScreen extends StatelessWidget {
     );
   }
 
+  void _navigateToProgressPath(
+      BuildContext context, Map<String, dynamic> child) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (context) =>
+              ParentChildProgressPathScreen(child: child)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -144,9 +243,9 @@ class ParentChildrenScreen extends StatelessWidget {
           // ── Inline header ──
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-            child: const Text(
-              'My Children',
-              style: TextStyle(
+            child: Text(
+              'common.myChildren'.tr(),
+              style: const TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 color: AppColors.primary,
@@ -180,8 +279,8 @@ class ParentChildrenScreen extends StatelessWidget {
                   elevation: 0,
                 ),
                 icon: const Icon(Icons.add),
-                label: const Text('Add Child',
-                    style: TextStyle(
+                label: Text('common.addChild'.tr(),
+                    style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
@@ -236,7 +335,7 @@ class ParentChildrenScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        child['names'] ?? 'No name',
+                        child['names'] ?? 'common.noName'.tr(),
                         style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold),
@@ -258,8 +357,9 @@ class ParentChildrenScreen extends StatelessWidget {
                           Text(
                             hasGroup
                                 ? groupNames[child['id']] ??
-                                    'Loading...'
-                                : 'No group assigned',
+                                    'parent.parent_children_screen.loadingGroup'
+                                        .tr()
+                                : 'common.noGroupAssigned'.tr(),
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
@@ -272,6 +372,11 @@ class ParentChildrenScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                ),
+                IconButton(
+                  onPressed: () => _removeChildFlow(context, child),
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'parent.parent_children_screen.removeChildTitle'.tr(),
                 ),
               ],
             ),
@@ -286,7 +391,7 @@ class ParentChildrenScreen extends StatelessWidget {
                   Expanded(
                     child: _actionButton(
                       icon: Icons.add_circle_outline,
-                      label: 'Join Group',
+                      label: 'common.joinGroup'.tr(),
                       isPrimary: true,
                       onPressed: () =>
                           _navigateToJoinGroup(context, child),
@@ -298,7 +403,7 @@ class ParentChildrenScreen extends StatelessWidget {
                   Expanded(
                     child: _actionButton(
                       icon: Icons.checklist_rounded,
-                      label: 'Activities',
+                      label: 'parent.parent_children_screen.activities'.tr(),
                       isPrimary: true,
                       onPressed: () =>
                           _navigateToActivityStatus(context, child),
@@ -309,14 +414,23 @@ class ParentChildrenScreen extends StatelessWidget {
                 Expanded(
                   child: _actionButton(
                     icon: Icons.key_rounded,
-                    label: 'Access Code',
+                    label: 'common.accessCode'.tr(),
                     isPrimary: false,
                     onPressed: () =>
-                        _showAccessCodeDialog(context, child),
+                        _revealAccessCodeFlow(context, child),
                   ),
                 ),
               ],
             ),
+            if (hasGroup) ...[
+              const SizedBox(height: 10),
+              _actionButton(
+                icon: Icons.route_rounded,
+                label: 'parent.parent_children_screen.viewLearningPath'.tr(),
+                isPrimary: false,
+                onPressed: () => _navigateToProgressPath(context, child),
+              ),
+            ],
           ],
         ),
       ),
@@ -369,7 +483,8 @@ class ParentChildrenScreen extends StatelessWidget {
     if (avatar != null && avatar.isNotEmpty) {
       return CircleAvatar(
         radius: radius,
-        backgroundImage: AssetImage(avatar),
+        backgroundImage: avatarImageProvider(avatar),
+        onBackgroundImageError: (_, __) {},
         backgroundColor: AppColors.primarySoft(0.15),
       );
     }
@@ -395,7 +510,7 @@ class ParentChildrenScreen extends StatelessWidget {
             Icon(Icons.child_care_rounded,
                 size: 72, color: Colors.grey[300]),
             const SizedBox(height: 12),
-            Text('No children registered yet',
+            Text('common.noChildRegistered'.tr(),
                 style: TextStyle(
                     fontSize: 15, color: Colors.grey[500])),
           ],

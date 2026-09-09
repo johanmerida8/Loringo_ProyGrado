@@ -1,5 +1,6 @@
 // lib/screens/teacher/widgets/create_form_widgets.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 /// Colored accent banner shown at the top of every create/edit screen so the
@@ -78,6 +79,8 @@ class CreateFormField extends StatelessWidget {
     this.maxLines = 1,
     this.validator,
     this.onChanged,
+    this.inputFormatters,
+    this.autovalidateMode,
   });
 
   final TextEditingController controller;
@@ -89,6 +92,8 @@ class CreateFormField extends StatelessWidget {
   final int maxLines;
   final FormFieldValidator<String>? validator;
   final ValueChanged<String>? onChanged;
+  final List<TextInputFormatter>? inputFormatters;
+  final AutovalidateMode? autovalidateMode;
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +103,8 @@ class CreateFormField extends StatelessWidget {
       maxLines: maxLines,
       validator: validator,
       onChanged: onChanged,
+      inputFormatters: inputFormatters,
+      autovalidateMode: autovalidateMode,
       decoration: AppInput.decoration(
         accent: color,
         hint: hint,

@@ -1,11 +1,21 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
 import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
+import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
+import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class QuizPlayScreen extends StatefulWidget {
   final String contentId;
   final String unitId;
+
+  /// Which Lesson this quiz belongs to — null for a Unit Quiz. This is the
+  /// unit-vs-lesson signal now (the quiz doc itself no longer stores a
+  /// 'scope' field; it lives in one nested collection or the other).
+  final String? lessonId;
   final String quizId;
   final String quizTitle;
   final String? studentId;
@@ -16,6 +26,7 @@ class QuizPlayScreen extends StatefulWidget {
     super.key,
     required this.contentId,
     required this.unitId,
+    this.lessonId,
     required this.quizId,
     required this.quizTitle,
     this.studentId,
@@ -80,9 +91,19 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     });
   }
 
+  /// Resolves the student's CURRENT group and returns this quiz's progress
+  /// doc reference under it (teacherGroups/{groupId}/students/{id}/progress)
+  /// — progress lives under the group's own roster entry now, not the
+  /// student's root doc, so every read site needs the current groupId
+  /// first.
+  Future<DocumentReference> _quizProgressRef() async {
+    final groupId = await _db.resolveCurrentGroupId(widget.studentId!);
+    return _db.groupProgress(groupId, widget.studentId!).doc(widget.quizId);
+  }
+
   Future<void> _loadAttemptsInfo() async {
     try {
-      final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
+      final progressDoc = await (await _quizProgressRef()).get();
 
       debugPrint('_loadAttemptsInfo - _maxAttempts: $_maxAttempts');
 
@@ -114,12 +135,17 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
   }
 
   Future<Map<String, dynamic>> _loadQuizData() async {
-    final quizDoc = await _db.getQuiz(widget.quizId);
+    final quizDoc = await _db.getQuiz(
+      widget.contentId,
+      widget.unitId,
+      widget.quizId,
+      lessonId: widget.lessonId,
+    );
 
     if (!quizDoc.exists) throw Exception('Quiz not found');
 
     final quizData = quizDoc.data() as Map<String, dynamic>;
-    final isLessonScope = (quizData['scope'] as String? ?? 'unit') == 'lesson';
+    final isLessonScope = widget.lessonId != null;
 
     // Get max attempts from quiz data (default to 0). For scope:
     // 'lesson' this is the fixed 99 sentinel create_quiz_screen.dart
@@ -128,7 +154,12 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
 
     _maxAttempts = maxAttempts;
 
-    final questionsSnapshot = await _db.getQuizQuestions(widget.quizId);
+    final questionsSnapshot = await _db.getQuizQuestions(
+      widget.contentId,
+      widget.unitId,
+      widget.quizId,
+      lessonId: widget.lessonId,
+    );
 
     final questions = questionsSnapshot.docs.map((doc) {
       final d = doc.data() as Map<String, dynamic>;
@@ -183,7 +214,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
 
     if (_isLessonScope) return true;
 
-    final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
+    final progressDoc = await (await _quizProgressRef()).get();
     if (!progressDoc.exists) return true; // first attempt
 
     final data = progressDoc.data() as Map<String, dynamic>?;
@@ -217,15 +248,46 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     return attemptsUsed < _maxAttempts;
   }
 
+  /// Safety net for the rare case a student already has this quiz open
+  /// the instant a teacher archives their group — the primary gate is
+  /// student_activities_screen.dart not even offering this quiz once
+  /// archived, but a screen already in progress bypasses that. Checks the
+  /// student's *current* group, since the archive could happen mid-session.
+  Future<bool> _isCurrentGroupArchived() async {
+    if (widget.studentId == null) return false;
+    final studentDoc = await FirebaseFirestore.instance
+        .collection('students')
+        .doc(widget.studentId)
+        .get();
+    final groupId = studentDoc.data()?['groupId'] as String?;
+    if (groupId == null) return false;
+    final groupDoc = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .doc(groupId)
+        .get();
+    return groupDoc.data()?['archived'] == true;
+  }
+
   Future<void> _submitQuiz() async {
     final totalQ = _totalQuestions;
     final passingScore = _passingScore;
     final maxXpReward = _xpReward;
 
+    if (widget.studentId != null && await _isCurrentGroupArchived()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('initials.quiz_play_screen.groupArchived'.tr()),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     if (_selectedAnswers.length < totalQ) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Please answer all $totalQ questions'),
+          content: Text('initials.quiz_play_screen.pleaseAnswerAll'
+              .tr(namedArgs: {'count': '$totalQ'})),
           backgroundColor: Colors.orange,
         ),
       );
@@ -239,8 +301,8 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     final canRetake = await _canRetake();
     if (!canRetake && !widget.isPreview) {
       // Get more details about why they can't retake
-      final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
-      String message = 'You cannot take this quiz.';
+      final progressDoc = await (await _quizProgressRef()).get();
+      String message = 'initials.quiz_play_screen.cannotTakeQuiz'.tr();
 
       if (progressDoc.exists) {
         final data = progressDoc.data() as Map<String, dynamic>;
@@ -257,11 +319,12 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
         // attempts are exhausted — this message now mirrors exactly
         // those three checks.
         if (reportGenerated) {
-          message = 'This quiz has already been reviewed and reported.';
+          message = 'initials.quiz_play_screen.alreadyReviewed'.tr();
         } else if (passed) {
-          message = 'You have already passed this quiz.';
+          message = 'initials.quiz_play_screen.alreadyPassed'.tr();
         } else if (attemptsUsed >= _maxAttempts) {
-          message = 'You have used all $_maxAttempts attempts for this quiz.';
+          message = 'initials.quiz_play_screen.attemptsUsedUp'
+              .tr(namedArgs: {'max': '$_maxAttempts'});
         }
       }
 
@@ -299,7 +362,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
 
     if (!widget.isPreview && widget.studentId != null) {
       try {
-        final progressDoc = await _db.studentProgress(widget.studentId!).doc(widget.quizId).get();
+        final progressDoc = await (await _quizProgressRef()).get();
 
         final wasCompleted = progressDoc.exists &&
             (progressDoc.data() as Map<String, dynamic>?)?['isCompleted'] == true;
@@ -361,6 +424,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
           quizId: widget.quizId,
           contentId: widget.contentId,
           unitId: widget.unitId,
+          lessonId: widget.lessonId,
           correctAnswers: correctCount,
           totalQuestions: totalQ,
           answers: answers,
@@ -404,8 +468,10 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
           // scope: 'lesson' always shows a neutral "Complete!" — there
           // is no passing/failing state to celebrate or soften.
           screenTitle: _isLessonScope
-              ? 'Complete! 🎉'
-              : (passed ? 'Quiz Passed! 🎉' : 'Quiz Complete'),
+              ? 'initials.quiz_play_screen.completeTitle'.tr()
+              : (passed
+                  ? 'initials.quiz_play_screen.quizPassedTitle'.tr()
+                  : 'initials.quiz_play_screen.quizCompleteTitle'.tr()),
           activityTitle: widget.quizTitle,
           scorePercent: scorePercent,
           correctAnswers: correctCount,
@@ -453,6 +519,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
         builder: (context) => QuizPlayScreen(
           contentId: widget.contentId,
           unitId: widget.unitId,
+          lessonId: widget.lessonId,
           quizId: widget.quizId,
           quizTitle: widget.quizTitle,
           studentId: widget.studentId,
@@ -467,19 +534,19 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
   Widget build(BuildContext context) {
     final primary = AppColors.primary;
 
-    return Scaffold(
+    return TaskExitGuard(
+      onRequestExit: _handleClose,
+      child: Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        title: Text(widget.quizTitle, style: AppText.appBarTitle),
-        backgroundColor: primary,
-        foregroundColor: AppColors.onPrimary,
-        elevation: 0,
-      ),
-      body: FutureBuilder<Map<String, dynamic>>(
+      body: Column(
+        children: [
+          _buildHeader(context),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>>(
         future: _quizDataFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const AppLoadingIndicator();
           }
           if (snapshot.hasError) {
             return Center(
@@ -488,11 +555,12 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
                 children: [
                   const Icon(Icons.error_outline, size: 64, color: AppColors.danger),
                   const SizedBox(height: 16),
-                  Text('Error: ${snapshot.error}'),
+                  Text('common.errorWithMessage'
+                      .tr(namedArgs: {'error': '${snapshot.error}'})),
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () => setState(() => _quizDataFuture = _loadQuizData()),
-                    child: const Text('Retry'),
+                    child: Text('common.retry'.tr()),
                   ),
                 ],
               ),
@@ -524,7 +592,10 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
                     // threshold to show.
                     if (!_isLessonScope)
                       _buildInfoChip(
-                        text: 'Pass: $_passingScore/$_totalQuestions',
+                        text: 'initials.quiz_play_screen.passLabel'.tr(namedArgs: {
+                          'score': '$_passingScore',
+                          'total': '$_totalQuestions',
+                        }),
                         icon: Icons.check_circle_outline,
                         color: AppColors.success,
                       ),
@@ -571,7 +642,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
                       OutlinedButton.icon(
                         onPressed: _previousPage,
                         icon: const Icon(Icons.arrow_back, size: 18),
-                        label: const Text('Previous'),
+                        label: Text('initials.quiz_play_screen.previous'.tr()),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: primary,
                           side: BorderSide(color: primary.withOpacity(0.5)),
@@ -585,7 +656,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
                       ElevatedButton.icon(
                         onPressed: _selectedAnswers[_currentPage.toString()] != null ? _nextPage : null,
                         icon: const Icon(Icons.arrow_forward, size: 18, color: Colors.white),
-                        label: const Text('Next'),
+                        label: Text('initials.quiz_play_screen.next'.tr()),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: primary,
                           disabledBackgroundColor: Colors.grey.shade300,
@@ -605,7 +676,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
                           ),
                           child: _isSubmitting
                               ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                              : const Text('Submit Quiz', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                              : Text('initials.quiz_play_screen.submitQuiz'.tr(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                         ),
                       ),
                   ],
@@ -614,6 +685,52 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
             ],
           );
         },
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  Future<void> _handleClose() async {
+    final shouldExit = await confirmExitTask(
+      context,
+      title: 'initials.quiz_play_screen.exitTitle'.tr(),
+      subtitle: 'initials.quiz_play_screen.exitSubtitle'.tr(),
+      stayLabel: 'initials.quiz_play_screen.exitStay'.tr(),
+    );
+    if (shouldExit && context.mounted) Navigator.pop(context);
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Row(children: [
+        GestureDetector(
+          onTap: _handleClose,
+          child: Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: AppColors.primarySoft(0.1),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+            ),
+            child: const Icon(Icons.arrow_back_ios_new_rounded,
+                color: AppColors.primary, size: 18),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Text(
+            widget.quizTitle,
+            style: AppText.h1,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+      ]),
       ),
     );
   }

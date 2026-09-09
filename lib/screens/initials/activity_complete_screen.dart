@@ -1,7 +1,10 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:lottie/lottie.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class ActivityCompleteScreen extends StatefulWidget {
   final String activityTitle;
@@ -10,8 +13,8 @@ class ActivityCompleteScreen extends StatefulWidget {
   final int wrongAnswers;
   final int xpEarned;
   final bool isFirstCompletion;
-  final String screenTitle;
-  
+  final String? screenTitle;
+
   // Quiz-specific (only for graded quizzes)
   //
   // BUGFIX: this used to be a plain VoidCallback. QuizPlayScreen's
@@ -34,7 +37,7 @@ class ActivityCompleteScreen extends StatefulWidget {
     required this.wrongAnswers,
     required this.xpEarned,
     this.isFirstCompletion = true,
-    this.screenTitle = 'Activity Complete!', 
+    this.screenTitle,
     this.onRetake,
     this.attemptsRemaining = 0,
     this.maxAttempts = 3,
@@ -65,9 +68,11 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
       && !_isPassed;
 
   String get _buttonText {
-    if (!widget.isGraded) return 'Continue';
-    if (_isPassed) return 'Continue';
-    return widget.attemptsRemaining == 0 ? 'Back to Menu' : 'Continue';
+    if (!widget.isGraded) return 'common.continue'.tr();
+    if (_isPassed) return 'common.continue'.tr();
+    return widget.attemptsRemaining == 0
+        ? 'common.backToMenu'.tr()
+        : 'common.continue'.tr();
   }
 
   @override
@@ -157,6 +162,8 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    final screenTitle = widget.screenTitle ?? 'common.activityComplete'.tr();
     final showCelebration = !widget.isGraded || _isPassed;
     final gradientColors = showCelebration
         ? [const Color(0xFFF6E96B), const Color(0xFFBEDC74), const Color(0xFFA2CA71)]
@@ -200,7 +207,7 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
 
               // Title
               Text(
-                widget.screenTitle,
+                screenTitle,
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
@@ -235,7 +242,8 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
                       const Icon(Icons.info_outline, size: 16, color: Colors.orange),
                       const SizedBox(width: 8),
                       Text(
-                        'You have ${widget.attemptsRemaining} attempt${widget.attemptsRemaining != 1 ? 's' : ''} left',
+                        'initials.activity_complete_screen.attemptsLeftBanner'
+                            .plural(widget.attemptsRemaining),
                         style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                       ),
                     ],
@@ -290,9 +298,9 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
                             letterSpacing: 1,
                           ),
                         ),
-                        const Text(
-                          'Experience Earned',
-                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                        Text(
+                          'common.experienceEarned'.tr(),
+                          style: const TextStyle(fontSize: 13, color: Colors.grey),
                         ),
                       ],
                     ),
@@ -307,21 +315,21 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
                 child: Row(
                   children: [
                     _statCard(
-                      label: 'Score',
+                      label: 'common.score'.tr(),
                       value: '${widget.scorePercent}%',
                       color: const Color(0xFF43A047),
                       icon: Icons.bar_chart_rounded,
                     ),
                     const SizedBox(width: 12),
                     _statCard(
-                      label: 'Correct',
+                      label: 'common.correct'.tr(),
                       value: '${widget.correctAnswers}',
                       color: const Color(0xFF1E88E5),
                       icon: Icons.check_circle_outline_rounded,
                     ),
                     const SizedBox(width: 12),
                     _statCard(
-                      label: 'Wrong',
+                      label: 'common.wrong'.tr(),
                       value: '${widget.wrongAnswers}',
                       color: const Color(0xFFE53935),
                       icon: Icons.cancel_outlined,
@@ -345,7 +353,8 @@ class _ActivityCompleteScreenState extends State<ActivityCompleteScreen>
                           onPressed: _onRetake,
                           icon: const Icon(Icons.refresh_rounded, size: 20),
                           label: Text(
-                            'Try Again (${widget.attemptsRemaining} attempt${widget.attemptsRemaining != 1 ? 's' : ''} left)',
+                            'initials.activity_complete_screen.tryAgainWithAttempts'
+                                .plural(widget.attemptsRemaining),
                             style: const TextStyle(fontSize: 16),
                           ),
                           style: ElevatedButton.styleFrom(

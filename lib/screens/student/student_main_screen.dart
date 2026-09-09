@@ -1,6 +1,9 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/app_bottom_nav_bar.dart';
 import 'package:loringo_app/components/responsive_scaffold.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/student/student_activities_screen.dart';
 import 'package:loringo_app/screens/student/student_league_screen.dart';
 import 'package:loringo_app/screens/student/student_settings_screen.dart';
@@ -31,32 +34,40 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
   // value no matter which one triggers a change.
   late String _currentAvatar;
 
-  late final List<Widget> _tabs;
-
   static const int _settingsIndex = 2;
 
   @override
   void initState() {
     super.initState();
     _currentAvatar = widget.studentAvatar ?? '';
-    _tabs = [
-      StudentActivitiesTab(
-        studentId: widget.studentId,
-        studentName: widget.studentName,
-        studentAvatar: _currentAvatar,
-      ),
-      StudentLeagueTab(
-        studentId: widget.studentId,
-        studentName: widget.studentName,
-      ),
-      StudentSettingsTab(
-        studentId: widget.studentId,
-        studentName: widget.studentName,
-        studentAvatar: _currentAvatar,
-        showBackButton: false,
-      ),
-    ];
   }
+
+  // Built fresh on every build (instead of a `late final` list computed
+  // once in initState) so each tab always receives the current
+  // _currentAvatar value — e.g. after the avatar is changed via the
+  // drawer's pushed StudentSettingsTab route, this list needs to hand the
+  // embedded (bottom-nav) StudentSettingsTab instance the new value too.
+  // Flutter's element reconciliation keeps each tab's own State alive
+  // across rebuilds (same runtimeType + position in the list), so this
+  // doesn't reset any tab's internal state.
+  List<Widget> _buildTabs() => [
+        StudentActivitiesTab(
+          studentId: widget.studentId,
+          studentName: widget.studentName,
+          studentAvatar: _currentAvatar,
+        ),
+        StudentLeagueTab(
+          studentId: widget.studentId,
+          studentName: widget.studentName,
+        ),
+        StudentSettingsTab(
+          studentId: widget.studentId,
+          studentName: widget.studentName,
+          studentAvatar: _currentAvatar,
+          showBackButton: false,
+          onAvatarUpdated: _onAvatarUpdated,
+        ),
+      ];
 
   void _onAvatarUpdated(String newAvatar) {
     setState(() => _currentAvatar = newAvatar);
@@ -64,11 +75,12 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return SecuredScreen(
       isStudent: true,
       child: ResponsiveScaffold(
         headerIcon: Icons.emoji_people_rounded,
-        drawerTitle: 'Loringo',
+        drawerTitle: 'student.student_main_screen.drawerTitle'.tr(),
         drawerSubtitle: widget.studentName,
         hideBottomNavOnWide: true,
         isStudent: true,
@@ -84,7 +96,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
         navItemsBuilder: (context, isWide) => [
           ListTile(
             leading: const Icon(Icons.home_rounded, color: AppColors.primary),
-            title: const Text('Home'),
+            title: Text('common.home'.tr()),
             selected: _currentIndex == 0,
             selectedTileColor: AppColors.primarySoft(0.08),
             trailing: _currentIndex == 0
@@ -97,7 +109,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
           ),
           ListTile(
             leading: const Icon(Icons.emoji_events_rounded, color: AppColors.primary),
-            title: const Text('League'),
+            title: Text('common.league'.tr()),
             selected: _currentIndex == 1,
             selectedTileColor: AppColors.primarySoft(0.08),
             trailing: _currentIndex == 1
@@ -113,7 +125,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
           if (!isWide) ...[
             ListTile(
               leading: const Icon(Icons.settings_rounded, color: AppColors.primary),
-              title: const Text('Settings'),
+              title: Text('common.settings'.tr()),
               selected: _currentIndex == _settingsIndex,
               selectedTileColor: AppColors.primarySoft(0.08),
               trailing: _currentIndex == _settingsIndex
@@ -130,10 +142,11 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
         bottomNavigationBar: AppBottomNavBar(
           currentIndex: _currentIndex,
           onTap: (index) => setState(() => _currentIndex = index),
-          items: const [
-            AppNavItem(icon: Icons.home_rounded, label: 'Home'),
-            AppNavItem(icon: Icons.emoji_events_rounded, label: 'League'),
-            AppNavItem(icon: Icons.settings_rounded, label: 'Settings'),
+          showLabels: false,
+          items: [
+            AppNavItem(icon: Icons.home_rounded, label: 'common.home'.tr()),
+            AppNavItem(icon: Icons.emoji_events_rounded, label: 'common.league'.tr()),
+            AppNavItem(icon: Icons.settings_rounded, label: 'common.settings'.tr()),
           ],
         ),
         bodyBuilder: (context, isWide) => Container(
@@ -145,8 +158,15 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
             ),
           ),
           child: IndexedStack(
+            // Default StackFit.loose lets each tab size itself to its own
+            // content instead of filling the body — with League's shorter
+            // content that left blank space below the card where swipes
+            // (like pull-to-refresh) landed outside the actual scrollable
+            // and did nothing. .expand forces every tab to fill the full
+            // available height.
+            sizing: StackFit.expand,
             index: _currentIndex,
-            children: _tabs,
+            children: _buildTabs(),
           ),
         ),
       ),

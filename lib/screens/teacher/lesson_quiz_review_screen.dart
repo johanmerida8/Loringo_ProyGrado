@@ -1,6 +1,8 @@
 // screens/teacher/lesson_quiz_review_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -30,6 +32,10 @@ import 'package:loringo_app/theme/app_theme.dart';
 class LessonQuizReviewScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
+  final String groupId;
+  final String contentId;
+  final String unitId;
+  final String lessonId;
   final String quizId;
   final String quizTitle;
 
@@ -37,6 +43,10 @@ class LessonQuizReviewScreen extends StatefulWidget {
     super.key,
     required this.studentId,
     required this.studentName,
+    required this.groupId,
+    required this.contentId,
+    required this.unitId,
+    required this.lessonId,
     required this.quizId,
     required this.quizTitle,
   });
@@ -53,6 +63,10 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
   int _score = 0;
   int _totalQuestions = 0;
   String _feedback = '';
+
+  // Same one-shot lock as ActivityReviewScreen's _feedbackConfirmed —
+  // once saved with real text, this note can't be edited again.
+  bool _feedbackConfirmed = false;
 
   final TextEditingController _feedbackController = TextEditingController();
 
@@ -71,15 +85,15 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final questionsSnapshot = await FirebaseFirestore.instance
-          .collection('quizzes')
-          .doc(widget.quizId)
-          .collection('questions')
-          .orderBy('order')
-          .get();
+      final questionsSnapshot = await Database().getQuizQuestions(
+        widget.contentId,
+        widget.unitId,
+        widget.quizId,
+        lessonId: widget.lessonId,
+      );
 
       _questions = questionsSnapshot.docs.map((doc) {
-        final d = doc.data();
+        final d = doc.data() as Map<String, dynamic>;
         return {
           'id': doc.id,
           'question': d['question'] ?? '',
@@ -90,6 +104,8 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
       _totalQuestions = _questions.length;
 
       final progressDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('progress')
@@ -104,6 +120,7 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
       }
 
       _feedbackController.text = _feedback;
+      _feedbackConfirmed = _feedback.trim().isNotEmpty;
     } catch (e) {
       debugPrint('Error loading lesson quiz review: $e');
     } finally {
@@ -112,23 +129,41 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
   }
 
   Future<void> _saveFeedback() async {
+    if (_feedback.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                'teacher.lesson_quiz_review_screen.pleaseWriteFeedback'.tr())),
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
       final db = Database();
       await db.saveLessonQuizFeedback(
+        groupId: widget.groupId,
         studentId: widget.studentId,
         quizId: widget.quizId,
         feedback: _feedback,
       );
       if (mounted) {
+        setState(() => _feedbackConfirmed = true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Feedback saved'), backgroundColor: Colors.green),
+          SnackBar(
+            content:
+                Text('teacher.lesson_quiz_review_screen.feedbackSaved'.tr()),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('teacher.lesson_quiz_review_screen.errorWithMessage'
+                  .tr(namedArgs: {'error': '$e'})),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -140,25 +175,32 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: Text('Review: ${widget.quizTitle}'),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: 'teacher.lesson_quiz_review_screen.reviewTitle'
+                .tr(namedArgs: {'title': widget.quizTitle}),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                   // Student info card
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 8,
+                        ),
+                      ],
                     ),
                     child: Row(
                       children: [
@@ -166,8 +208,14 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
                           radius: 28,
                           backgroundColor: AppColors.info.withOpacity(0.1),
                           child: Text(
-                            widget.studentName.isNotEmpty ? widget.studentName[0].toUpperCase() : '?',
-                            style: const TextStyle(fontSize: 22, color: AppColors.info, fontWeight: FontWeight.bold),
+                            widget.studentName.isNotEmpty
+                                ? widget.studentName[0].toUpperCase()
+                                : '?',
+                            style: const TextStyle(
+                              fontSize: 22,
+                              color: AppColors.info,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -175,35 +223,64 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(widget.studentName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              Text(
+                                widget.studentName,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               Text(
                                 _totalQuestions == 0
-                                    ? 'No score recorded'
-                                    : 'Score: $_score/$_totalQuestions (${(_score / _totalQuestions * 100).round()}%)',
+                                    ? 'teacher.lesson_quiz_review_screen.noScoreRecorded'
+                                        .tr()
+                                    : 'teacher.lesson_quiz_review_screen.scoreLabel'
+                                        .tr(namedArgs: {
+                                        'score': '$_score',
+                                        'total': '$_totalQuestions',
+                                        'percent':
+                                            '${(_score / _totalQuestions * 100).round()}',
+                                      }),
                                 style: TextStyle(
-                                    fontSize: 14,
-                                    color: _totalQuestions > 0 && _score >= (_totalQuestions * 0.7)
-                                        ? Colors.green
-                                        : Colors.orange),
+                                  fontSize: 14,
+                                  color:
+                                      _totalQuestions > 0 &&
+                                          _score >= (_totalQuestions * 0.7)
+                                      ? Colors.green
+                                      : Colors.orange,
+                                ),
                               ),
                             ],
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: AppColors.info.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(20),
                           ),
-                          child: const Text('Lesson Quiz',
-                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.info)),
+                          child: Text(
+                            'teacher.lesson_quiz_review_screen.lessonQuiz'.tr(),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.info,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
 
                   const SizedBox(height: 24),
-                  const Text('Questions Review', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(
+                    'teacher.lesson_quiz_review_screen.questionsReview'.tr(),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 12),
                   if (_questions.isEmpty)
                     Container(
@@ -214,57 +291,118 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
                         border: Border.all(color: Colors.grey.shade200),
                       ),
                       child: Center(
-                        child: Text('No questions found for this quiz', style: TextStyle(color: Colors.grey.shade600)),
+                        child: Text(
+                          'teacher.lesson_quiz_review_screen.noQuestionsFound'
+                              .tr(),
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
                       ),
                     )
                   else
                     ..._questions.asMap().entries.map((entry) {
                       final idx = entry.key;
                       final q = entry.value;
-                      final studentAnswer = idx < _answers.length ? _answers[idx]['selectedIndex'] as int? : null;
+                      final studentAnswer = idx < _answers.length
+                          ? _answers[idx]['selectedIndex'] as int?
+                          : null;
                       final isCorrect = studentAnswer == q['correctIndex'];
                       return Container(
                         margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: isCorrect ? Colors.green.shade200 : Colors.red.shade200),
+                          border: Border.all(
+                            color: isCorrect
+                                ? Colors.green.shade200
+                                : Colors.red.shade200,
+                          ),
                         ),
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(children: [
-                                Icon(isCorrect ? Icons.check_circle : Icons.cancel,
-                                    color: isCorrect ? Colors.green : Colors.red, size: 20),
-                                const SizedBox(width: 8),
-                                Expanded(child: Text('Question ${idx + 1}: ${q['question']}',
-                                    style: const TextStyle(fontWeight: FontWeight.w600))),
-                              ]),
+                              Row(
+                                children: [
+                                  Icon(
+                                    isCorrect
+                                        ? Icons.check_circle
+                                        : Icons.cancel,
+                                    color: isCorrect
+                                        ? Colors.green
+                                        : Colors.red,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'teacher.lesson_quiz_review_screen.questionLabel'
+                                          .tr(namedArgs: {
+                                        'number': '${idx + 1}',
+                                        'text': '${q['question']}',
+                                      }),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                               const SizedBox(height: 8),
-                              ...List.generate((q['options'] as List).length, (optIdx) {
+                              ...List.generate((q['options'] as List).length, (
+                                optIdx,
+                              ) {
                                 final isStudentChoice = studentAnswer == optIdx;
-                                final isCorrectChoice = q['correctIndex'] == optIdx;
+                                final isCorrectChoice =
+                                    q['correctIndex'] == optIdx;
                                 Color? bgColor;
-                                if (isCorrectChoice) bgColor = Colors.green.shade50;
-                                else if (isStudentChoice && !isCorrectChoice) bgColor = Colors.red.shade50;
+                                if (isCorrectChoice)
+                                  bgColor = Colors.green.shade50;
+                                else if (isStudentChoice && !isCorrectChoice)
+                                  bgColor = Colors.red.shade50;
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 4),
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: bgColor,
                                     borderRadius: BorderRadius.circular(8),
                                     border: Border.all(
-                                        color: isCorrectChoice ? Colors.green : (isStudentChoice ? Colors.red : Colors.grey.shade200)),
+                                      color: isCorrectChoice
+                                          ? Colors.green
+                                          : (isStudentChoice
+                                                ? Colors.red
+                                                : Colors.grey.shade200),
+                                    ),
                                   ),
-                                  child: Row(children: [
-                                    Text('${String.fromCharCode(65 + optIdx)}.', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                    const SizedBox(width: 8),
-                                    Expanded(child: Text(q['options'][optIdx])),
-                                    if (isCorrectChoice) const Icon(Icons.check_circle, color: Colors.green, size: 16),
-                                    if (isStudentChoice && !isCorrectChoice) const Icon(Icons.cancel, color: Colors.red, size: 16),
-                                  ]),
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        '${String.fromCharCode(65 + optIdx)}.',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(q['options'][optIdx]),
+                                      ),
+                                      if (isCorrectChoice)
+                                        const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.green,
+                                          size: 16,
+                                        ),
+                                      if (isStudentChoice && !isCorrectChoice)
+                                        const Icon(
+                                          Icons.cancel,
+                                          color: Colors.red,
+                                          size: 16,
+                                        ),
+                                    ],
+                                  ),
                                 );
                               }),
                             ],
@@ -274,43 +412,88 @@ class _LessonQuizReviewScreenState extends State<LessonQuizReviewScreen> {
                     }),
 
                   const SizedBox(height: 24),
-                  const Text('Teacher Feedback', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(
+                    'teacher.lesson_quiz_review_screen.teacherFeedback'.tr(),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   TextField(
                     controller: _feedbackController,
                     onChanged: (v) => _feedback = v,
                     maxLines: 5,
+                    enabled: !_feedbackConfirmed,
                     decoration: InputDecoration(
-                      hintText: 'Write an internal note about this quiz attempt...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      hintText: 'teacher.lesson_quiz_review_screen.feedbackHint'
+                          .tr(),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: _feedbackConfirmed
+                          ? Colors.grey.shade100
+                          : Colors.white,
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Visible only to teachers — not sent to the parent. Lesson Quiz is formative and never generates a parent report.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontStyle: FontStyle.italic),
+                    _feedbackConfirmed
+                        ? 'teacher.lesson_quiz_review_screen.feedbackConfirmedNote'
+                            .tr()
+                        : 'teacher.lesson_quiz_review_screen.feedbackVisibleNote'
+                            .tr(),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: double.infinity,
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: _isSaving ? null : _saveFeedback,
+                      onPressed: (_isSaving || _feedbackConfirmed)
+                          ? null
+                          : _saveFeedback,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        backgroundColor: _feedbackConfirmed
+                            ? Colors.grey.shade400
+                            : AppColors.primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       child: _isSaving
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : const Text('Save Feedback', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Text(
+                              _feedbackConfirmed
+                                  ? 'teacher.lesson_quiz_review_screen.feedbackConfirmedButton'
+                                      .tr()
+                                  : 'teacher.lesson_quiz_review_screen.saveFeedback'
+                                      .tr(),
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
                   ),
                   const SizedBox(height: 24),
                 ],
-              ),
-            ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

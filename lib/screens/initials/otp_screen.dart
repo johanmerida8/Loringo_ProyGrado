@@ -1,6 +1,9 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/confirm_reset_password_screen.dart';
 import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -87,7 +90,7 @@ class _OTPScreenState extends State<OTPScreen> {
       final text = data?.text?.trim() ?? '';
       if (RegExp(r'^\d{6}$').hasMatch(text)) {
         _fillCode(text);
-        _snack('Code pasted automatically', color: AppColors.success);
+        _snack('initials.otp_screen.codePastedAuto'.tr(), color: AppColors.success);
       }
     } catch (_) {}
   }
@@ -99,19 +102,19 @@ class _OTPScreenState extends State<OTPScreen> {
       final digits = raw.replaceAll(RegExp(r'\D'), '');
       if (digits.length >= 6) {
         _fillCode(digits.substring(0, 6));
-        _snack('Code pasted', color: AppColors.success);
+        _snack('initials.otp_screen.codePasted'.tr(), color: AppColors.success);
       } else {
-        _snack('Clipboard doesn\'t contain a valid code', color: AppColors.warning);
+        _snack('initials.otp_screen.clipboardInvalidCode'.tr(), color: AppColors.warning);
       }
     } catch (_) {
-      _snack('Could not paste code');
+      _snack('initials.otp_screen.couldNotPasteCode'.tr());
     }
   }
 
   Future<void> _verifyOTP() async {
     final code = _otpValue;
     if (code.length != 6) {
-      _snack('Please enter all 6 digits', color: AppColors.warning);
+      _snack('initials.otp_screen.enterAllDigits'.tr(), color: AppColors.warning);
       return;
     }
 
@@ -119,7 +122,7 @@ class _OTPScreenState extends State<OTPScreen> {
     try {
       final isValid = await _otpService.verifyOTP(widget.email, code);
       if (isValid) {
-        _snack('Code verified!', color: AppColors.success);
+        _snack('initials.otp_screen.codeVerified'.tr(), color: AppColors.success);
         if (mounted) {
           Navigator.pushReplacement(
             context,
@@ -132,11 +135,11 @@ class _OTPScreenState extends State<OTPScreen> {
           );
         }
       } else {
-        _snack('Invalid or expired code');
+        _snack('initials.otp_screen.invalidOrExpiredCode'.tr());
         _clearFields();
       }
     } catch (e) {
-      _snack('Verification error: $e');
+      _snack('initials.otp_screen.verificationError'.tr(namedArgs: {'error': '$e'}));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -152,7 +155,9 @@ class _OTPScreenState extends State<OTPScreen> {
         return;
       }
       await _otpService.sendOTPToEmail(widget.email);
-      _snack('New code sent to ${widget.email}', color: AppColors.success);
+      _snack(
+          'initials.otp_screen.newCodeSentTo'.tr(namedArgs: {'email': widget.email}),
+          color: AppColors.success);
       setState(() {
         _remainingTime = 30;
         _canResend = false;
@@ -160,7 +165,7 @@ class _OTPScreenState extends State<OTPScreen> {
       _startCountdown();
       _clearFields();
     } catch (e) {
-      _snack('Error resending code: $e');
+      _snack('initials.otp_screen.errorResendingCode'.tr(namedArgs: {'error': '$e'}));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -168,6 +173,7 @@ class _OTPScreenState extends State<OTPScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return AuthLayout(
       mobileHeroFraction: 0.40,
       heroVisual: Image.asset(
@@ -176,12 +182,12 @@ class _OTPScreenState extends State<OTPScreen> {
         height: 145,
         fit: BoxFit.contain,
       ),
-      title: 'Check your email',
-      subtitle: 'Enter the 6-digit code we sent',
+      title: 'initials.otp_screen.checkYourEmail'.tr(),
+      subtitle: 'initials.otp_screen.enterSixDigitCode'.tr(),
       form: Column(
         children: [
           Text(
-            'Code sent to',
+            'initials.otp_screen.codeSentTo'.tr(),
             style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 4),
@@ -220,7 +226,7 @@ class _OTPScreenState extends State<OTPScreen> {
           TextButton.icon(
             onPressed: _pasteFromClipboard,
             icon: const Icon(Icons.content_paste_rounded, size: 18),
-            label: const Text('Paste code'),
+            label: Text('initials.otp_screen.pasteCode'.tr()),
             style: TextButton.styleFrom(
               foregroundColor: AppColors.primary,
               textStyle:
@@ -246,7 +252,7 @@ class _OTPScreenState extends State<OTPScreen> {
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Colors.white),
                   )
-                : const Text('Verify Code', style: AppText.button),
+                : Text('initials.otp_screen.verifyCode'.tr(), style: AppText.button),
           ),
           const SizedBox(height: AppSpacing.md),
           _canResend
@@ -254,14 +260,14 @@ class _OTPScreenState extends State<OTPScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      'Didn\'t receive it? ',
+                      'initials.otp_screen.didntReceiveIt'.tr(),
                       style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                     ),
                     GestureDetector(
                       onTap: _resendOTP,
-                      child: const Text(
-                        'Resend',
-                        style: TextStyle(
+                      child: Text(
+                        'initials.otp_screen.resend'.tr(),
+                        style: const TextStyle(
                           color: AppColors.primary,
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
@@ -273,7 +279,8 @@ class _OTPScreenState extends State<OTPScreen> {
                   ],
                 )
               : Text(
-                  'Resend code in $_remainingTime seconds',
+                  'initials.otp_screen.resendCodeIn'
+                      .tr(namedArgs: {'seconds': '$_remainingTime'}),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
                 ),

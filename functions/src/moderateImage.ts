@@ -20,7 +20,7 @@ interface SafeSearchAnnotation {
 // Cloud Functions. Solo VERY_LIKELY en adult/violence/racy bloquea la imagen,
 // ya que LIKELY es demasiado agresivo para contenido ilustrado/infantil.
 export const moderateImage = onCall(
-  { secrets: [visionApiKey] },
+  { secrets: [visionApiKey], maxInstances: 2 },
   async (request) => {
     const { imageBase64 } = request.data as ModerateImageData;
 

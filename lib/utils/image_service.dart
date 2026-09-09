@@ -22,7 +22,7 @@ Future<String> getUploadFolder() async {
   final doc = await FirebaseFirestore.instance
       .collection('users').doc(user.uid).get();
   final role = doc.data()?['role'] ?? 'user';
-  return role == 'admin' ? 'imagesPredefined' : 'teacherUploads/${user.uid}';
+  return role == 'image_manager' ? 'imagesPredefined' : 'teacherUploads/${user.uid}';
 }
 
 // ── ImageService ──────────────────────────────────────────────────────────────
@@ -33,6 +33,28 @@ Future<String> getUploadFolder() async {
 class ImageService {
   final String cloudName   = 'dmflzlyzk';
   final String uploadPreset = 'multimedia';
+
+  // ── Avatar options (Cloudinary "avatars" folder) ──────────────────────
+  //
+  // Cached for the process lifetime — the folder's contents change rarely
+  // (an admin/dev adding avatars), so every AvatarSelector open in a
+  // session after the first is instant instead of re-hitting the network.
+  static List<Map<String, String>>? _cachedAvatars;
+
+  Future<List<Map<String, String>>> fetchAvatarOptions({bool forceRefresh = false}) async {
+    if (!forceRefresh && _cachedAvatars != null) return _cachedAvatars!;
+
+    final callable = FirebaseFunctions.instance.httpsCallable('listCloudinaryAvatars');
+    final result = await callable.call();
+    final data = result.data as Map;
+    final list = (data['avatars'] as List).cast<Map>();
+    final avatars = list
+        .map((e) => {'publicId': e['publicId'] as String, 'url': e['url'] as String})
+        .toList();
+
+    _cachedAvatars = avatars;
+    return avatars;
+  }
 
   // ── Permission helper ──────────────────────────────────────────────────
   // Solicita permiso de fotos según plataforma; true = listo para picker
@@ -264,24 +286,32 @@ class ImageService {
   }
 
   // ── Cloudinary delete ─────────────────────────────────────────────────────
+  //
+  // Routed through the `deleteCloudinaryImage` Cloud Function instead of
+  // calling Cloudinary's destroy endpoint directly from the client (the way
+  // uploadToCloudinary above still does). Cloudinary's upload endpoint is
+  // CORS-enabled for direct browser use; the admin "destroy" endpoint is
+  // not — a direct call from Flutter Web fails with a generic
+  // "ClientException: Failed to fetch" (the browser blocking the
+  // cross-origin request, not Cloudinary rejecting it). Going server-side
+  // sidesteps CORS entirely and stops shipping CLOUDINARY_API_SECRET in the
+  // compiled client bundle. See functions/src/deleteCloudinaryImage.ts.
 
   Future<bool> deleteImage(String publicId) async {
+    if (publicId.isEmpty) {
+      debugPrint('ImageService.deleteImage: empty publicId, nothing to delete');
+      return false;
+    }
     try {
-      final apiKey    = dotenv.env['CLOUDINARY_API_KEY'];
-      final apiSecret = dotenv.env['CLOUDINARY_API_SECRET'];
-      if (apiKey == null || apiSecret == null) return false;
-
-      final response = await http.delete(
-        Uri.https('api.cloudinary.com', '/v1_1/$cloudName/image/destroy'),
-        headers: {
-          'Authorization': 'Basic ${base64Encode(utf8.encode('$apiKey:$apiSecret'))}',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'public_id=$publicId',
-      );
-
-      return response.statusCode == 200;
-    } catch (_) {
+      final callable = FirebaseFunctions.instance.httpsCallable('deleteCloudinaryImage');
+      final result = await callable.call({'publicId': publicId});
+      final deleted = (result.data as Map)['deleted'] == true;
+      if (!deleted) {
+        debugPrint('ImageService.deleteImage: Cloud Function reported not-deleted for $publicId');
+      }
+      return deleted;
+    } catch (e) {
+      debugPrint('ImageService.deleteImage: error for $publicId: $e');
       return false;
     }
   }

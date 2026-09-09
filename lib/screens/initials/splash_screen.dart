@@ -1,12 +1,13 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
 import 'package:loringo_app/services/auth/student_auth_service.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/screens/student/student_main_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:lottie/lottie.dart';
@@ -249,25 +250,18 @@ class _StudentPasswordDialogState extends State<_StudentPasswordDialog> {
     setState(() => _isLoading = true);
     
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('students')
-          .doc(widget.studentId)
-          .get();
-      
-      if (snap.exists) {
-        final data = snap.data() as Map<String, dynamic>;
-        final storedCode = data['accessCode'] as String?;
-        
-        if (storedCode?.toUpperCase() == _codeController.text.trim().toUpperCase()) {
-          await BiometricService.setBiometricEnabled(
-            userId: widget.studentId,
-            enabled: false,
-          );
-          if (mounted) {
-            Navigator.pop(context, true);
-          }
-          return;
+      final isValid = await Database(firestore: firestoreInstance)
+          .verifyAccessCode(widget.studentId, _codeController.text.trim());
+
+      if (isValid) {
+        await BiometricService.setBiometricEnabled(
+          userId: widget.studentId,
+          enabled: false,
+        );
+        if (mounted) {
+          Navigator.pop(context, true);
         }
+        return;
       }
       throw Exception('Invalid code');
     } catch (e) {

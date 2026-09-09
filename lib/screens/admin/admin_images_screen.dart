@@ -1,7 +1,10 @@
 // admin_images_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/admin/admin_view_images_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -30,8 +33,8 @@ class AdminImagesScreen extends StatelessWidget {
                 color: AppColors.primary, size: 22),
           ),
           const SizedBox(width: AppSpacing.md),
-          const Text('New Category',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          Text('admin.admin_images_screen.newCategory'.tr(),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         ]),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
@@ -39,8 +42,8 @@ class AdminImagesScreen extends StatelessWidget {
             autofocus: true,
             textCapitalization: TextCapitalization.words,
             decoration: InputDecoration(
-              labelText: 'Category name',
-              hintText: 'e.g. "Animals"',
+              labelText: 'admin.admin_images_screen.categoryNameLabel'.tr(),
+              hintText: 'admin.admin_images_screen.categoryNameHint'.tr(),
               prefixIcon:
                   const Icon(Icons.folder_rounded, color: AppColors.primary),
               border: OutlineInputBorder(
@@ -51,19 +54,12 @@ class AdminImagesScreen extends StatelessWidget {
                       const BorderSide(color: AppColors.primary, width: 2)),
             ),
           ),
-          const SizedBox(height: AppSpacing.sm),
-          Row(children: [
-            const Icon(Icons.info_outline, size: 13, color: AppColors.muted),
-            const SizedBox(width: AppSpacing.xs),
-            Text('Spaces → underscores, lowercase',
-                style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-          ]),
         ]),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppColors.muted))),
+              child: Text('common.cancel'.tr(),
+                  style: const TextStyle(color: AppColors.muted))),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
@@ -74,28 +70,29 @@ class AdminImagesScreen extends StatelessWidget {
             onPressed: () async {
               final raw = ctrl.text.trim();
               if (raw.isEmpty) return;
-              final sanitized = raw
-                  .replaceAll(' ', '_')
-                  .replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '')
-                  .toLowerCase();
-              if (sanitized.isEmpty) return;
+              // Shown to the user exactly as typed; Database.createCategory
+              // derives the folder-safe categoryName from it internally.
+              if (Database.sanitizeCategoryName(raw).isEmpty) return;
               Navigator.pop(ctx);
               try {
                 await db.createCategory(
-                    categoryName: sanitized,
+                    displayName: raw,
                     ownerId: uid,
-                    ownerRole: 'admin');
+                    ownerRole: 'image_manager');
                 if (context.mounted) {
-                  _showSuccessSnackBar(context, 'Category "$sanitized" created');
+                  _showSuccessSnackBar(context,
+                      'admin.admin_images_screen.categoryCreated'
+                          .tr(namedArgs: {'name': raw}));
                 }
               } catch (e) {
                 if (context.mounted) {
-                  _showErrorSnackBar(context, 'Error: $e');
+                  _showErrorSnackBar(context,
+                      'common.errorWithMessage'.tr(namedArgs: {'error': '$e'}));
                 }
               }
             },
-            child: const Text('Create',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            child: Text('common.create'.tr(),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -154,29 +151,29 @@ class AdminImagesScreen extends StatelessWidget {
               child: Icon(Icons.delete_outline,
                   color: AppColors.danger, size: 22)),
           const SizedBox(width: AppSpacing.md),
-          const Text('Delete Category',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          Text('admin.admin_images_screen.deleteCategory'.tr(),
+              style: const TextStyle(fontWeight: FontWeight.bold)),
         ]),
         content: RichText(
             text: TextSpan(
                 style: const TextStyle(
                     fontSize: 14, color: Colors.black87, height: 1.5),
                 children: [
-              const TextSpan(text: 'Delete '),
+              TextSpan(text: 'admin.admin_images_screen.deletePrefix'.tr()),
               TextSpan(
                   text: '"$categoryName"',
                   style: const TextStyle(fontWeight: FontWeight.bold)),
-              const TextSpan(text: ' and all its images?\n'),
+              TextSpan(text: 'admin.admin_images_screen.deleteSuffix'.tr()),
               TextSpan(
-                  text: 'This cannot be undone.',
+                  text: 'admin.admin_images_screen.cannotBeUndone'.tr(),
                   style: TextStyle(
                       color: Colors.red[400], fontSize: 12)),
             ])),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppColors.muted))),
+              child: Text('common.cancel'.tr(),
+                  style: const TextStyle(color: AppColors.muted))),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
@@ -185,8 +182,8 @@ class AdminImagesScreen extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadii.sm)),
                 elevation: 0),
-            child: const Text('Delete',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            child: Text('common.delete'.tr(),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -202,11 +199,14 @@ class AdminImagesScreen extends StatelessWidget {
       }
       await db.deleteCategory(ownerId, categoryId);
       if (context.mounted) {
-        _showSuccessSnackBar(context, '"$categoryName" deleted');
+        _showSuccessSnackBar(context,
+            'admin.admin_images_screen.categoryDeleted'
+                .tr(namedArgs: {'name': categoryName}));
       }
     } catch (e) {
       if (context.mounted) {
-        _showErrorSnackBar(context, 'Error: $e');
+        _showErrorSnackBar(context,
+            'common.errorWithMessage'.tr(namedArgs: {'error': '$e'}));
       }
     }
   }
@@ -224,6 +224,7 @@ class AdminImagesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final db = Database();
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
@@ -266,20 +267,26 @@ class AdminImagesScreen extends StatelessWidget {
                     const Icon(Icons.folder_special_rounded,
                         color: AppColors.onPrimary, size: 28),
                     const SizedBox(width: AppSpacing.md),
-                    Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                              '${docs.length} categor${docs.length != 1 ? 'ies' : 'y'}',
-                              style: const TextStyle(
-                                  color: AppColors.onPrimary,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 17)),
-                          const Text('Tap a category to view images',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 12)),
-                        ]),
-                    const Spacer(),
+                    Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                'admin.admin_images_screen.categoryCount'
+                                    .plural(docs.length),
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: AppColors.onPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 17)),
+                            Text('admin.admin_images_screen.tapCategoryHint'.tr(),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                                style: const TextStyle(
+                                    color: Colors.white70, fontSize: 12)),
+                          ]),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
                     GestureDetector(
                       onTap: () => _showCreateDialog(context),
                       child: Container(
@@ -292,14 +299,14 @@ class AdminImagesScreen extends StatelessWidget {
                                 BorderRadius.circular(AppRadii.pill),
                             border: Border.all(
                                 color: Colors.white.withOpacity(0.4))),
-                        child: const Row(
+                        child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.add,
+                              const Icon(Icons.add,
                                   color: AppColors.onPrimary, size: 16),
-                              SizedBox(width: AppSpacing.xs),
-                              Text('New',
-                                  style: TextStyle(
+                              const SizedBox(width: AppSpacing.xs),
+                              Text('common.newLabel'.tr(),
+                                  style: const TextStyle(
                                       color: AppColors.onPrimary,
                                       fontWeight: FontWeight.bold,
                                       fontSize: 13)),
@@ -319,8 +326,16 @@ class AdminImagesScreen extends StatelessWidget {
                     (ctx, i) {
                       final data =
                           docs[i].data() as Map<String, dynamic>;
+                      // displayName is what the user typed (e.g. "Sea
+                      // Animals"); categoryName is the folder-safe form
+                      // (e.g. "sea_animals") used as the actual Cloudinary
+                      // folder — see Database.createCategory. Falls back to
+                      // categoryName for categories created before
+                      // displayName existed.
+                      final folderName = data['categoryName'] as String? ??
+                          'admin.admin_images_screen.unnamed'.tr();
                       final name =
-                          data['categoryName'] as String? ?? 'Unnamed';
+                          data['displayName'] as String? ?? folderName;
                       final ownerId = data['ownerId'] as String? ?? '';
                       final accent = _accentFor(name);
                       final initial =
@@ -333,7 +348,8 @@ class AdminImagesScreen extends StatelessWidget {
                                 builder: (_) => AdminViewImagesScreen(
                                     ownerId: ownerId,
                                     categoryId: docs[i].id,
-                                    categoryName: name))),
+                                    categoryName: folderName,
+                                    categoryDisplayName: name))),
                         child: Container(
                           margin: const EdgeInsets.only(
                               bottom: AppSpacing.sm + 2),
@@ -418,7 +434,8 @@ class AdminImagesScreen extends StatelessWidget {
                                               const SizedBox(
                                                   width: AppSpacing.xs),
                                               Text(
-                                                  '$count image${count != 1 ? 's' : ''}',
+                                                  'admin.admin_images_screen.imageCount'
+                                                      .plural(count),
                                                   style: TextStyle(
                                                       fontSize: 11,
                                                       color: accent,
@@ -474,8 +491,8 @@ class AdminImagesScreen extends StatelessWidget {
         elevation: 3,
         icon: const Icon(Icons.create_new_folder_rounded,
             color: AppColors.onPrimary),
-        label: const Text('New Category',
-            style: TextStyle(
+        label: Text('admin.admin_images_screen.newCategory'.tr(),
+            style: const TextStyle(
                 color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
       ),
     );
@@ -509,14 +526,14 @@ class _EmptyCategories extends StatelessWidget {
                       size: 52, color: AppColors.onPrimary),
                 ),
                 const SizedBox(height: 28),
-                const Text('No Image Categories Yet',
-                    style: TextStyle(
+                Text('admin.admin_images_screen.noCategoriesTitle'.tr(),
+                    style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: Colors.black87)),
                 const SizedBox(height: AppSpacing.sm + 2),
                 Text(
-                    'Create categories to organize\nyour educational image library',
+                    'admin.admin_images_screen.noCategoriesSubtitle'.tr(),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: 13,
@@ -535,8 +552,8 @@ class _EmptyCategories extends StatelessWidget {
                               BorderRadius.circular(AppRadii.md)),
                       elevation: 3),
                   icon: const Icon(Icons.create_new_folder_rounded),
-                  label: const Text('Create First Category',
-                      style: TextStyle(
+                  label: Text('admin.admin_images_screen.createFirstCategory'.tr(),
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
               ]),

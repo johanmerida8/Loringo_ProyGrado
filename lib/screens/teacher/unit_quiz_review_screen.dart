@@ -1,12 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class UnitQuizReviewScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
+  final String groupId;
   final String quizId;
   final String quizTitle;
   final String unitId;
@@ -16,6 +19,7 @@ class UnitQuizReviewScreen extends StatefulWidget {
     super.key,
     required this.studentId,
     required this.studentName,
+    required this.groupId,
     required this.quizId,
     required this.quizTitle,
     required this.unitId,
@@ -62,15 +66,14 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
     setState(() => _isLoading = true);
     try {
       // 1. Load quiz questions
-      final questionsSnapshot = await FirebaseFirestore.instance
-          .collection('quizzes')
-          .doc(widget.quizId)
-          .collection('questions')
-          .orderBy('order')
-          .get();
+      final questionsSnapshot = await Database().getQuizQuestions(
+        widget.contentId,
+        widget.unitId,
+        widget.quizId,
+      );
 
       _questions = questionsSnapshot.docs.map((doc) {
-        final d = doc.data();
+        final d = doc.data() as Map<String, dynamic>;
         return {
           'id': doc.id,
           'question': d['question'] ?? '',
@@ -82,6 +85,8 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
 
       // 2. Load student's answers from progress document
       final progressDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('progress')
@@ -97,6 +102,8 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
       // 3. Load existing report (if any) — this is the source of truth for
       // whether a report was already sent for this specific unit.
       final reportDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('reports')
@@ -129,7 +136,9 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
 
     if (_feedback.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add feedback before sending report')),
+        SnackBar(
+            content: Text(
+                'teacher.unit_quiz_review_screen.pleaseAddFeedback'.tr())),
       );
       return;
     }
@@ -176,14 +185,20 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
           _reportSentAt = DateTime.now();
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Report sent to parent!'), backgroundColor: Colors.green),
+          SnackBar(
+              content: Text(
+                  'teacher.unit_quiz_review_screen.reportSentToParent'.tr()),
+              backgroundColor: Colors.green),
         );
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('teacher.unit_quiz_review_screen.errorWithMessage'
+                  .tr(namedArgs: {'error': '$e'})),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -206,14 +221,16 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: Text('Review: ${widget.quizTitle}'),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: 'teacher.unit_quiz_review_screen.reviewTitle'
+                .tr(namedArgs: {'title': widget.quizTitle}),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -239,7 +256,15 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(widget.studentName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                              Text('Score: $_score/$_totalQuestions (${(_score / _totalQuestions * 100).round()}%)', style: TextStyle(fontSize: 14, color: _score >= (_totalQuestions * 0.7) ? Colors.green : Colors.orange)),
+                              Text(
+                                  'teacher.unit_quiz_review_screen.scoreLabel'
+                                      .tr(namedArgs: {
+                                    'score': '$_score',
+                                    'total': '$_totalQuestions',
+                                    'percent':
+                                        '${(_score / _totalQuestions * 100).round()}',
+                                  }),
+                                  style: TextStyle(fontSize: 14, color: _score >= (_totalQuestions * 0.7) ? Colors.green : Colors.orange)),
                             ],
                           ),
                         ),
@@ -264,8 +289,12 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                           Expanded(
                             child: Text(
                               _reportSentAt != null
-                                  ? 'Report already sent on ${_formatSentDate(_reportSentAt!)}'
-                                  : 'Report already sent for this quiz',
+                                  ? 'teacher.unit_quiz_review_screen.reportAlreadySentOn'
+                                      .tr(namedArgs: {
+                                      'date': _formatSentDate(_reportSentAt!)
+                                    })
+                                  : 'teacher.unit_quiz_review_screen.reportAlreadySent'
+                                      .tr(),
                               style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w600, fontSize: 13),
                             ),
                           ),
@@ -275,7 +304,7 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                   ],
 
                   const SizedBox(height: 24),
-                  const Text('Questions Review', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text('teacher.unit_quiz_review_screen.questionsReview'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
                   ..._questions.asMap().entries.map((entry) {
                     final idx = entry.key;
@@ -297,7 +326,7 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                             Row(children: [
                               Icon(isCorrect ? Icons.check_circle : Icons.cancel, color: isCorrect ? Colors.green : Colors.red, size: 20),
                               const SizedBox(width: 8),
-                              Expanded(child: Text('Question ${idx+1}: ${q['question']}', style: const TextStyle(fontWeight: FontWeight.w600))),
+                              Expanded(child: Text('teacher.unit_quiz_review_screen.questionLabel'.tr(namedArgs: {'number': '${idx+1}', 'text': '${q['question']}'}), style: const TextStyle(fontWeight: FontWeight.w600))),
                             ]),
                             const SizedBox(height: 8),
                             ...List.generate((q['options'] as List).length, (optIdx) {
@@ -329,7 +358,7 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                     );
                   }),
                   const SizedBox(height: 24),
-                  const Text('Teacher Feedback', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text('teacher.unit_quiz_review_screen.teacherFeedback'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: _feedbackController,
@@ -340,7 +369,7 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                     // reenvío posible.
                     enabled: !_reportAlreadySent,
                     decoration: InputDecoration(
-                      hintText: 'Write feedback for the parent...',
+                      hintText: 'teacher.unit_quiz_review_screen.feedbackHint'.tr(),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       filled: true,
                       fillColor: _reportAlreadySent ? Colors.grey.shade100 : Colors.white,
@@ -361,7 +390,11 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                       child: _isSaving
                           ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white))
                           : Text(
-                              _reportAlreadySent ? 'Report Already Sent' : 'Send Report to Parent',
+                              _reportAlreadySent
+                                  ? 'teacher.unit_quiz_review_screen.reportAlreadySentButton'
+                                      .tr()
+                                  : 'teacher.unit_quiz_review_screen.sendReportToParent'
+                                      .tr(),
                               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                             ),
                     ),
@@ -369,6 +402,9 @@ class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
     );
   }
 }

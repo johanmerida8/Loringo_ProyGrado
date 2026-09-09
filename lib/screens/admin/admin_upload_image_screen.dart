@@ -1,6 +1,12 @@
 // admin_upload_image_screen.dart
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/admin/widgets/admin_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/image_service.dart';
@@ -8,28 +14,39 @@ import 'package:loringo_app/utils/image_service.dart';
 class AdminUploadImageScreen extends StatefulWidget {
   final String ownerId;
   final String categoryId;
+  // Folder-safe form — used as the Cloudinary folder, never shown to the
+  // user. See Database.createCategory.
   final String categoryName;
+  // What the user actually typed — shown in the UI.
+  final String categoryDisplayName;
 
-  const AdminUploadImageScreen(
-      {super.key,
-      required this.ownerId,
-      required this.categoryId,
-      required this.categoryName});
+  const AdminUploadImageScreen({
+    super.key,
+    required this.ownerId,
+    required this.categoryId,
+    required this.categoryName,
+    required this.categoryDisplayName,
+  });
 
   @override
-  State<AdminUploadImageScreen> createState() =>
-      _AdminUploadImageScreenState();
+  State<AdminUploadImageScreen> createState() => _AdminUploadImageScreenState();
 }
 
 class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
-  final _imageService   = ImageService();
-  final _db             = Database();
+  final _imageService = ImageService();
+  final _db = Database();
   static const int _minRec = 15;
+  // Hard cap per upload batch — keeps a single category from getting
+  // flooded in one go (matches the "too many documents" concern the
+  // category/media-library restructure was already addressing).
+  static const int _maxImages = 20;
+  static const Set<String> _allowedExtensions = {'png', 'svg', 'webp'};
 
   List<Map<String, dynamic>> _selectedFiles = [];
-  bool _isUploading    = false;
-  int  _uploadedCount  = 0;
-  int  _totalCount     = 0;
+  bool _isUploading = false;
+  int _uploadedCount = 0;
+  int _totalCount = 0;
+  bool _isDragging = false;
 
   void _showErrorSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -50,19 +67,35 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
     try {
       final picked = await _imageService.pickMultipleImages();
       if (picked == null || picked.isEmpty) return;
+
+      final overflow = picked.length - _maxImages;
+      final capped = overflow > 0 ? picked.sublist(0, _maxImages) : picked;
+
       setState(() {
-        _selectedFiles = picked
-            .map((f) => {
-                  'file':  f,
-                  'name':  f.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
-                  'isSvg': f.name.toLowerCase().endsWith('.svg'),
-                })
+        _selectedFiles = capped
+            .map(
+              (f) => {
+                'file': f,
+                'name': f.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
+                'isSvg': f.name.toLowerCase().endsWith('.svg'),
+              },
+            )
             .toList();
       });
-      if (mounted) _showPreviewSheet();
+      if (mounted) {
+        if (overflow > 0) {
+          _showErrorSnackBar(
+            context,
+            'admin.admin_upload_image_screen.maxKeptMsg'
+                .tr(namedArgs: {'max': '$_maxImages'}),
+          );
+        }
+        _showPreviewSheet();
+      }
     } catch (e) {
       if (mounted) {
-        _showErrorSnackBar(context, 'Error: $e');
+        _showErrorSnackBar(
+            context, 'common.errorWithMessage'.tr(namedArgs: {'error': '$e'}));
       }
     }
   }
@@ -80,26 +113,111 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
 
       final newEntries = picked
           .where((f) => !existingNames.contains(f.name))
-          .map((f) => {
-                'file':  f,
-                'name':  f.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
-                'isSvg': f.name.toLowerCase().endsWith('.svg'),
-              })
+          .map(
+            (f) => {
+              'file': f,
+              'name': f.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
+              'isSvg': f.name.toLowerCase().endsWith('.svg'),
+            },
+          )
           .toList();
 
+      final combined = [..._selectedFiles, ...newEntries];
+      final overflow = combined.length - _maxImages;
+      final capped = overflow > 0 ? combined.sublist(0, _maxImages) : combined;
+
       setState(() {
-        _selectedFiles = [..._selectedFiles, ...newEntries];
+        _selectedFiles = capped;
       });
 
       if (mounted) {
         Navigator.pop(context);
+        if (overflow > 0) {
+          _showErrorSnackBar(
+            context,
+            'admin.admin_upload_image_screen.maxPerUploadMsg'
+                .tr(namedArgs: {'max': '$_maxImages'}),
+          );
+        }
         _showPreviewSheet();
       }
     } catch (e) {
       if (mounted) {
-        _showErrorSnackBar(context, 'Error: $e');
+        _showErrorSnackBar(
+            context, 'common.errorWithMessage'.tr(namedArgs: {'error': '$e'}));
       }
     }
+  }
+
+  // ── Drag & drop (web/desktop) ─────────────────────────────────────────
+  // Bypasses the file_picker's own type filter, so extension checking
+  // happens here instead. Same dedup-by-name and _maxImages cap as
+  // _selectMoreImages, since dropping is just another way to add to the
+  // existing selection rather than replacing it.
+  Future<void> _handleDroppedFiles(DropDoneDetails detail) async {
+    setState(() => _isDragging = false);
+    if (detail.files.isEmpty) return;
+
+    final existingNames = _selectedFiles
+        .map((entry) => (entry['file'] as PlatformFile).name)
+        .toSet();
+
+    final newEntries = <Map<String, dynamic>>[];
+    var rejectedType = 0;
+
+    for (final xfile in detail.files) {
+      final ext = xfile.name.split('.').last.toLowerCase();
+      if (!_allowedExtensions.contains(ext)) {
+        rejectedType++;
+        continue;
+      }
+      if (existingNames.contains(xfile.name)) continue;
+
+      final bytes = await xfile.readAsBytes();
+      final platformFile = PlatformFile(
+        name: xfile.name,
+        size: bytes.length,
+        bytes: bytes,
+      );
+      newEntries.add({
+        'file': platformFile,
+        'name': xfile.name.replaceAll(RegExp(r'\.[^.]*$'), ''),
+        'isSvg': ext == 'svg',
+      });
+      existingNames.add(xfile.name);
+    }
+
+    if (newEntries.isEmpty) {
+      if (rejectedType > 0 && mounted) {
+        _showErrorSnackBar(
+          context,
+          'admin.admin_upload_image_screen.onlyPngSvgWebp'.tr(),
+        );
+      }
+      return;
+    }
+
+    final combined = [..._selectedFiles, ...newEntries];
+    final overflow = combined.length - _maxImages;
+    final capped = overflow > 0 ? combined.sublist(0, _maxImages) : combined;
+
+    setState(() => _selectedFiles = capped);
+
+    if (!mounted) return;
+    if (rejectedType > 0) {
+      _showErrorSnackBar(
+        context,
+        'admin.admin_upload_image_screen.filesSkippedMsg'
+            .tr(namedArgs: {'count': '$rejectedType'}),
+      );
+    } else if (overflow > 0) {
+      _showErrorSnackBar(
+        context,
+        'admin.admin_upload_image_screen.maxPerUploadMsg'
+            .tr(namedArgs: {'max': '$_maxImages'}),
+      );
+    }
+    _showPreviewSheet();
   }
 
   void _showPreviewSheet() {
@@ -132,74 +250,101 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadii.lg)),
-        title: const Row(children: [
-          Icon(Icons.cloud_upload_rounded,
-              color: AppColors.primary, size: 24),
-          SizedBox(width: AppSpacing.sm + 2),
-          Text('Confirm Upload',
-              style: TextStyle(
-                  fontWeight: FontWeight.bold, fontSize: 17)),
-        ]),
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+        ),
+        title: Row(
+          children: [
+            const Icon(
+              Icons.cloud_upload_rounded,
+              color: AppColors.primary,
+              size: 24,
+            ),
+            const SizedBox(width: AppSpacing.sm + 2),
+            Text(
+              'admin.admin_upload_image_screen.confirmUpload'.tr(),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
+            ),
+          ],
+        ),
         content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              RichText(
-                  text: TextSpan(
-                      style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black87,
-                          height: 1.5),
-                      children: [
-                    TextSpan(
-                        text:
-                            '${_selectedFiles.length} image${_selectedFiles.length != 1 ? "s" : ""}'),
-                    const TextSpan(
-                        text:
-                            ' will be scanned before uploading.'),
-                  ])),
-              const SizedBox(height: AppSpacing.md),
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.sm + 2),
-                decoration: BoxDecoration(
-                    color: AppColors.primarySoft(0.06),
-                    borderRadius:
-                        BorderRadius.circular(AppRadii.sm),
-                    border: Border.all(
-                        color: AppColors.primarySoft(0.2))),
-                child: Row(children: [
-                  const Icon(Icons.folder_rounded,
-                      color: AppColors.primary, size: 16),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            RichText(
+              text: TextSpan(
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.black87,
+                  height: 1.5,
+                ),
+                children: [
+                  TextSpan(
+                    text: 'admin.admin_upload_image_screen.imageCount'
+                        .plural(_selectedFiles.length),
+                  ),
+                  TextSpan(
+                      text: 'admin.admin_upload_image_screen.willBeScannedSuffix'
+                          .tr()),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.sm + 2),
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft(0.06),
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                border: Border.all(color: AppColors.primarySoft(0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.folder_rounded,
+                    color: AppColors.primary,
+                    size: 16,
+                  ),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
-                      child: Text('To: ${widget.categoryName}',
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.primary))),
-                ]),
+                    child: Text(
+                      'admin.admin_upload_image_screen.toCategory'
+                          .tr(namedArgs: {'category': widget.categoryDisplayName}),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ]),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppColors.muted))),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'common.cancel'.tr(),
+              style: const TextStyle(color: AppColors.muted),
+            ),
+          ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
               _uploadImages();
             },
             style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.onPrimary,
-                shape: RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(AppRadii.sm)),
-                elevation: 0),
-            child: const Text('Upload Now',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+              ),
+              elevation: 0,
+            ),
+            child: Text(
+              'admin.admin_upload_image_screen.uploadNow'.tr(),
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
@@ -209,22 +354,24 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
   Future<void> _uploadImages() async {
     if (_selectedFiles.isEmpty) return;
     setState(() {
-      _isUploading   = true;
+      _isUploading = true;
       _uploadedCount = 0;
-      _totalCount    = _selectedFiles.length;
+      _totalCount = _selectedFiles.length;
     });
 
     int success = 0;
     int rejectedContent = 0;
-    int failedTechnical  = 0;
+    int failedTechnical = 0;
 
     for (final entry in _selectedFiles) {
-      final file      = entry['file'];
+      final file = entry['file'];
       final imageName = entry['name'] as String;
-      final ext       = file.name.split('.').last;
+      final ext = file.name.split('.').last;
       try {
         final result = await _imageService.uploadToCloudinary(
-            file, categoryName: widget.categoryName);
+          file,
+          categoryName: widget.categoryName,
+        );
         if (result['success'] != true) {
           if (result['reason'] == 'REJECT_INAPPROPRIATE_IMAGE') {
             rejectedContent++;
@@ -233,12 +380,12 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
           }
         } else {
           await _db.saveImageMetadata(
-            ownerId:            widget.ownerId,
-            categoryId:         widget.categoryId,
-            name:               imageName,
-            imageUrl:           result['secure_url'] as String,
+            ownerId: widget.ownerId,
+            categoryId: widget.categoryId,
+            name: imageName,
+            imageUrl: result['secure_url'] as String,
             cloudinaryPublicId: result['public_id'] as String,
-            fileExtension:      ext,
+            fileExtension: ext,
           );
           success++;
         }
@@ -249,7 +396,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
     }
 
     setState(() {
-      _isUploading   = false;
+      _isUploading = false;
       _selectedFiles = [];
     });
     if (!mounted) return;
@@ -264,46 +411,48 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasFiles      = _selectedFiles.isNotEmpty;
+    context.watch<LocaleProvider>();
+    final hasFiles = _selectedFiles.isNotEmpty;
     final isRecommended = _selectedFiles.length >= _minRec;
-    final progress =
-        _totalCount > 0 ? _uploadedCount / _totalCount : 0.0;
+    final progress = _totalCount > 0 ? _uploadedCount / _totalCount : 0.0;
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.categoryName,
-                  style: const TextStyle(
-                      color: AppColors.onPrimary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16)),
-              const Text('Upload Images',
-                  style: TextStyle(
-                      color: Colors.white70, fontSize: 11)),
-            ]),
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        iconTheme:
-            const IconThemeData(color: AppColors.onPrimary),
-      ),
-      body: _isUploading
-          ? _UploadingView(
-              progress: progress,
-              uploaded: _uploadedCount,
-              total: _totalCount)
-          : _IdleView(
-              selectedCount: _selectedFiles.length,
-              minRecommended: _minRec,
-              isRecommended: isRecommended,
-              hasFiles: hasFiles,
-              onPreview: _showPreviewSheet,
-              onClear: () =>
-                  setState(() => _selectedFiles = []),
+      body: Column(
+        children: [
+          AdminScreenHeader(
+            title: widget.categoryDisplayName,
+            subtitle: 'admin.admin_upload_image_screen.uploadImages'.tr(),
+          ),
+          Expanded(
+            child: DropTarget(
+              onDragEntered: (_) => setState(() => _isDragging = true),
+              onDragExited: (_) => setState(() => _isDragging = false),
+              onDragDone: _handleDroppedFiles,
+              child: Stack(
+                children: [
+                  _isUploading
+                      ? _UploadingView(
+                          progress: progress,
+                          uploaded: _uploadedCount,
+                          total: _totalCount,
+                        )
+                      : _IdleView(
+                          selectedCount: _selectedFiles.length,
+                          minRecommended: _minRec,
+                          maxImages: _maxImages,
+                          isRecommended: isRecommended,
+                          hasFiles: hasFiles,
+                          onPreview: _showPreviewSheet,
+                          onClear: () => setState(() => _selectedFiles = []),
+                        ),
+                  if (_isDragging && !_isUploading) const _DragOverlay(),
+                ],
+              ),
             ),
+          ),
+        ],
+      ),
       // ✅ Un solo FAB con heroTag null — mismo patrón que teacher, evita
       // colisión de Hero cuando coexisten dos FABs condicionales.
       floatingActionButton: _isUploading
@@ -316,13 +465,17 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
                   : AppColors.primary,
               elevation: 3,
               icon: Icon(
-                hasFiles ? Icons.cloud_upload_rounded : Icons.add_photo_alternate_rounded,
+                hasFiles
+                    ? Icons.cloud_upload_rounded
+                    : Icons.add_photo_alternate_rounded,
                 color: AppColors.onPrimary,
               ),
               label: Text(
                 hasFiles
-                    ? 'Upload ${_selectedFiles.length}${isRecommended ? " ✅" : ""}'
-                    : 'Select Images',
+                    ? '${'admin.admin_upload_image_screen.uploadCount'.tr(namedArgs: {
+                        'count': '${_selectedFiles.length}'
+                      })}${isRecommended ? " ✅" : ""}'
+                    : 'admin.admin_upload_image_screen.selectImages'.tr(),
                 style: const TextStyle(
                   color: AppColors.onPrimary,
                   fontWeight: FontWeight.bold,
@@ -336,13 +489,14 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
 // ── Idle view ─────────────────────────────────────────────────────────────────
 
 class _IdleView extends StatelessWidget {
-  final int selectedCount, minRecommended;
+  final int selectedCount, minRecommended, maxImages;
   final bool isRecommended, hasFiles;
   final VoidCallback onPreview, onClear;
 
   const _IdleView({
     required this.selectedCount,
     required this.minRecommended,
+    required this.maxImages,
     required this.isRecommended,
     required this.hasFiles,
     required this.onPreview,
@@ -351,149 +505,239 @@ class _IdleView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              gradient: hasFiles
+                  ? LinearGradient(
+                      colors: [Colors.orange.shade400, Colors.orange.shade700],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : AppDecorations.primaryGradient,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: [
+                BoxShadow(
+                  color: (hasFiles ? Colors.orange : AppColors.primary)
+                      .withOpacity(0.4),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Icon(
+              hasFiles
+                  ? Icons.photo_library_rounded
+                  : Icons.add_photo_alternate_outlined,
+              size: 46,
+              color: AppColors.onPrimary,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            hasFiles
+                ? 'admin.admin_upload_image_screen.readyToUpload'.tr()
+                : 'admin.admin_upload_image_screen.selectPngSvgImages'.tr(),
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: (isRecommended ? AppColors.primary : Colors.orange)
+                  .withOpacity(0.1),
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              border: Border.all(
+                color: (isRecommended ? AppColors.primary : Colors.orange)
+                    .withOpacity(0.3),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 100, height: 100,
-                  decoration: BoxDecoration(
-                    gradient: hasFiles
-                        ? LinearGradient(
-                            colors: [
-                              Colors.orange.shade400,
-                              Colors.orange.shade700
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight)
-                        : AppDecorations.primaryGradient,
-                    borderRadius: BorderRadius.circular(26),
-                    boxShadow: [
-                      BoxShadow(
-                          color: (hasFiles
-                                  ? Colors.orange
-                                  : AppColors.primary)
-                              .withOpacity(0.4),
-                          blurRadius: 18,
-                          offset: const Offset(0, 6))
-                    ],
+                Icon(
+                  isRecommended ? Icons.check_circle : Icons.info_outline,
+                  size: 16,
+                  color: isRecommended ? AppColors.primary : Colors.orange,
+                ),
+                const SizedBox(width: AppSpacing.xs + 2),
+                Text(
+                  selectedCount == 0
+                      ? 'admin.admin_upload_image_screen.noImagesSelected'.tr()
+                      : isRecommended
+                      ? 'admin.admin_upload_image_screen.selectedReadyMsg'
+                          .tr(namedArgs: {'count': '$selectedCount'})
+                      : 'admin.admin_upload_image_screen.selectedMoreRecommendedMsg'
+                          .tr(namedArgs: {
+                          'count': '$selectedCount',
+                          'more': '${minRecommended - selectedCount}',
+                        }),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isRecommended ? AppColors.primary : Colors.orange,
                   ),
-                  child: Icon(
-                      hasFiles
-                          ? Icons.photo_library_rounded
-                          : Icons.add_photo_alternate_outlined,
-                      size: 46,
-                      color: AppColors.onPrimary),
                 ),
-                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs + 2),
+          Text(
+            'admin.admin_upload_image_screen.recommendedRangeMsg'.tr(namedArgs: {
+              'min': '$minRecommended',
+              'max': '$maxImages',
+            }),
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey[500],
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+          if (!hasFiles && kIsWeb) ...[
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mouse_rounded, size: 14, color: Colors.grey[400]),
+                const SizedBox(width: AppSpacing.xs),
                 Text(
-                    hasFiles
-                        ? 'Ready to Upload'
-                        : 'Select PNG or SVG images',
-                    style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87),
-                    textAlign: TextAlign.center),
-                const SizedBox(height: AppSpacing.sm),
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                      vertical: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                      color: (isRecommended
-                              ? AppColors.primary
-                              : Colors.orange)
-                          .withOpacity(0.1),
-                      borderRadius:
-                          BorderRadius.circular(AppRadii.pill),
-                      border: Border.all(
-                          color: (isRecommended
-                                  ? AppColors.primary
-                                  : Colors.orange)
-                              .withOpacity(0.3))),
-                  child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                            isRecommended
-                                ? Icons.check_circle
-                                : Icons.info_outline,
-                            size: 16,
-                            color: isRecommended
-                                ? AppColors.primary
-                                : Colors.orange),
-                        const SizedBox(width: AppSpacing.xs + 2),
-                        Text(
-                          selectedCount == 0
-                              ? 'No images selected'
-                              : isRecommended
-                                  ? '$selectedCount selected · Ready!'
-                                  : '$selectedCount selected · ${minRecommended - selectedCount} more recommended',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: isRecommended
-                                  ? AppColors.primary
-                                  : Colors.orange),
-                        ),
-                      ]),
+                  'admin.admin_upload_image_screen.dragDropHint'.tr(),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-                const SizedBox(height: AppSpacing.xs + 2),
-                Text(
-                    'Recommended: $minRecommended+ images per category',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey[500],
-                        fontStyle: FontStyle.italic)),
-                if (hasFiles) ...[
-                  const SizedBox(height: 28),
-                  Row(children: [
-                    Expanded(child: OutlinedButton.icon(
-                      onPressed: onPreview,
-                      icon: const Icon(Icons.preview_rounded, size: 18),
-                      label: const Text('Preview',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.orange,
-                          side: const BorderSide(
-                              color: Colors.orange, width: 1.5),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: AppSpacing.md - 3),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                  AppRadii.md))),
-                    )),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(child: OutlinedButton.icon(
-                      onPressed: onClear,
-                      icon: const Icon(Icons.clear_rounded, size: 18),
-                      label: const Text('Clear',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.danger,
-                          side: const BorderSide(
-                              color: AppColors.danger, width: 1.5),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: AppSpacing.md - 3),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                  AppRadii.md))),
-                    )),
-                  ]),
-                ] else ...[
-                  const SizedBox(height: AppSpacing.md),
-                  Text('Only PNG and SVG files are accepted',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          fontSize: 12, color: Colors.grey[400])),
-                ],
-                const SizedBox(height: 100),
-              ]),
+              ],
+            ),
+          ],
+          if (hasFiles) ...[
+            const SizedBox(height: 28),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onPreview,
+                    icon: const Icon(Icons.preview_rounded, size: 18),
+                    label: Text(
+                      'admin.admin_upload_image_screen.preview'.tr(),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange,
+                      side: const BorderSide(color: Colors.orange, width: 1.5),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md - 3,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onClear,
+                    icon: const Icon(Icons.clear_rounded, size: 18),
+                    label: Text(
+                      'admin.admin_upload_image_screen.clear'.tr(),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.danger,
+                      side: const BorderSide(
+                        color: AppColors.danger,
+                        width: 1.5,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md - 3,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              'admin.admin_upload_image_screen.onlyPngSvgWebp'.tr(),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+            ),
+          ],
+          const SizedBox(height: 100),
+        ],
+      ),
+    ),
+  );
+}
+
+// ── Drag overlay ──────────────────────────────────────────────────────────────
+// Purely visual — DropTarget's onDragEntered/onDragExited already handle
+// the actual drop mechanics, this just makes the target area obvious while
+// a file is being dragged over it. IgnorePointer so it never intercepts
+// taps once the drag ends.
+class _DragOverlay extends StatelessWidget {
+  const _DragOverlay();
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: Container(
+      margin: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.primarySoft(0.08),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        border: Border.all(color: AppColors.primary, width: 2.5),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.file_download_rounded,
+                size: 40,
+                color: AppColors.onPrimary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              'admin.admin_upload_image_screen.dropImagesToAdd'.tr(),
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }
 
 // ── Uploading view ────────────────────────────────────────────────────────────
@@ -502,66 +746,78 @@ class _UploadingView extends StatelessWidget {
   final double progress;
   final int uploaded, total;
 
-  const _UploadingView(
-      {required this.progress,
-      required this.uploaded,
-      required this.total});
+  const _UploadingView({
+    required this.progress,
+    required this.uploaded,
+    required this.total,
+  });
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(40),
-          child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 90, height: 90,
-                  decoration: BoxDecoration(
-                    gradient: AppDecorations.primaryGradient,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                          color: AppColors.primarySoft(0.4),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6))
-                    ],
-                  ),
-                  child: const Icon(Icons.cloud_upload_rounded,
-                      size: 44, color: AppColors.onPrimary),
+    child: Padding(
+      padding: const EdgeInsets.all(40),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 90,
+            height: 90,
+            decoration: BoxDecoration(
+              gradient: AppDecorations.primaryGradient,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primarySoft(0.4),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
                 ),
-                const SizedBox(height: 28),
-                const Text('Uploading Images…',
-                    style: TextStyle(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: AppSpacing.xs + 2),
-                Text('$uploaded of $total processed',
-                    style: TextStyle(
-                        fontSize: 14, color: Colors.grey[600])),
-                const SizedBox(height: 24),
-                ClipRRect(
-                  borderRadius:
-                      BorderRadius.circular(AppRadii.sm),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 10,
-                    backgroundColor: AppColors.divider,
-                    valueColor: const AlwaysStoppedAnimation(
-                        AppColors.primary),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Text('${(progress * 100).toStringAsFixed(0)}%',
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary)),
-                const SizedBox(height: 20),
-                Text('Scanning each image for content safety…',
-                    style: TextStyle(
-                        fontSize: 12, color: Colors.grey[400])),
-              ]),
-        ),
-      );
+              ],
+            ),
+            child: const Icon(
+              Icons.cloud_upload_rounded,
+              size: 44,
+              color: AppColors.onPrimary,
+            ),
+          ),
+          const SizedBox(height: 28),
+          Text(
+            'admin.admin_upload_image_screen.uploadingTitle'.tr(),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: AppSpacing.xs + 2),
+          Text(
+            'admin.admin_upload_image_screen.processedMsg'
+                .tr(namedArgs: {'uploaded': '$uploaded', 'total': '$total'}),
+            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 24),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadii.sm),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 10,
+              backgroundColor: AppColors.divider,
+              valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            '${(progress * 100).toStringAsFixed(0)}%',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'admin.admin_upload_image_screen.scanningMsg'.tr(),
+            style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 // ── Preview sheet ─────────────────────────────────────────────────────────────
@@ -581,227 +837,295 @@ class _PreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
       maxChildSize: 0.95,
       minChildSize: 0.5,
       builder: (ctx, ctrl) => Container(
         decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(
-                top: Radius.circular(AppRadii.lg + 4))),
-        child: Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.lg,
-                AppSpacing.md, AppSpacing.lg, 0),
-            child: Column(children: [
-              Center(
-                  child: Container(
-                      width: 36, height: 4,
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppRadii.lg + 4),
+          ),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.md,
+                AppSpacing.lg,
+                0,
+              ),
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
                       decoration: BoxDecoration(
-                          color: AppColors.divider,
-                          borderRadius:
-                              BorderRadius.circular(2)))),
-              const SizedBox(height: AppSpacing.md),
-              Row(children: [
-                Container(
-                    padding: const EdgeInsets.all(AppSpacing.sm),
-                    decoration: BoxDecoration(
-                        color: AppColors.primarySoft(0.1),
-                        borderRadius:
-                            BorderRadius.circular(AppRadii.sm)),
-                    child: const Icon(
-                        Icons.photo_library_rounded,
-                        color: AppColors.primary,
-                        size: 20)),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                        color: AppColors.divider,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Row(
                     children: [
-                      Text(
-                          'Preview — ${selectedFiles.length} image${selectedFiles.length != 1 ? "s" : ""}',
-                          style: const TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.bold)),
-                      const Text('Tap × to remove',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.muted)),
+                      Container(
+                        padding: const EdgeInsets.all(AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySoft(0.1),
+                          borderRadius: BorderRadius.circular(AppRadii.sm),
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_rounded,
+                          color: AppColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'admin.admin_upload_image_screen.previewCount'
+                                  .plural(selectedFiles.length),
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              'admin.admin_upload_image_screen.tapToRemove'.tr(),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ]),
-              const SizedBox(height: AppSpacing.sm),
-              Row(children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onSelectMore,
-                    icon: const Icon(Icons.add_photo_alternate_outlined,
-                        size: 16, color: AppColors.primary),
-                    label: const Text('Select More',
-                        style: TextStyle(
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: onSelectMore,
+                          icon: const Icon(
+                            Icons.add_photo_alternate_outlined,
+                            size: 16,
                             color: AppColors.primary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppColors.primary),
-                        padding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.xs + 2),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppRadii.sm))),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onClearAll,
-                    icon: Icon(Icons.delete_sweep,
-                        size: 16, color: AppColors.danger),
-                    label: Text('Clear all',
-                        style: TextStyle(
+                          ),
+                          label: Text(
+                            'admin.admin_upload_image_screen.selectMore'.tr(),
+                            style: const TextStyle(
+                              color: AppColors.primary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: AppColors.primary),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppSpacing.xs + 2,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppRadii.sm),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: onClearAll,
+                          icon: Icon(
+                            Icons.delete_sweep,
+                            size: 16,
                             color: AppColors.danger,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: AppColors.danger),
-                        padding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.xs + 2),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppRadii.sm))),
+                          ),
+                          label: Text(
+                            'admin.admin_upload_image_screen.clearAll'.tr(),
+                            style: TextStyle(
+                              color: AppColors.danger,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: AppColors.danger),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppSpacing.xs + 2,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(AppRadii.sm),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: AppSpacing.md),
+                  const Divider(height: 1),
+                ],
+              ),
+            ),
+            Expanded(
+              child: GridView.builder(
+                controller: ctrl,
+                padding: const EdgeInsets.all(AppSpacing.md),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
                 ),
-              ]),
-              const SizedBox(height: AppSpacing.md),
-              const Divider(height: 1),
-            ]),
-          ),
-          Expanded(
-            child: GridView.builder(
-              controller: ctrl,
-              padding: const EdgeInsets.all(AppSpacing.md),
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10),
-              itemCount: selectedFiles.length,
-              itemBuilder: (_, i) {
-                final file  = selectedFiles[i]['file'];
-                final isSvg = selectedFiles[i]['isSvg'] as bool;
-                final name  = selectedFiles[i]['name'] as String;
-                return Stack(fit: StackFit.expand, children: [
-                  ClipRRect(
-                    borderRadius:
-                        BorderRadius.circular(AppRadii.md),
-                    child: Container(
-                      decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          border: Border.all(
-                              color: AppColors.divider)),
-                      child: isSvg
-                          ? Column(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                    Icons
-                                        .image_aspect_ratio_rounded,
-                                    color: Colors.blue[300],
-                                    size: 32),
-                                const Text('SVG',
-                                    style: TextStyle(
+                itemCount: selectedFiles.length,
+                itemBuilder: (_, i) {
+                  final file = selectedFiles[i]['file'];
+                  final isSvg = selectedFiles[i]['isSvg'] as bool;
+                  final name = selectedFiles[i]['name'] as String;
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            border: Border.all(color: AppColors.divider),
+                          ),
+                          child: isSvg
+                              ? Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.image_aspect_ratio_rounded,
+                                      color: Colors.blue[300],
+                                      size: 32,
+                                    ),
+                                    const Text(
+                                      'SVG',
+                                      style: TextStyle(
                                         fontSize: 10,
-                                        fontWeight:
-                                            FontWeight.bold,
-                                        color: Colors.blue)),
-                              ])
-                          : Image.memory(file.bytes!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const Icon(
-                                      Icons.broken_image,
-                                      color:
-                                          AppColors.muted)),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: 0, left: 0, right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.xs + 2,
-                          vertical: AppSpacing.xs),
-                      decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
-                          borderRadius: const BorderRadius.vertical(
-                              bottom: Radius.circular(
-                                  AppRadii.md - 1))),
-                      child: Text(name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Image.memory(
+                                  file.bytes!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.broken_image,
+                                    color: AppColors.muted,
+                                  ),
+                                ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.xs + 2,
+                            vertical: AppSpacing.xs,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            borderRadius: const BorderRadius.vertical(
+                              bottom: Radius.circular(AppRadii.md - 1),
+                            ),
+                          ),
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
                               color: AppColors.onPrimary,
                               fontSize: 9,
-                              fontWeight: FontWeight.w500)),
-                    ),
-                  ),
-                  Positioned(
-                    top: AppSpacing.xs, right: AppSpacing.xs,
-                    child: GestureDetector(
-                      onTap: () => onRemove(i),
-                      child: Container(
-                          width: 22, height: 22,
-                          decoration: BoxDecoration(
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: AppSpacing.xs,
+                        right: AppSpacing.xs,
+                        child: GestureDetector(
+                          onTap: () => onRemove(i),
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
                               color: AppColors.danger,
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                    color: AppColors.danger
-                                        .withOpacity(0.4),
-                                    blurRadius: 4)
-                              ]),
-                          child: const Icon(Icons.close,
+                                  color: AppColors.danger.withOpacity(0.4),
+                                  blurRadius: 4,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.close,
                               color: AppColors.onPrimary,
-                              size: 13)),
-                    ),
-                  ),
-                ]);
-              },
+                              size: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(
+            Padding(
+              padding: EdgeInsets.fromLTRB(
                 AppSpacing.md,
                 AppSpacing.sm,
                 AppSpacing.md,
-                MediaQuery.of(context).padding.bottom +
-                    AppSpacing.md),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: onUpload,
-                icon: const Icon(Icons.cloud_upload_rounded,
-                    color: AppColors.onPrimary, size: 20),
-                label: Text(
-                    'Upload ${selectedFiles.length} Image${selectedFiles.length != 1 ? "s" : ""}',
+                MediaQuery.of(context).padding.bottom + AppSpacing.md,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: onUpload,
+                  icon: const Icon(
+                    Icons.cloud_upload_rounded,
+                    color: AppColors.onPrimary,
+                    size: 20,
+                  ),
+                  label: Text(
+                    'admin.admin_upload_image_screen.uploadImagesCount'
+                        .plural(selectedFiles.length),
                     style: const TextStyle(
-                        color: AppColors.onPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16)),
-                style: ElevatedButton.styleFrom(
+                      color: AppColors.onPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     padding: const EdgeInsets.symmetric(
-                        vertical: AppSpacing.md),
+                      vertical: AppSpacing.md,
+                    ),
                     shape: RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(AppRadii.md)),
-                    elevation: 3),
+                      borderRadius: BorderRadius.circular(AppRadii.md),
+                    ),
+                    elevation: 3,
+                  ),
+                ),
               ),
             ),
-          ),
-        ]),
+          ],
+        ),
       ),
     );
   }

@@ -1,6 +1,9 @@
 // screen_ten.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
@@ -179,8 +182,8 @@ class _ScreenTenState extends State<ScreenTen>
         isCorrect: false,
         captureError: isNoSpeech,
         errorMessage: isNoSpeech
-            ? "Couldn't capture your voice.\nPlease try again."
-            : "Microphone error.\nPlease try again.",
+            ? 'initials.screen_nine.couldntCaptureVoice'.tr()
+            : 'initials.screen_nine.microphoneError'.tr(),
         spokenText: '',
       );
     };
@@ -286,10 +289,10 @@ class _ScreenTenState extends State<ScreenTen>
     TaskFeedback.fire(isCorrect);
 
     final message = captureError
-        ? (errorMessage ?? "Couldn't capture your voice.\nPlease try again.")
+        ? (errorMessage ?? 'initials.screen_nine.couldntCaptureVoice'.tr())
         : isCorrect
-            ? 'Perfect! You repeated it correctly!'
-            : 'Almost there! Listen again and try.';
+            ? 'initials.screen_ten.perfectRepeated'.tr()
+            : 'initials.screen_ten.almostThereListenAgain'.tr();
 
     final messageColor = isCorrect
         ? const Color(0xFF2E7D32)
@@ -346,6 +349,7 @@ class _ScreenTenState extends State<ScreenTen>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
 
     return TaskExitGuard(
@@ -411,9 +415,9 @@ class _ScreenTenState extends State<ScreenTen>
                 
                       const SizedBox(height: 8),
                 
-                      const Text(
-                        'Listen & Speak',
-                        style: TextStyle(
+                      Text(
+                        'initials.screen_ten.listenAndSpeak'.tr(),
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Colors.black45,
                           fontWeight: FontWeight.w500,
@@ -488,7 +492,9 @@ class _ScreenTenState extends State<ScreenTen>
                                     ),
                                     const SizedBox(width: 8),
                                     Text(
-                                      _isSpeaking ? 'Playing…' : 'Tap to listen',
+                                      _isSpeaking
+                                          ? 'initials.screen_nine.playing'.tr()
+                                          : 'initials.screen_ten.tapToListen'.tr(),
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -526,7 +532,7 @@ class _ScreenTenState extends State<ScreenTen>
                                   size: 16, color: Colors.orange.shade700),
                               const SizedBox(width: 8),
                               Text(
-                                'Speak louder — we can barely hear you',
+                                'initials.screen_nine.speakLouder'.tr(),
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
@@ -608,7 +614,9 @@ class _ScreenTenState extends State<ScreenTen>
                       const SizedBox(height: 8),
                 
                       Text(
-                        _isListening ? 'Listening… speak now' : 'Tap to speak',
+                        _isListening
+                            ? 'initials.screen_nine.listeningSpeakNow'.tr()
+                            : 'initials.screen_nine.tapToSpeak'.tr(),
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey.shade600,

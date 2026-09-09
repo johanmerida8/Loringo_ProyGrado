@@ -1,10 +1,14 @@
 // admin_dashboard_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
-  const AdminDashboardScreen({super.key});
+  final String name;
+  const AdminDashboardScreen({super.key, required this.name});
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
@@ -33,6 +37,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return FadeTransition(
       opacity: _fadeIn,
       child: SingleChildScrollView(
@@ -66,17 +71,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                         color: AppColors.onPrimary, size: 26),
                   ),
                   const SizedBox(width: AppSpacing.md),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Image Manager',
-                            style: TextStyle(
+                        Text(
+                            'admin.admin_dashboard_screen.welcomeTitle'.tr(
+                                namedArgs: {
+                              'name': widget.name.isNotEmpty
+                                  ? widget.name
+                                  : 'admin.admin_profile_screen.notSet'.tr()
+                            }),
+                            style: const TextStyle(
                                 color: AppColors.onPrimary,
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold)),
-                        Text('Manage Image Library',
-                            style: TextStyle(
+                        Text('admin.admin_dashboard_screen.manageImageLibrary'.tr(),
+                            style: const TextStyle(
                                 color: Colors.white70, fontSize: 13)),
                       ],
                     ),
@@ -96,8 +107,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     borderRadius: BorderRadius.circular(2)),
               ),
               const SizedBox(width: AppSpacing.sm),
-              const Text('Statistics',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              Text('admin.admin_dashboard_screen.statistics'.tr(),
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
             ]),
 
             const SizedBox(height: AppSpacing.md),
@@ -114,17 +125,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 FutureBuilder<int>(
                   future: _db.getTotalImagesCount(),
                   builder: (_, snap) => _StatCard(
-                    label: 'Total Images',
+                    label: 'admin.admin_dashboard_screen.totalImages'.tr(),
                     value: snap.data?.toString() ?? '—',
                     icon: Icons.image_rounded,
                     color: const Color(0xFF2196F3),
                     isLoading: snap.connectionState == ConnectionState.waiting,
                   ),
                 ),
-                StreamBuilder<int>(
-                  stream: _db.getCategoriesCountStream(),
+                FutureBuilder<int>(
+                  future: _db.getCategoriesCount(),
                   builder: (_, snap) => _StatCard(
-                    label: 'Categories',
+                    label: 'admin.admin_dashboard_screen.categories'.tr(),
                     value: snap.data?.toString() ?? '—',
                     icon: Icons.folder_rounded,
                     color: Colors.orange,
@@ -146,12 +157,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 border: Border.all(
                     color: const Color(0xFF2196F3).withOpacity(0.2)),
               ),
-              child: const Row(children: [
-                Icon(Icons.sync_rounded, color: Color(0xFF2196F3), size: 20),
-                SizedBox(width: AppSpacing.sm),
+              child: Row(children: [
+                const Icon(Icons.sync_rounded, color: Color(0xFF2196F3), size: 20),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Text('Real-time updates',
-                      style: TextStyle(
+                  child: Text('admin.admin_dashboard_screen.realTimeUpdates'.tr(),
+                      style: const TextStyle(
                           color: Color(0xFF2196F3),
                           fontSize: 13,
                           fontWeight: FontWeight.w500)),

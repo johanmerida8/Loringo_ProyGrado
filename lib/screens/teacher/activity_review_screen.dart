@@ -1,6 +1,8 @@
 // screens/teacher/activity_review_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -34,6 +36,7 @@ import 'package:loringo_app/theme/app_theme.dart';
 class ActivityReviewScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
+  final String groupId;
   final String activityId;
   final String activityTitle;
 
@@ -41,6 +44,7 @@ class ActivityReviewScreen extends StatefulWidget {
     super.key,
     required this.studentId,
     required this.studentName,
+    required this.groupId,
     required this.activityId,
     required this.activityTitle,
   });
@@ -68,6 +72,15 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
   String _feedback = '';
   final TextEditingController _feedbackController = TextEditingController();
 
+  // Once feedback has been written and saved, it's locked — same
+  // one-shot pattern UnitQuizReviewScreen already uses for its
+  // parent-facing report feedback (_reportAlreadySent), just derived
+  // from whether feedback text already exists rather than a separate
+  // "report sent" doc, since this note has no equivalent send step.
+  // Determined right after _loadData() reads the existing feedback, so
+  // typing in this session doesn't retroactively unlock/lock anything.
+  bool _feedbackConfirmed = false;
+
   @override
   void initState() {
     super.initState();
@@ -84,6 +97,8 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     setState(() => _isLoading = true);
     try {
       final progressDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('progress')
@@ -106,15 +121,19 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
         final rawTaskAnswers =
             data['taskAnswers'] as Map<String, dynamic>? ?? {};
         _taskEntries = rawTaskAnswers.entries
-            .map((e) => {
-                  'taskId': e.key,
-                  ...Map<String, dynamic>.from(e.value as Map),
-                })
+            .map(
+              (e) => {
+                'taskId': e.key,
+                ...Map<String, dynamic>.from(e.value as Map),
+              },
+            )
             .toList();
       }
 
       // Attempt history — informational only, see class doc comment.
       final attemptsSnap = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('progress')
@@ -122,11 +141,10 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
           .collection('attempts')
           .orderBy('attemptNumber')
           .get();
-      _attemptHistory = attemptsSnap.docs
-          .map((d) => d.data())
-          .toList();
+      _attemptHistory = attemptsSnap.docs.map((d) => d.data()).toList();
 
       _feedbackController.text = _feedback;
+      _feedbackConfirmed = _feedback.trim().isNotEmpty;
     } catch (e) {
       debugPrint('Error loading activity review: $e');
     } finally {
@@ -135,26 +153,42 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
   }
 
   Future<void> _saveFeedback() async {
+    if (_feedback.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                'teacher.activity_review_screen.pleaseWriteFeedback'.tr())),
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
       final db = Database();
       await db.saveActivityFeedback(
+        groupId: widget.groupId,
         studentId: widget.studentId,
         activityId: widget.activityId,
         feedback: _feedback,
       );
       if (mounted) {
+        setState(() => _feedbackConfirmed = true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Feedback saved'),
-              backgroundColor: Colors.green),
+          SnackBar(
+            content:
+                Text('teacher.activity_review_screen.feedbackSaved'.tr()),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving feedback: $e'),
-              backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('teacher.activity_review_screen.errorSavingFeedback'
+                .tr(namedArgs: {'error': '$e'})),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -172,85 +206,140 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: Text('Review: ${widget.activityTitle}'),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildStudentSummaryCard(),
-                  if (_attemptHistory.length > 1) ...[
-                    const SizedBox(height: 16),
-                    _buildAttemptHistoryCard(),
-                  ],
-                  const SizedBox(height: 24),
-                  const Text('Task-by-Task Review',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-                  if (_taskEntries.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Center(
-                        child: Text(
-                          'No per-task detail available for this attempt.\n(Completed before this feature was added.)',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey.shade600),
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: 'teacher.activity_review_screen.reviewTitle'
+                .tr(namedArgs: {'title': widget.activityTitle}),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildStudentSummaryCard(),
+                        if (_attemptHistory.length > 1) ...[
+                          const SizedBox(height: 16),
+                          _buildAttemptHistoryCard(),
+                        ],
+                        const SizedBox(height: 24),
+                        Text(
+                          'teacher.activity_review_screen.taskByTaskReview'.tr(),
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
                         ),
-                      ),
-                    )
-                  else
-                    ..._taskEntries.asMap().entries.map(
-                        (e) => _buildTaskDetail(e.key, e.value)),
-                  const SizedBox(height: 24),
-                  const Text('Teacher Feedback',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _feedbackController,
-                    onChanged: (v) => _feedback = v,
-                    maxLines: 5,
-                    decoration: InputDecoration(
-                      hintText: 'Write an internal note about this activity...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: Colors.white,
+                        const SizedBox(height: 12),
+                        if (_taskEntries.isEmpty)
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Center(
+                              child: Text(
+                                'teacher.activity_review_screen.noPerTaskDetail'
+                                    .tr(),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.grey.shade600),
+                              ),
+                            ),
+                          )
+                        else
+                          ..._taskEntries.asMap().entries.map(
+                            (e) => _buildTaskDetail(e.key, e.value),
+                          ),
+                        const SizedBox(height: 24),
+                        Text(
+                          'teacher.activity_review_screen.teacherFeedback'.tr(),
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _feedbackController,
+                          onChanged: (v) => _feedback = v,
+                          maxLines: 5,
+                          // Once confirmed (saved with real text), this note is
+                          // locked — same read-only-after-send treatment
+                          // UnitQuizReviewScreen already applies to its feedback.
+                          enabled: !_feedbackConfirmed,
+                          decoration: InputDecoration(
+                            hintText:
+                                'teacher.activity_review_screen.feedbackHint'
+                                    .tr(),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            filled: true,
+                            fillColor: _feedbackConfirmed
+                                ? Colors.grey.shade100
+                                : Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _feedbackConfirmed
+                              ? 'teacher.activity_review_screen.feedbackConfirmedNote'
+                                  .tr()
+                              : 'teacher.activity_review_screen.feedbackVisibleNote'
+                                  .tr(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: (_isSaving || _feedbackConfirmed)
+                                ? null
+                                : _saveFeedback,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _feedbackConfirmed
+                                  ? Colors.grey.shade400
+                                  : AppColors.primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: _isSaving
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Text(
+                                    _feedbackConfirmed
+                                        ? 'teacher.activity_review_screen.feedbackConfirmedButton'
+                                            .tr()
+                                        : 'teacher.activity_review_screen.saveFeedback'
+                                            .tr(),
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Visible only to teachers — not sent to the parent.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontStyle: FontStyle.italic),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: _isSaving ? null : _saveFeedback,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: _isSaving
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : const Text('Save Feedback', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -260,7 +349,9 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8),
+        ],
       ),
       child: Row(
         children: [
@@ -268,8 +359,14 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
             radius: 28,
             backgroundColor: AppColors.primary.withOpacity(0.1),
             child: Text(
-              widget.studentName.isNotEmpty ? widget.studentName[0].toUpperCase() : '?',
-              style: TextStyle(fontSize: 22, color: AppColors.primary, fontWeight: FontWeight.bold),
+              widget.studentName.isNotEmpty
+                  ? widget.studentName[0].toUpperCase()
+                  : '?',
+              style: TextStyle(
+                fontSize: 22,
+                color: AppColors.primary,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           const SizedBox(width: 16),
@@ -277,29 +374,53 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(widget.studentName, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                Text(
+                  widget.studentName,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text('Best score: $_bestScore%',
-                        style: TextStyle(fontSize: 14, color: _scoreColor, fontWeight: FontWeight.w600)),
+                    Text(
+                      'teacher.activity_review_screen.bestScore'
+                          .tr(namedArgs: {'score': '$_bestScore'}),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _scoreColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(width: 10),
                     Text('•', style: TextStyle(color: Colors.grey.shade400)),
                     const SizedBox(width: 10),
-                    Text('$_totalAttempts attempt${_totalAttempts != 1 ? 's' : ''}',
-                        style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
+                    Text(
+                      (_totalAttempts == 1
+                              ? 'teacher.activity_review_screen.attemptSingular'
+                              : 'teacher.activity_review_screen.attemptPlural')
+                          .tr(namedArgs: {'count': '$_totalAttempts'}),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
                   ],
                 ),
               ],
             ),
           ),
           Row(
-            children: List.generate(3, (i) => Icon(
-              i < _stars ? Icons.star_rounded : Icons.star_outline_rounded,
-              color: i < _stars ? Colors.amber : Colors.grey.shade300,
-              size: 22,
-            )),
+            children: List.generate(
+              3,
+              (i) => Icon(
+                i < _stars ? Icons.star_rounded : Icons.star_outline_rounded,
+                color: i < _stars ? Colors.amber : Colors.grey.shade300,
+                size: 22,
+              ),
+            ),
           ),
         ],
       ),
@@ -317,7 +438,14 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Attempt History', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+          Text(
+            'teacher.activity_review_screen.attemptHistory'.tr(),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade600,
+            ),
+          ),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -327,24 +455,37 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
               final score = (a['score'] as num?)?.toInt() ?? 0;
               final isBest = score == _bestScore;
               return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
-                  color: isBest ? AppColors.primary.withOpacity(0.1) : Colors.grey.shade100,
+                  color: isBest
+                      ? AppColors.primary.withOpacity(0.1)
+                      : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(10),
-                  border: isBest ? Border.all(color: AppColors.primary.withOpacity(0.4)) : null,
+                  border: isBest
+                      ? Border.all(color: AppColors.primary.withOpacity(0.4))
+                      : null,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('#$attemptNumber: $score%',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isBest ? FontWeight.bold : FontWeight.w500,
-                          color: isBest ? AppColors.primary : Colors.black87,
-                        )),
+                    Text(
+                      '#$attemptNumber: $score%',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isBest ? FontWeight.bold : FontWeight.w500,
+                        color: isBest ? AppColors.primary : Colors.black87,
+                      ),
+                    ),
                     if (isBest) ...[
                       const SizedBox(width: 4),
-                      Icon(Icons.star_rounded, size: 14, color: AppColors.primary),
+                      Icon(
+                        Icons.star_rounded,
+                        size: 14,
+                        color: AppColors.primary,
+                      ),
                     ],
                   ],
                 ),
@@ -398,7 +539,11 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
         content = _buildReadingDetail(entry);
         break;
       default:
-        content = Text('Unsupported task type: $type', style: TextStyle(color: Colors.grey.shade500));
+        content = Text(
+          'teacher.activity_review_screen.unsupportedTaskType'
+              .tr(namedArgs: {'type': type}),
+          style: TextStyle(color: Colors.grey.shade500),
+        );
     }
 
     return Container(
@@ -415,12 +560,32 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
           Row(
             children: [
               Container(
-                width: 24, height: 24,
-                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), shape: BoxShape.circle),
-                child: Center(child: Text('${index + 1}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary))),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    '${index + 1}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(width: 8),
-              Text(_typeLabel(type), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+              Text(
+                _typeLabel(type),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -432,19 +597,32 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
 
   String _typeLabel(String type) {
     switch (type) {
-      case 'image_select': return 'IMAGE SELECT';
-      case 'image_select_reverse': return 'SELECT PHRASE';
-      case 'sound_match': return 'SOUND MATCH';
-      case 'odd_one_out': return 'ODD ONE OUT';
-      case 'arrange': return 'ARRANGE WORDS';
-      case 'fill_blank': return 'FILL IN THE BLANK';
-      case 'match': return 'MATCH PAIRS';
-      case 'complete_the_chat': return 'CONVERSATION';
-      case 'sentence_builder': return 'SENTENCE BUILDER';
-      case 'repeat_after_me': return 'REPEAT AFTER ME';
-      case 'listen_and_speak': return 'LISTEN & SPEAK';
-      case 'reading': return 'READING COMPREHENSION';
-      default: return type.toUpperCase();
+      case 'image_select':
+        return 'teacher.activity_review_screen.typeImageSelect'.tr();
+      case 'image_select_reverse':
+        return 'teacher.activity_review_screen.typeSelectPhrase'.tr();
+      case 'sound_match':
+        return 'teacher.activity_review_screen.typeSoundMatch'.tr();
+      case 'odd_one_out':
+        return 'teacher.activity_review_screen.typeOddOneOut'.tr();
+      case 'arrange':
+        return 'teacher.activity_review_screen.typeArrangeWords'.tr();
+      case 'fill_blank':
+        return 'teacher.activity_review_screen.typeFillBlank'.tr();
+      case 'match':
+        return 'teacher.activity_review_screen.typeMatchPairs'.tr();
+      case 'complete_the_chat':
+        return 'teacher.activity_review_screen.typeConversation'.tr();
+      case 'sentence_builder':
+        return 'teacher.activity_review_screen.typeSentenceBuilder'.tr();
+      case 'repeat_after_me':
+        return 'teacher.activity_review_screen.typeRepeatAfterMe'.tr();
+      case 'listen_and_speak':
+        return 'teacher.activity_review_screen.typeListenAndSpeak'.tr();
+      case 'reading':
+        return 'teacher.activity_review_screen.typeReadingComprehension'.tr();
+      default:
+        return type.toUpperCase();
     }
   }
 
@@ -454,7 +632,9 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     final selected = entry['selected'] as String? ?? '';
     final correct = entry['correct'] as String? ?? '';
     final isCorrect = selected == correct;
-    final prompt = (entry['word'] ?? entry['question'] ?? entry['audioText']) as String? ?? '';
+    final prompt =
+        (entry['word'] ?? entry['question'] ?? entry['audioText']) as String? ??
+        '';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -463,7 +643,8 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
           Text(prompt, style: const TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
         ],
-        _answerRow('Student answered', selected, isCorrect),
+        _answerRow(
+            'teacher.activity_review_screen.studentAnswered'.tr(), selected, isCorrect),
         // If 'correct' is empty despite a wrong answer, the task's own
         // Firestore data has no option marked isCorrect: true — a
         // content-authoring gap, not something the student got wrong.
@@ -471,7 +652,8 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
         // as a valid correct answer, so this surfaces the real issue
         // instead.
         if (!isCorrect && correct.isNotEmpty)
-          _answerRow('Correct answer', correct, true)
+          _answerRow(
+              'teacher.activity_review_screen.correctAnswer'.tr(), correct, true)
         else if (!isCorrect)
           _buildMissingAnswerKeyWarning(),
       ],
@@ -484,12 +666,20 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber_rounded, size: 15, color: Colors.orange.shade700),
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 15,
+            color: Colors.orange.shade700,
+          ),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              'No correct answer configured for this task — check its content setup.',
-              style: TextStyle(fontSize: 12, color: Colors.orange.shade700, fontStyle: FontStyle.italic),
+              'teacher.activity_review_screen.noCorrectAnswerConfigured'.tr(),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange.shade700,
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ),
         ],
@@ -506,10 +696,18 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (category.isNotEmpty) Text('Category: $category', style: const TextStyle(fontWeight: FontWeight.w600)),
+        if (category.isNotEmpty)
+          Text(
+            'teacher.activity_review_screen.category'
+                .tr(namedArgs: {'category': category}),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
         const SizedBox(height: 8),
-        _answerRow('Student picked option', '#${selectedIdx + 1}', isCorrect),
-        if (!isCorrect) _answerRow('Correct option', '#${correctIdx + 1}', true),
+        _answerRow('teacher.activity_review_screen.studentPickedOption'.tr(),
+            '#${selectedIdx + 1}', isCorrect),
+        if (!isCorrect)
+          _answerRow('teacher.activity_review_screen.correctOption'.tr(),
+              '#${correctIdx + 1}', true),
       ],
     );
   }
@@ -522,8 +720,11 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _answerRow('Student built', studentOrder.join(' '), isCorrect),
-        if (!isCorrect) _answerRow('Correct sentence', correctOrder.join(' '), true),
+        _answerRow('teacher.activity_review_screen.studentBuilt'.tr(),
+            studentOrder.join(' '), isCorrect),
+        if (!isCorrect)
+          _answerRow('teacher.activity_review_screen.correctSentence'.tr(),
+              correctOrder.join(' '), true),
       ],
     );
   }
@@ -536,20 +737,31 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (sentence.isNotEmpty)
-          Text(sentence.replaceAll('___', '_____'), style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.black54)),
+          Text(
+            sentence.replaceAll('___', '_____'),
+            style: const TextStyle(
+              fontStyle: FontStyle.italic,
+              color: Colors.black54,
+            ),
+          ),
         const SizedBox(height: 8),
         ...blanks.asMap().entries.map((e) {
           final given = e.value['given'] as String? ?? '';
           final correct = e.value['correct'] as String? ?? '';
           final isCorrect = given == correct;
-          final label = blanks.length > 1 ? 'Blank ${e.key + 1}' : 'Student answered';
+          final label = blanks.length > 1
+              ? 'teacher.activity_review_screen.blankNumber'
+                  .tr(namedArgs: {'number': '${e.key + 1}'})
+              : 'teacher.activity_review_screen.studentAnswered'.tr();
           return Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _answerRow(label, given, isCorrect),
-                if (!isCorrect) _answerRow('Correct', correct, true),
+                if (!isCorrect)
+                  _answerRow(
+                      'teacher.activity_review_screen.correct'.tr(), correct, true),
               ],
             ),
           );
@@ -565,11 +777,21 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          Icon(Icons.check_circle, size: 16, color: Colors.green.shade600),
-          const SizedBox(width: 6),
-          Text('All ${pairs.length} pairs matched correctly', style: TextStyle(color: Colors.green.shade700, fontWeight: FontWeight.w600, fontSize: 13)),
-        ]),
+        Row(
+          children: [
+            Icon(Icons.check_circle, size: 16, color: Colors.green.shade600),
+            const SizedBox(width: 6),
+            Text(
+              'teacher.activity_review_screen.allPairsMatched'
+                  .tr(namedArgs: {'count': '${pairs.length}'}),
+              style: TextStyle(
+                color: Colors.green.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -579,8 +801,14 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
             final tr = p['translated'] as String? ?? '';
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-              child: Text(tr.isNotEmpty ? '$en → $tr' : en, style: const TextStyle(fontSize: 13)),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                tr.isNotEmpty ? '$en → $tr' : en,
+                style: const TextStyle(fontSize: 13),
+              ),
             );
           }).toList(),
         ),
@@ -601,8 +829,12 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(bubble, style: const TextStyle(color: Colors.black54, fontSize: 13)),
-              _answerRow('Student replied', reply, correct),
+              Text(
+                bubble,
+                style: const TextStyle(color: Colors.black54, fontSize: 13),
+              ),
+              _answerRow(
+                  'teacher.activity_review_screen.studentReplied'.tr(), reply, correct),
             ],
           ),
         );
@@ -619,10 +851,14 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (prompt.isNotEmpty) Text(prompt, style: const TextStyle(fontWeight: FontWeight.w600)),
+        if (prompt.isNotEmpty)
+          Text(prompt, style: const TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-        _answerRow('Student wrote', studentSentence, isCorrect),
-        if (!isCorrect) _answerRow('Correct answer', correctSentence, true),
+        _answerRow('teacher.activity_review_screen.studentWrote'.tr(),
+            studentSentence, isCorrect),
+        if (!isCorrect)
+          _answerRow('teacher.activity_review_screen.correctAnswer'.tr(),
+              correctSentence, true),
       ],
     );
   }
@@ -637,17 +873,40 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          Icon(Icons.record_voice_over, size: 16, color: Colors.grey.shade500),
-          const SizedBox(width: 6),
-          Expanded(child: Text('Target: $target', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
-        ]),
+        Row(
+          children: [
+            Icon(
+              Icons.record_voice_over,
+              size: 16,
+              color: Colors.grey.shade500,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'teacher.activity_review_screen.target'
+                    .tr(namedArgs: {'target': target}),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 4),
-        Row(children: [
-          Icon(Icons.hearing, size: 16, color: Colors.blueGrey),
-          const SizedBox(width: 6),
-          Expanded(child: Text('System heard: "$recognized"', style: const TextStyle(fontSize: 13, color: Colors.black54))),
-        ]),
+        Row(
+          children: [
+            Icon(Icons.hearing, size: 16, color: Colors.blueGrey),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'teacher.activity_review_screen.systemHeard'
+                    .tr(namedArgs: {'text': recognized}),
+                style: const TextStyle(fontSize: 13, color: Colors.black54),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -663,18 +922,34 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
         final selectedIdx = (q['selectedIdx'] as num?)?.toInt() ?? -1;
         final correctIdx = (q['correctIdx'] as num?)?.toInt() ?? -1;
         final isCorrect = selectedIdx == correctIdx;
-        final selectedText = (selectedIdx >= 0 && selectedIdx < options.length) ? options[selectedIdx] : '';
-        final correctText = (correctIdx >= 0 && correctIdx < options.length) ? options[correctIdx] : '';
+        final selectedText = (selectedIdx >= 0 && selectedIdx < options.length)
+            ? options[selectedIdx]
+            : '';
+        final correctText = (correctIdx >= 0 && correctIdx < options.length)
+            ? options[correctIdx]
+            : '';
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Q${e.key + 1}: $questionText', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              Text(
+                'teacher.activity_review_screen.question'.tr(namedArgs: {
+                  'number': '${e.key + 1}',
+                  'text': questionText,
+                }),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
               const SizedBox(height: 4),
-              _answerRow('Student answered', selectedText, isCorrect),
-              if (!isCorrect) _answerRow('Correct answer', correctText, true),
+              _answerRow('teacher.activity_review_screen.studentAnswered'.tr(),
+                  selectedText, isCorrect),
+              if (!isCorrect)
+                _answerRow('teacher.activity_review_screen.correctAnswer'.tr(),
+                    correctText, true),
             ],
           ),
         );
@@ -689,7 +964,11 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(isCorrect ? Icons.check_circle : Icons.cancel, size: 15, color: color),
+          Icon(
+            isCorrect ? Icons.check_circle : Icons.cancel,
+            size: 15,
+            color: color,
+          ),
           const SizedBox(width: 6),
           Expanded(
             child: RichText(
@@ -712,7 +991,9 @@ class _ActivityReviewScreenState extends State<ActivityReviewScreen> {
                     ),
                   ),
                   TextSpan(
-                    text: value.isEmpty ? '(no answer)' : value,
+                    text: value.isEmpty
+                        ? 'teacher.activity_review_screen.noAnswer'.tr()
+                        : value,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,

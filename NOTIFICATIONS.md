@@ -32,6 +32,29 @@ here.
       `scheduledDate` has arrived (content newly unlocked).
     - `notifyClosingSoonActivities` — warns the parent when `closeDate` is
       within the next 24h and the activity is still incomplete.
+  - `notifyStudentPerformance.ts` — notifies the teacher, one short push per
+    completion ("Luca did well in Classroom Objects Quiz"), when a student
+    first completes an activity/quiz. Two exports sharing one
+    `reportCompletion` helper and the same `performanceNotifiedAt` dedup
+    marker, so running both is safe (whichever gets there first wins):
+    - `notifyStudentPerformanceRealtime` — Firestore `onDocumentWritten`
+      trigger on `students/{studentId}/progress/{progressId}`, fires the
+      instant `firstCompletedAt` transitions from unset to set.
+    - `notifyStudentPerformance` — daily 8:05am safety-net scan (same
+      collectionGroup query as before the realtime trigger existed).
+      Normally finds 0 newly-completed docs, since the trigger already
+      reported everything; exists to catch a trigger cold-start/deploy gap.
+  - `activityCreatedNotifications.ts` — notifies the parent about a newly
+    created, immediately-available activity. Same realtime+backstop shape
+    as `notifyStudentPerformance.ts`, sharing an `activityCreatedNotifiedAt`
+    dedup marker on the activity doc:
+    - `notifyActivityCreated` — Firestore `onDocumentCreated` trigger,
+      fires the instant the activity doc is created.
+    - `notifyActivityCreatedFallback` — daily 8:15am safety-net scan over
+      activities created in the last 48h. Added after the realtime-only
+      version shipped with no fallback, unlike `notifyStudentPerformance`
+      — a missed trigger meant that parent silently never found out at
+      all, with nothing to catch it later.
 - **Dart**:
   - `lib/screens/teacher/unit_quiz_review_screen.dart` — renamed from
     `student_quiz_review_screen.dart` (it's genuinely unit-quiz-scoped;
@@ -107,17 +130,19 @@ problem (scheduled functions are invoked by Cloud Scheduler, not public
 HTTP) — this should be reverted once things are confirmed working, no
 reason to leave a function more open than it needs to be.
 
-## activityCreatedNotifications.ts — the one Firestore-triggered exception
+## Firestore-triggered exceptions to the poll-based design
 
 Design decision #3 above said no Firestore-triggered functions, poll-based
-only. That held until a real symptom showed it wasn't quite right for one
-case: a teacher creates an activity with **no** `scheduledDate` (available
+only. Two real symptoms have since shown that's not quite right when there's
+no future moment to poll toward — the event is already "live" the instant
+it happens, so polling is strictly worse than a trigger, not just slower.
+
+### activityCreatedNotifications.ts — the first exception
+
+A teacher creates an activity with **no** `scheduledDate` (available
 immediately, nothing to poll for) and the parent still waited up to an hour
 for the push, because the only thing watching for "new activity" was
-`notifyScheduledActivities`'s hourly cron. There's no future moment to poll
-toward in that case — the activity is already open the instant it's
-created — so polling was strictly worse than a trigger here, not just
-slower.
+`notifyScheduledActivities`'s hourly cron.
 
 `notifyActivityCreated` (`functions/src/activityCreatedNotifications.ts`) is
 an `onDocumentCreated` trigger on
@@ -130,8 +155,37 @@ time, so there's no overlap/double-push risk). If there's no
 `notifyScheduledActivities` does (content → assignedTo groups → students →
 parentId) and pushes immediately.
 
-**Not yet deployed** — same as the scheduledDate fix below, this needs
-`firebase deploy --only functions` before it does anything in production.
+**Added later: a scheduled fallback.** The realtime-only version had no
+backstop — if the trigger failed to fire (cold start, deploy gap, transient
+error), the parent never found out at all, unlike every other notification
+in this app which has some poll-based catch-up path. `notifyForActivity`
+was extracted as a shared helper (mirrors `notifyStudentPerformance.ts`'s
+`reportCompletion`) so both `notifyActivityCreated` (realtime) and the new
+`notifyActivityCreatedFallback` (daily 8:15am, scans activities created in
+the last 48h) funnel through the same notify+dedup logic, guarded by an
+`activityCreatedNotifiedAt` marker on the activity doc. Requires the
+activity doc's existing `createdAt` field (already written by
+`createPersonalizedActivity` in `database.dart`) plus a new
+`COLLECTION_GROUP` field-override index on `activities.createdAt` in
+`firestore.indexes.json`.
+
+### notifyStudentPerformance.ts — the second exception
+
+Same reasoning, different direction (teacher-facing, not parent-facing): the
+teacher wants to know "in that same moment" a student completes something,
+not wait for a scheduled digest. `notifyStudentPerformanceRealtime` is an
+`onDocumentWritten` trigger on `students/{studentId}/progress/{progressId}`
+that fires the notification on the exact write where `firstCompletedAt`
+transitions from unset to set. The original daily-digest version
+(`notifyStudentPerformance`) stays as a safety net — see the file's own
+header comment for why running both is safe (shared `performanceNotifiedAt`
+dedup marker) rather than redundant risk.
+
+Also changed at the same time: the push format switched from one bundled
+digest body per teacher (listing every completion in a "Doing well: ...
+Needs support: ..." block) to one short push per completion — the bundled
+version became unreadable once more than a couple of things completed in a
+day.
 
 ## Status as of last session
 

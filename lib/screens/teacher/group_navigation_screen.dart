@@ -1,24 +1,29 @@
 // navigation_group_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 // import 'package:loringo_app/components/app_drawer.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
+import 'package:loringo_app/components/avatar_image.dart';
 import 'package:loringo_app/components/responsive_scaffold.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/group_details/invite_student_modal.dart';
+import 'package:loringo_app/screens/teacher/group_quizzes_screen.dart';
 import 'package:loringo_app/screens/teacher/student_progress_dashboard.dart';
 import 'package:loringo_app/screens/teacher/teacher_activity_screen.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class TeacherGroupDetailsScreen extends StatefulWidget {
   final String groupId;
   final String groupName;
-  final String groupCode;
   final Color  groupColor;
 
   /// Which tab to land on — the "Edit" action on a GroupCard (My Groups /
-  /// Archived Groups) jumps straight to Settings (index 3) instead of
-  /// making the teacher navigate there manually. Defaults to Content (0)
+  /// Archived Groups) jumps straight to Settings (index 4) instead of
+  /// making the teacher navigate there manually. Defaults to Activity (0)
   /// for the normal tap-the-card entry point.
   final int initialTabIndex;
 
@@ -26,7 +31,6 @@ class TeacherGroupDetailsScreen extends StatefulWidget {
     super.key,
     required this.groupId,
     required this.groupName,
-    required this.groupCode,
     required this.groupColor,
     this.initialTabIndex = 0,
   });
@@ -124,8 +128,8 @@ class _TeacherGroupDetailsScreenState
   }
 
   static String _legacyPeriodLabel(dynamic period) {
-    if (period == 1) return 'Period 1';
-    if (period == 2) return 'Period 2';
+    if (period == 1) return 'teacher.group_card.period1'.tr();
+    if (period == 2) return 'teacher.group_card.period2'.tr();
     return '';
   }
 
@@ -158,8 +162,8 @@ class _TeacherGroupDetailsScreenState
     final name = _settingsNameController.text.trim();
     if (name.isEmpty) return;
     if (!_settingsHaveChanged) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('No changes made'),
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('common.noChangesMade'.tr()),
         backgroundColor: Colors.grey,
       ));
       return;
@@ -175,7 +179,8 @@ class _TeacherGroupDetailsScreenState
       if (mounted) {
         setState(() => _savingSettings = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('You already have a group named "$name". Choose a different name.'),
+          content: Text('teacher.group_navigation_screen.duplicateNameMsg'
+              .tr(namedArgs: {'name': name})),
           backgroundColor: AppColors.danger,
         ));
       }
@@ -206,14 +211,14 @@ class _TeacherGroupDetailsScreenState
           _originalYear      = _settingsYear;
           _originalColor     = _settingsColor;
         });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Changes saved'),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('teacher.group_navigation_screen.changesSaved'.tr()),
           backgroundColor: AppColors.primary,
         ));
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger));
+          SnackBar(content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})), backgroundColor: AppColors.danger));
     } finally {
       if (mounted) setState(() => _savingSettings = false);
     }
@@ -254,6 +259,7 @@ class _TeacherGroupDetailsScreenState
       for (var doc in studentsSnapshot.docs) {
         final data     = doc.data();
         final parentId = data['parentId'];
+        String parentName = '';
         String parentEmail = '';
         if (parentId != null) {
           final parentDoc = await FirebaseFirestore.instance
@@ -261,15 +267,16 @@ class _TeacherGroupDetailsScreenState
               .doc(parentId)
               .get();
           if (parentDoc.exists) {
+            parentName = parentDoc.data()?['name'] ?? '';
             parentEmail = parentDoc.data()?['email'] ?? '';
           }
         }
         studentsList.add({
           'id':          doc.id,
-          'name':        data['names'] ?? 'No name',
+          'name':        data['names'] ?? 'common.noName'.tr(),
           'avatar':      data['avatar'] ?? '',
-          'accessCode':  data['accessCode'] ?? '',
           'parentId':    parentId ?? '',
+          'parentName':  parentName,
           'parentEmail': parentEmail,
           'joinedAt':    data['createdAt'],
         });
@@ -288,55 +295,50 @@ class _TeacherGroupDetailsScreenState
     }
   }
 
-  void _copyCodeToClipboard() {
-    Clipboard.setData(ClipboardData(text: widget.groupCode));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('Code copied to clipboard'),
-      backgroundColor: AppColors.primary,
-      duration: Duration(seconds: 2),
-    ));
-  }
-
   Future<void> _removeStudent(String studentId, String name) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remove Student'),
-        content: Text('Remove $name from the group?'),
+        title: Text('teacher.group_navigation_screen.removeStudentTitle'.tr()),
+        content: Text('teacher.group_navigation_screen.removeStudentMsg'
+            .tr(namedArgs: {'name': name})),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text('common.cancel'.tr())),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            child: const Text('Remove'),
+            child: Text('teacher.group_navigation_screen.remove'.tr()),
           ),
         ],
       ),
     );
     if (confirm != true) return;
     try {
+      // Deletes the roster entry and every progress/attempts/reports
+      // document earned under this group — same "leaving a group" handling
+      // the parent-side switch-group flow uses. The student's profile and
+      // groupHistory (their record of having been in this group) survive;
+      // only this group's XP/progress/reports are gone.
+      await Database().leaveGroup(
+        studentId: studentId,
+        groupId: widget.groupId,
+      );
       await FirebaseFirestore.instance
           .collection('students')
           .doc(studentId)
           .update({'groupId': FieldValue.delete(), 'lastUpdate': FieldValue.serverTimestamp()});
-      await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .doc(widget.groupId)
-          .collection('students')
-          .doc(studentId)
-          .delete();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Student removed from group'),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('teacher.group_navigation_screen.studentRemoved'.tr()),
           backgroundColor: Colors.orange,
         ));
         _loadGroupMembers();
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger));
+          SnackBar(content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})), backgroundColor: AppColors.danger));
     }
   }
 
@@ -345,7 +347,6 @@ class _TeacherGroupDetailsScreenState
       context: context,
       groupId: widget.groupId,
       groupName: widget.groupName,
-      groupCode: widget.groupCode,
       groupColor: widget.groupColor,
     );
   }
@@ -378,15 +379,15 @@ class _TeacherGroupDetailsScreenState
                 embedded:       false,
                 preloadedItems: _contentItems,
               )),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.md, vertical: AppSpacing.sm),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.fullscreen_rounded,
+                  const Icon(Icons.fullscreen_rounded,
                       color: AppColors.primary, size: 20),
-                  SizedBox(width: 4),
-                  Text('Full Screen',
-                      style: TextStyle(
+                  const SizedBox(width: 4),
+                  Text('teacher.group_navigation_screen.fullScreen'.tr(),
+                      style: const TextStyle(
                         color: AppColors.primary,
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
@@ -400,18 +401,26 @@ class _TeacherGroupDetailsScreenState
     );
   }
 
+  Widget _buildQuizzesTab() {
+    return GroupQuizzesScreen(
+      groupId: widget.groupId,
+      groupName: widget.groupName,
+      groupColor: widget.groupColor,
+      embedded: true,
+    );
+  }
+
   Widget _buildMembersTab() {
     if (isLoadingMembers) {
-      return const Center(
-          child: CircularProgressIndicator(color: AppColors.primary));
+      return const AppLoadingIndicator();
     }
 
-    return SingleChildScrollView(
+return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SectionLabel('Teacher'),
+          _SectionLabel('common.teacher'.tr()),
           const SizedBox(height: AppSpacing.md),
 
           // Teacher card
@@ -430,7 +439,7 @@ class _TeacherGroupDetailsScreenState
                     color: AppColors.primary, size: 26),
               ),
               title: Text(
-                _teacherData?['name'] ?? 'Teacher',
+                _teacherData?['name'] ?? 'common.teacher'.tr(),
                 style: AppText.cardTitle.copyWith(fontSize: 16),
               ),
               subtitle: Column(
@@ -445,8 +454,8 @@ class _TeacherGroupDetailsScreenState
                       color: AppColors.primarySoft(0.12),
                       borderRadius: BorderRadius.circular(AppRadii.sm),
                     ),
-                    child: const Text('Group Owner',
-                        style: TextStyle(
+                    child: Text('teacher.group_navigation_screen.groupOwner'.tr(),
+                        style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                           color: AppColors.primary,
@@ -463,7 +472,8 @@ class _TeacherGroupDetailsScreenState
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _SectionLabel('Students (${_students.length})'),
+              _SectionLabel('teacher.group_navigation_screen.studentsCount'
+                  .tr(namedArgs: {'count': '${_students.length}'})),
               GestureDetector(
                 onTap: _showInviteStudentModal,
                 child: Container(
@@ -486,6 +496,7 @@ class _TeacherGroupDetailsScreenState
             ...List.generate(_students.length, (i) {
               final s           = _students[i];
               final name        = s['name']        as String;
+              final parentName  = s['parentName']  as String;
               final parentEmail = s['parentEmail'] as String;
               final avatar      = s['avatar']      as String;
               return Container(
@@ -501,7 +512,8 @@ class _TeacherGroupDetailsScreenState
                     backgroundColor: AppColors.primarySoft(0.15),
                     radius: 26,
                     backgroundImage:
-                        avatar.isNotEmpty ? AssetImage(avatar) : null,
+                        avatar.isNotEmpty ? avatarImageProvider(avatar) : null,
+                    onBackgroundImageError: avatar.isNotEmpty ? (_, __) {} : null,
                     child: avatar.isEmpty
                         ? Text(
                             name.isNotEmpty ? name[0].toUpperCase() : '?',
@@ -516,9 +528,13 @@ class _TeacherGroupDetailsScreenState
                       style: const TextStyle(
                           fontSize: 15, fontWeight: FontWeight.bold)),
                   subtitle: Text(
-                    parentEmail.isNotEmpty
-                        ? 'Parent: $parentEmail'
-                        : 'No parent email',
+                    parentName.isNotEmpty
+                        ? 'teacher.group_navigation_screen.parentNameLabel'
+                            .tr(namedArgs: {'name': parentName})
+                        : parentEmail.isNotEmpty
+                            ? 'teacher.group_navigation_screen.parentEmailLabel'
+                                .tr(namedArgs: {'email': parentEmail})
+                            : 'teacher.group_navigation_screen.noParentEmail'.tr(),
                     style: AppText.caption,
                   ),
                   trailing: GestureDetector(
@@ -545,8 +561,7 @@ class _TeacherGroupDetailsScreenState
 
   Widget _buildStatisticsTab() {
     if (isLoadingMembers) {
-      return const Center(
-          child: CircularProgressIndicator(color: AppColors.primary));
+      return const AppLoadingIndicator();
     }
     cachedProgressDashboard ??= StudentProgressDashboard(
       groupId:   widget.groupId,
@@ -563,21 +578,21 @@ class _TeacherGroupDetailsScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Group Settings', style: AppText.h1),
-          const SizedBox(height: AppSpacing.lg),
-
           // Group name
-          _SettingsLabel('Group Name', Icons.group_outlined),
+          _SettingsLabel('teacher.group_navigation_screen.groupName'.tr(),
+              Icons.group_outlined),
           const SizedBox(height: AppSpacing.sm),
           TextFormField(
             controller: _settingsNameController,
             textCapitalization: TextCapitalization.words,
-            decoration: _settingsInputDecoration('Enter group name'),
+            decoration: _settingsInputDecoration(
+                'teacher.group_navigation_screen.enterGroupName'.tr()),
           ),
           const SizedBox(height: AppSpacing.lg),
 
           // Academic year
-          _SettingsLabel('Academic Year', Icons.calendar_today_outlined),
+          _SettingsLabel('teacher.group_navigation_screen.academicYear'.tr(),
+              Icons.calendar_today_outlined),
           const SizedBox(height: AppSpacing.sm),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -616,17 +631,20 @@ class _TeacherGroupDetailsScreenState
 
           // Classroom (free text identifier — replaces the old fixed
           // Period 1/2 date-range selector)
-          _SettingsLabel('Classroom', Icons.meeting_room_outlined),
+          _SettingsLabel('teacher.group_navigation_screen.classroom'.tr(),
+              Icons.meeting_room_outlined),
           const SizedBox(height: AppSpacing.sm),
           TextFormField(
             controller: _settingsClassroomController,
             textCapitalization: TextCapitalization.words,
-            decoration: _settingsInputDecoration('e.g. Aula 3, Room B'),
+            decoration: _settingsInputDecoration(
+                'teacher.group_navigation_screen.classroomHint'.tr()),
           ),
           const SizedBox(height: AppSpacing.lg),
 
           // Color
-          _SettingsLabel('Group Color', Icons.palette_outlined),
+          _SettingsLabel('teacher.group_navigation_screen.groupColor'.tr(),
+              Icons.palette_outlined),
           const SizedBox(height: AppSpacing.md),
           Wrap(
             spacing: AppSpacing.md,
@@ -675,8 +693,8 @@ class _TeacherGroupDetailsScreenState
                       width: 22, height: 22,
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: AppColors.onPrimary))
-                  : const Text('Save Changes',
-                      style: TextStyle(
+                  : Text('teacher.group_navigation_screen.saveChanges'.tr(),
+                      style: const TextStyle(
                           fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ),
@@ -711,7 +729,6 @@ class _TeacherGroupDetailsScreenState
 
   Widget _buildNavItem({
     required IconData icon,
-    required String   label,
     required int      index,
   }) {
     final isSelected = _currentIndex == index;
@@ -721,26 +738,13 @@ class _TeacherGroupDetailsScreenState
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeInOut,
         padding: EdgeInsets.symmetric(
-            horizontal: isSelected ? 22 : 14, vertical: AppSpacing.md - 4),
+            horizontal: isSelected ? 14 : 10, vertical: AppSpacing.sm),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white.withOpacity(0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(AppRadii.pill),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: AppColors.onPrimary,
-                size: isSelected ? 26 : 22),
-            const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                  color: AppColors.onPrimary,
-                  fontSize: isSelected ? 12 : 10,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                )),
-          ],
-        ),
+        child: Icon(icon, color: AppColors.onPrimary,
+            size: isSelected ? 26 : 22),
       ),
     );
   }
@@ -768,15 +772,24 @@ class _TeacherGroupDetailsScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final screens = [
       _buildContentTab(),
+      _buildQuizzesTab(),
       _buildMembersTab(),
       _buildStatisticsTab(),
       _buildSettingsTab(),
     ];
-    const tabLabels = ['Content', 'Members', 'Statistics', 'Settings'];
+    final tabLabels = [
+      'teacher.group_navigation_screen.activity'.tr(),
+      'teacher.group_navigation_screen.quizzes'.tr(),
+      'teacher.group_navigation_screen.members'.tr(),
+      'teacher.group_navigation_screen.statistics'.tr(),
+      'teacher.group_navigation_screen.settings'.tr(),
+    ];
     const tabIcons = [
       Icons.article_rounded,
+      Icons.quiz_rounded,
       Icons.people_rounded,
       Icons.bar_chart_rounded,
       Icons.settings_rounded,
@@ -790,7 +803,7 @@ class _TeacherGroupDetailsScreenState
       navItemsBuilder: (context, isWide) => [
         ListTile(
           leading: const Icon(Icons.group, color: AppColors.primary),
-          title: const Text('My Groups'),
+          title: Text('teacher.teacher_home_screen.myGroups'.tr()),
           onTap: () {
             if (!isWide) Navigator.pop(context);
             Navigator.pop(context);
@@ -800,11 +813,12 @@ class _TeacherGroupDetailsScreenState
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
           child: Row(children: [
-            Icon(Icons.dashboard, size: 16, color: AppColors.primary),
+            const Icon(Icons.dashboard, size: 16, color: AppColors.primary),
             const SizedBox(width: 6),
-            Text('GROUP', style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.bold,
-                color: AppColors.primary, letterSpacing: 1)),
+            Text('teacher.group_navigation_screen.groupLabel'.tr(),
+                style: const TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.bold,
+                    color: AppColors.primary, letterSpacing: 1)),
           ]),
         ),
         for (var i = 0; i < tabLabels.length; i++)
@@ -826,7 +840,7 @@ class _TeacherGroupDetailsScreenState
       // hides it automatically once isWide is true.
       bottomNavigationBar: Container(
         margin: const EdgeInsets.all(AppSpacing.md),
-        height: 75,
+        height: 62,
         decoration: BoxDecoration(
           gradient: AppDecorations.primaryGradient,
           borderRadius: BorderRadius.circular(AppRadii.pill),
@@ -840,12 +854,13 @@ class _TeacherGroupDetailsScreenState
           ],
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _buildNavItem(icon: Icons.article_rounded, label: 'Content', index: 0),
-            _buildNavItem(icon: Icons.people_rounded, label: 'Members', index: 1),
-            _buildNavItem(icon: Icons.bar_chart_rounded, label: 'Statistics', index: 2),
-            _buildNavItem(icon: Icons.settings_rounded, label: 'Settings', index: 3),
+            for (var i = 0; i < tabIcons.length; i++)
+              Expanded(
+                child: Center(
+                  child: _buildNavItem(icon: tabIcons[i], index: i),
+                ),
+              ),
           ],
         ),
       ),
@@ -949,11 +964,12 @@ class _EmptyMembers extends StatelessWidget {
               Icon(Icons.people_outline_rounded,
                   size: 72, color: AppColors.divider),
               const SizedBox(height: AppSpacing.md),
-              Text('No students yet',
+              Text('teacher.group_navigation_screen.noStudentsYet'.tr(),
                   style: AppText.subtitle.copyWith(
                       fontWeight: FontWeight.w600)),
               const SizedBox(height: AppSpacing.sm),
-              Text('Tap + to invite students', style: AppText.caption),
+              Text('teacher.group_navigation_screen.tapToInviteStudents'.tr(),
+                  style: AppText.caption),
             ],
           ),
         ),

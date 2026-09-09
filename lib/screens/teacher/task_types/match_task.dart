@@ -4,6 +4,9 @@ import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 // import 'task_type_interface.dart';
 import 'package:translator/translator.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class MatchPair {
   TextEditingController englishCtrl;
@@ -114,13 +117,13 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
   String? validate() {
     for (int i = 0; i < pairs.length; i++) {
       if (pairs[i].englishCtrl.text.trim().isEmpty) {
-        return 'Pair ${i + 1}: English word is required';
+        return 'teacher.match_task.pairEnglishRequired'.tr(namedArgs: {'number': '${i + 1}'});
       }
       if (matchMode == 'text' && pairs[i].translatedCtrl.text.trim().isEmpty) {
-        return 'Pair ${i + 1}: translation is required';
+        return 'teacher.match_task.pairTranslationRequired'.tr(namedArgs: {'number': '${i + 1}'});
       }
       if (matchMode == 'image' && pairs[i].resolvedImageUrl.isEmpty) {
-        return 'Pair ${i + 1}: image is required';
+        return 'teacher.match_task.pairImageRequired'.tr(namedArgs: {'number': '${i + 1}'});
       }
     }
     return null;
@@ -167,7 +170,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
       debugPrint('MatchTask translation error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Translation failed. You can type it manually.')),
+          SnackBar(content: Text('teacher.match_task.translateSingleFailed'.tr())),
         );
       }
     } finally {
@@ -199,7 +202,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
       debugPrint('MatchTask translateAll error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Some translations failed. You can fill them in manually.')),
+          SnackBar(content: Text('teacher.match_task.translateAllFailed'.tr())),
         );
       }
     } finally {
@@ -220,6 +223,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -243,7 +247,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
-                  'Student taps one from each column to form a match. Min 3, max $_maxPairs pairs.',
+                  'teacher.match_task.infoBanner'.tr(namedArgs: {'max': '$_maxPairs'}),
                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
               ),
@@ -267,7 +271,9 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : Icon(Icons.auto_awesome, color: c, size: 18),
                 label: Text(
-                  _translatingIndex != null ? 'Translating...' : 'Translate All (English → Spanish)',
+                  _translatingIndex != null
+                      ? 'teacher.match_task.translating'.tr()
+                      : 'teacher.match_task.translateAll'.tr(),
                   style: TextStyle(color: c, fontWeight: FontWeight.w600),
                 ),
                 style: OutlinedButton.styleFrom(side: BorderSide(color: c.withOpacity(0.5))),
@@ -281,7 +287,10 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
           TextButton.icon(
             onPressed: _addPair,
             icon: Icon(Icons.add, color: c, size: 18),
-            label: Text('Add pair (${pairs.length}/$_maxPairs)', style: TextStyle(color: c, fontWeight: FontWeight.w600)),
+            label: Text(
+              'teacher.match_task.addPair'.tr(namedArgs: {'current': '${pairs.length}', 'max': '$_maxPairs'}),
+              style: TextStyle(color: c, fontWeight: FontWeight.w600),
+            ),
           ),
       ],
     );
@@ -296,8 +305,8 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
       ),
       child: Row(
         children: [
-          Expanded(child: _modeToggleBtn('text', 'Text ↔ Translation', Icons.translate, c)),
-          Expanded(child: _modeToggleBtn('image', 'Text ↔ Image', Icons.image_outlined, c)),
+          Expanded(child: _modeToggleBtn('text', 'teacher.match_task.modeText'.tr(), Icons.translate, c)),
+          Expanded(child: _modeToggleBtn('image', 'teacher.match_task.modeImage'.tr(), Icons.image_outlined, c)),
         ],
       ),
     );
@@ -345,7 +354,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
             child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               Icon(Icons.flag, size: 13, color: c),
               const SizedBox(width: 4),
-              Text('English', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c)),
+              Text('teacher.match_task.englishHeader'.tr(), style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c)),
             ]),
           ),
         ),
@@ -363,7 +372,10 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
               // CHANGED: "Translation" -> "Spanish", matches what this
               // column actually always is (MatchTask has no direction
               // toggle -- it's always English -> Spanish).
-              Text(isImageMode ? 'Image' : 'Spanish', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isImageMode ? Colors.purple : Colors.orange)),
+              Text(
+                isImageMode ? 'teacher.match_task.imageHeader'.tr() : 'teacher.match_task.spanishHeader'.tr(),
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isImageMode ? Colors.purple : Colors.orange),
+              ),
             ]),
           ),
         ),
@@ -390,9 +402,9 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
           Expanded(
             child: TextFormField(
               controller: pair.englishCtrl,
-              decoration: _inputDecoration(c, 'e.g. "Red"'),
+              decoration: _inputDecoration(c, 'teacher.match_task.englishHint'.tr()),
               onChanged: (_) => widget.onChanged(),
-              validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+              validator: (v) => v?.isEmpty ?? true ? 'teacher.match_task.required'.tr() : null,
             ),
           ),
           // CHANGED: was a static swap_horiz icon. In text mode, this is
@@ -423,9 +435,9 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
                 ? _buildImagePickerField(pair, c)
                 : TextFormField(
                     controller: pair.translatedCtrl,
-                    decoration: _inputDecoration(Colors.orange, 'e.g. "Rojo"'),
+                    decoration: _inputDecoration(Colors.orange, 'teacher.match_task.spanishHint'.tr()),
                     onChanged: (_) => widget.onChanged(),
-                    validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                    validator: (v) => v?.isEmpty ?? true ? 'teacher.match_task.required'.tr() : null,
                   ),
           ),
           if (pairs.length > 3)
@@ -467,7 +479,7 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
                     errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 28),
                   ),
                 )
-              : Center(child: Text('No image', style: TextStyle(fontSize: 12, color: Colors.grey[500]))),
+              : Center(child: Text('teacher.match_task.noImage'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[500]))),
         ),
         const SizedBox(height: AppSpacing.xs),
         SizedBox(
@@ -487,7 +499,10 @@ class _MatchTaskState extends State<MatchTask> with TaskTypeEditorMixin implemen
               }
             },
             icon: const Icon(Icons.image, size: 16),
-            label: Text(hasImage ? 'Change' : 'Select Image', style: const TextStyle(fontSize: 12)),
+            label: Text(
+              hasImage ? 'teacher.match_task.change'.tr() : 'teacher.match_task.selectImage'.tr(),
+              style: const TextStyle(fontSize: 12),
+            ),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.grey[200],
               foregroundColor: Colors.black87,

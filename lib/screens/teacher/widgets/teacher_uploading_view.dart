@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // ── Uploading view ────────────────────────────────────────────────────────────
@@ -14,7 +17,9 @@ class TeacherUploadingView extends StatelessWidget {
       required this.total});
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    return Center(
         child: Padding(
           padding: const EdgeInsets.all(40),
           child: Column(
@@ -36,11 +41,16 @@ class TeacherUploadingView extends StatelessWidget {
                       size: 44, color: AppColors.onPrimary),
                 ),
                 const SizedBox(height: 28),
-                const Text('Uploading Images…',
-                    style: TextStyle(
+                Text('teacher.teacher_uploading_view.uploadingImages'.tr(),
+                    style: const TextStyle(
                         fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: AppSpacing.xs + 2),
-                Text('$uploaded of $total processed',
+                Text(
+                    'teacher.teacher_uploading_view.processedCount'.tr(
+                        namedArgs: {
+                          'uploaded': '$uploaded',
+                          'total': '$total',
+                        }),
                     style: TextStyle(
                         fontSize: 14, color: Colors.grey[600])),
                 const SizedBox(height: 24),
@@ -62,10 +72,11 @@ class TeacherUploadingView extends StatelessWidget {
                         fontWeight: FontWeight.bold,
                         color: AppColors.primary)),
                 const SizedBox(height: 20),
-                Text('Scanning each image for content safety…',
+                Text('teacher.teacher_uploading_view.scanningImages'.tr(),
                     style: TextStyle(
                         fontSize: 12, color: Colors.grey[400])),
               ]),
         ),
       );
+  }
 }

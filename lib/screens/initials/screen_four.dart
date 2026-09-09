@@ -4,10 +4,13 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -365,7 +368,7 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
             padding: const EdgeInsets.symmetric(vertical: 18),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
-          child: const Text('Check', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+          child: Text('common.check'.tr(), style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
         ),
       ),
     );
@@ -578,7 +581,10 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
                     const SizedBox(width: 4),
                     const Icon(Icons.close, size: 14, color: Color(0xFF2E7D32)),
                   ])
-                : Text('Blank ${blankIdx + 1}', style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+                : Text(
+                    'initials.screen_four.blankLabel'
+                        .tr(namedArgs: {'n': '${blankIdx + 1}'}),
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
           ),
         );
       },
@@ -589,7 +595,7 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
     final available = _options.where((o) => !_droppedWords.contains(o.textEn)).toList();
     return Column(
       children: [
-        const Text('Word Pool', style: TextStyle(fontSize: 13, color: Colors.grey)),
+        Text('initials.screen_four.wordPool'.tr(), style: const TextStyle(fontSize: 13, color: Colors.grey)),
         const SizedBox(height: 8),
         Wrap(
           spacing: 10,
@@ -620,6 +626,7 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     const grad = BoxDecoration(
       gradient: LinearGradient(colors: [Color(0xFFE8F5E9), Colors.white], begin: Alignment.topCenter, end: Alignment.bottomCenter),
     );
@@ -633,7 +640,7 @@ class _ScreenFourState extends State<ScreenFour> with RetryableTask {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _options.isEmpty
-                    ? const Center(child: Text('No options available'))
+                    ? Center(child: Text('common.noOptionsAvailable'.tr()))
                     : ResponsiveActivityShell(
                       child: Column(
                           children: [

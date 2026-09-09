@@ -1,6 +1,9 @@
 // screen_nine.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
@@ -222,8 +225,8 @@ class _ScreenNineState extends State<ScreenNine>
         isCorrect: false,
         captureError: isNoSpeech,
         errorMessage: isNoSpeech
-            ? "Couldn't capture your voice.\nPlease try again."
-            : "Microphone error.\nPlease try again.",
+            ? 'initials.screen_nine.couldntCaptureVoice'.tr()
+            : 'initials.screen_nine.microphoneError'.tr(),
       );
     };
   }
@@ -391,10 +394,10 @@ class _ScreenNineState extends State<ScreenNine>
     TaskFeedback.fire(isCorrect);
 
     final message = captureError
-        ? (errorMessage ?? "Couldn't capture your voice.\nPlease try again.")
+        ? (errorMessage ?? 'initials.screen_nine.couldntCaptureVoice'.tr())
         : isCorrect
-            ? '¡Excellent! Perfect pronunciation!'
-            : 'Almost there! Give it another try.';
+            ? 'initials.screen_nine.excellentPronunciation'.tr()
+            : 'initials.screen_nine.almostThereTryAgain'.tr();
 
     final messageColor = isCorrect
         ? const Color(0xFF2E7D32)
@@ -461,6 +464,7 @@ class _ScreenNineState extends State<ScreenNine>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
 
     return TaskExitGuard(
@@ -511,9 +515,9 @@ class _ScreenNineState extends State<ScreenNine>
 
                       const SizedBox(height: 8),
 
-                      const Text(
-                        'Repeat after me',
-                        style: TextStyle(
+                      Text(
+                        'initials.screen_nine.repeatAfterMe'.tr(),
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Colors.black45,
                           fontWeight: FontWeight.w500,
@@ -538,7 +542,7 @@ class _ScreenNineState extends State<ScreenNine>
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 12, vertical: 4),
                             child: Text(
-                              'REVEAL',
+                              'initials.screen_nine.reveal'.tr(),
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w800,
@@ -641,8 +645,8 @@ class _ScreenNineState extends State<ScreenNine>
                                     const SizedBox(width: 8),
                                     Text(
                                       _isSpeaking
-                                          ? 'Playing…'
-                                          : 'Listen to pronunciation',
+                                          ? 'initials.screen_nine.playing'.tr()
+                                          : 'initials.screen_nine.listenToPronunciation'.tr(),
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -675,7 +679,10 @@ class _ScreenNineState extends State<ScreenNine>
                                   size: 13, color: _green),
                               const SizedBox(width: 5),
                               Text(
-                                '${_highlightWordsList.length} / ${_phraseWords.length} words',
+                                'initials.screen_nine.wordsProgress'.tr(namedArgs: {
+                                  'matched': '${_highlightWordsList.length}',
+                                  'total': '${_phraseWords.length}',
+                                }),
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: _green,
@@ -710,7 +717,7 @@ class _ScreenNineState extends State<ScreenNine>
                                   size: 16, color: Colors.orange.shade700),
                               const SizedBox(width: 8),
                               Text(
-                                'Speak louder — we can barely hear you',
+                                'initials.screen_nine.speakLouder'.tr(),
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
@@ -792,7 +799,9 @@ class _ScreenNineState extends State<ScreenNine>
                       const SizedBox(height: 8),
 
                       Text(
-                        _isListening ? 'Listening… speak now' : 'Tap to speak',
+                        _isListening
+                            ? 'initials.screen_nine.listeningSpeakNow'.tr()
+                            : 'initials.screen_nine.tapToSpeak'.tr(),
                         style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey.shade600,

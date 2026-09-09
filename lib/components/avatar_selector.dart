@@ -1,8 +1,15 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/avatar_image.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/image_service.dart';
 
 /// Avatar Selector Widget
-/// Allows users to select an avatar from predefined options
+/// Lets the user pick an avatar from Cloudinary's "avatars" folder, fetched
+/// dynamically (see ImageService.fetchAvatarOptions) — no hardcoded list.
+/// Returns the chosen avatar's Cloudinary secure_url on confirm.
 class AvatarSelector extends StatefulWidget {
   final String? currentAvatar;
   final Function(String) onAvatarSelected;
@@ -19,41 +26,37 @@ class AvatarSelector extends StatefulWidget {
 
 class _AvatarSelectorState extends State<AvatarSelector> {
   String? selectedAvatar;
-
-  // Lista de avatares disponibles
-  final List<String> avatars = [
-    'assets/avatars/arctic-fox.png',
-    'assets/avatars/bear.png',
-    'assets/avatars/beaver.png',
-    'assets/avatars/cat.png',
-    'assets/avatars/deer.png',
-    'assets/avatars/dinosaur.png',
-    'assets/avatars/dog.png',
-    'assets/avatars/elephant.png',
-    'assets/avatars/frog.png',
-    'assets/avatars/giraffe.png',
-    'assets/avatars/gorilla.png',
-    'assets/avatars/koala.png',
-    'assets/avatars/lizard.png',
-    'assets/avatars/monkey.png',
-    'assets/avatars/otter.png',
-    'assets/avatars/panda.png',
-    'assets/avatars/parrot.png',
-    'assets/avatars/penguin.png',
-    'assets/avatars/raccoon.png',
-    'assets/avatars/squirrel.png',
-    'assets/avatars/turtle.png',
-    'assets/avatars/zebra.png',
-  ];
+  List<Map<String, String>>? _avatars;
+  bool _loading = true;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
     selectedAvatar = widget.currentAvatar;
+    _loadAvatars();
+  }
+
+  Future<void> _loadAvatars({bool forceRefresh = false}) async {
+    setState(() {
+      _loading = true;
+      _hasError = false;
+    });
+    try {
+      final avatars = await ImageService().fetchAvatarOptions(forceRefresh: forceRefresh);
+      if (mounted) setState(() => _avatars = avatars);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[AVATAR SELECTOR] fetchAvatarOptions failed: $e');
+      if (mounted) setState(() => _hasError = true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: AppRadii.lgAll),
       child: Container(
@@ -78,10 +81,10 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Choose your Avatar',
-                    style: TextStyle(
+                    'components.avatar_selector.chooseAvatar'.tr(),
+                    style: const TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
                       color: AppColors.primaryDark,
@@ -100,83 +103,8 @@ class _AvatarSelectorState extends State<AvatarSelector> {
 
             // Avatar Grid
             Container(
-              constraints: const BoxConstraints(maxHeight: 400),
-              child: GridView.builder(
-                shrinkWrap: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1,
-                ),
-                itemCount: avatars.length,
-                itemBuilder: (context, index) {
-                  final avatar = avatars[index];
-                  final isSelected = selectedAvatar == avatar;
-
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        selectedAvatar = avatar;
-                      });
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? AppColors.tint(AppColors.primary, .15)
-                            : AppColors.subtleFill,
-                        borderRadius: AppRadii.lgAll,
-                        border: Border.all(
-                          color: isSelected
-                              ? AppColors.primary
-                              : AppColors.divider,
-                          width: isSelected ? 3 : 1,
-                        ),
-                        boxShadow: isSelected
-                            ? AppShadows.floating(AppColors.primary)
-                            : [],
-                      ),
-                      child: Stack(
-                        children: [
-                          Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Image.asset(
-                                avatar,
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Icon(
-                                    Icons.image_not_supported,
-                                    color: AppColors.muted,
-                                    size: 40,
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                          if (isSelected)
-                            Positioned(
-                              top: 6,
-                              right: 6,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                  color: AppColors.success,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.check,
-                                  color: AppColors.onPrimary,
-                                  size: 16,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
+              constraints: const BoxConstraints(maxHeight: 400, minHeight: 120),
+              child: _buildGridContent(),
             ),
 
             const SizedBox(height: 20),
@@ -201,8 +129,8 @@ class _AvatarSelectorState extends State<AvatarSelector> {
                   elevation: 3,
                   disabledBackgroundColor: Colors.grey[300],
                 ),
-                child: const Text(
-                  'Confirm Avatar',
+                child: Text(
+                  'components.avatar_selector.confirmAvatar'.tr(),
                   style: AppText.button,
                 ),
               ),
@@ -210,6 +138,97 @@ class _AvatarSelectorState extends State<AvatarSelector> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildGridContent() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_hasError || _avatars == null || _avatars!.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_rounded, color: AppColors.muted, size: 40),
+            const SizedBox(height: 12),
+            Text(
+              'components.avatar_selector.loadFailed'.tr(),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.muted),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => _loadAvatars(forceRefresh: true),
+              child: Text('common.retry'.tr()),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final avatars = _avatars!;
+    return GridView.builder(
+      shrinkWrap: true,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 1,
+      ),
+      itemCount: avatars.length,
+      itemBuilder: (context, index) {
+        final avatarUrl = avatars[index]['url']!;
+        final isSelected = selectedAvatar == avatarUrl;
+
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              selectedAvatar = avatarUrl;
+            });
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? AppColors.tint(AppColors.primary, .15)
+                  : AppColors.subtleFill,
+              borderRadius: AppRadii.lgAll,
+              border: Border.all(
+                color: isSelected ? AppColors.primary : AppColors.divider,
+                width: isSelected ? 3 : 1,
+              ),
+              boxShadow: isSelected ? AppShadows.floating(AppColors.primary) : [],
+            ),
+            child: Stack(
+              children: [
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: AvatarImage(avatar: avatarUrl),
+                  ),
+                ),
+                if (isSelected)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: AppColors.success,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        color: AppColors.onPrimary,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

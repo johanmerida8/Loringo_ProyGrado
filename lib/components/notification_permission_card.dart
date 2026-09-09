@@ -1,5 +1,8 @@
 // lib/components/notification_permission_card.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class NotificationPermissionCard extends StatelessWidget {
@@ -12,6 +15,7 @@ class NotificationPermissionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       padding: const EdgeInsets.all(16),
@@ -49,18 +53,18 @@ class NotificationPermissionCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Stay Updated!',
-                  style: TextStyle(
+                Text(
+                  'components.notification_permission_card.stayUpdated'.tr(),
+                  style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
                     color: Colors.white,
                   ),
                 ),
                 const SizedBox(height: 2),
-                const Text(
-                  'Get notified about your childs progress',
-                  style: TextStyle(
+                Text(
+                  'common.notificationSubtitleParent'.tr(),
+                  style: const TextStyle(
                     fontSize: 12,
                     color: Colors.white,
                   ),
@@ -77,7 +81,7 @@ class NotificationPermissionCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Enable'),
+            child: Text('common.enable'.tr()),
           ),
         ],
       ),

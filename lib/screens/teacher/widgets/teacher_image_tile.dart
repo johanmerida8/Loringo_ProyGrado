@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // ── Image tile ────────────────────────────────────────────────────────────────
@@ -19,6 +22,7 @@ class _TeacherImageTileState extends State<TeacherImageTile> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return GestureDetector(
       onLongPress: () =>
           setState(() => _showDelete = !_showDelete),
@@ -50,7 +54,7 @@ class _TeacherImageTileState extends State<TeacherImageTile> {
                     bottomLeft: Radius.circular(AppRadii.md - 2),
                     bottomRight: Radius.circular(AppRadii.md - 2))),
             child: Text(
-              widget.image['name'] ?? 'Untitled',
+              widget.image['name'] ?? 'teacher.teacher_image_tile.untitled'.tr(),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -69,14 +73,14 @@ class _TeacherImageTileState extends State<TeacherImageTile> {
                     color: AppColors.danger.withOpacity(0.9),
                     borderRadius:
                         BorderRadius.circular(AppRadii.md - 2)),
-                child: const Column(
+                child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.delete_rounded,
+                    const Icon(Icons.delete_rounded,
                         color: AppColors.onPrimary, size: 28),
-                    SizedBox(height: AppSpacing.xs),
-                    Text('Delete',
-                        style: TextStyle(
+                    const SizedBox(height: AppSpacing.xs),
+                    Text('common.delete'.tr(),
+                        style: const TextStyle(
                             color: AppColors.onPrimary,
                             fontSize: 10,
                             fontWeight: FontWeight.bold)),

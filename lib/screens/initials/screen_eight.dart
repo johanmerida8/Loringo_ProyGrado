@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -60,19 +63,23 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
   bool _isLoading = true;
   bool _isResultSheetOpen = false;
 
-  static const List<String> _incorrectHints = [
-    'Almost there! Check the word order.',
-    'Good try! Keep going.',
-    'You can do it! Think about the full sentence.',
-    'Try again! You\'re very close.',
-    'Don\'t give up! Give it another try.',
+  List<String> get _incorrectHints => [
+    'initials.screen_eight.hintWordOrder'.tr(),
+    'initials.screen_eight.hintKeepGoing'.tr(),
+    'initials.screen_eight.hintThinkSentence'.tr(),
+    'initials.screen_eight.hintVeryClose'.tr(),
+    'initials.screen_eight.hintDontGiveUp'.tr(),
   ];
 
   int _hintCycleCount = 0;
 
   bool get _isEsToEn => _direction == 'es_to_en';
-  String get _headerLabel => _isEsToEn ? 'Translate to English' : 'Translate to Spanish';
-  String get _listenTooltip => _isEsToEn ? 'Listen to Spanish' : 'Listen to English';
+  String get _headerLabel => _isEsToEn
+      ? 'initials.screen_eight.translateToEnglish'.tr()
+      : 'initials.screen_eight.translateToSpanish'.tr();
+  String get _listenTooltip => _isEsToEn
+      ? 'initials.screen_eight.listenToSpanish'.tr()
+      : 'initials.screen_eight.listenToEnglish'.tr();
 
   @override
   void initState() {
@@ -202,6 +209,7 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (_isLoading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -319,9 +327,9 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
                       children: [
-                        const Text(
-                          'Your Answer',
-                          style: TextStyle(
+                        Text(
+                          'initials.screen_eight.yourAnswer'.tr(),
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                             color: Colors.black87,
@@ -332,7 +340,7 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                           TextButton.icon(
                             onPressed: _clearAll,
                             icon: const Icon(Icons.clear_all, size: 18),
-                            label: const Text('Clear All'),
+                            label: Text('initials.screen_eight.clearAll'.tr()),
                             style: TextButton.styleFrom(
                               foregroundColor: Colors.red,
                             ),
@@ -354,7 +362,7 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                     child: _selectedWords.isEmpty
                         ? Center(
                             child: Text(
-                              'Tap words below to build your sentence',
+                              'initials.screen_eight.tapWordsBelow'.tr(),
                               style: TextStyle(
                                 color: Colors.grey.shade500,
                                 fontSize: 14,
@@ -417,9 +425,9 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
                       children: [
-                        const Text(
-                          'Word Bank',
-                          style: TextStyle(
+                        Text(
+                          'initials.screen_eight.wordBank'.tr(),
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                             color: Colors.black87,
@@ -436,7 +444,7 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
-                            'Tap to add',
+                            'initials.screen_eight.tapToAdd'.tr(),
                             style: TextStyle(
                               fontSize: 11,
                               color: _green,
@@ -465,7 +473,7 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                                   ),
                                   const SizedBox(height: 12),
                                   Text(
-                                    'All words used!',
+                                    'initials.screen_eight.allWordsUsed'.tr(),
                                     style: TextStyle(
                                       fontSize: 16,
                                       color: Colors.grey.shade600,
@@ -473,7 +481,7 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
-                                    'Tap CHECK when ready',
+                                    'initials.screen_eight.tapCheckWhenReady'.tr(),
                                     style: TextStyle(
                                       fontSize: 13,
                                       color: Colors.grey.shade500,
@@ -549,9 +557,9 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
                           ),
                           elevation: 3,
                         ),
-                        child: const Text(
-                          'CHECK',
-                          style: TextStyle(
+                        child: Text(
+                          'common.check'.tr().toUpperCase(),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
                             fontWeight: FontWeight.bold,

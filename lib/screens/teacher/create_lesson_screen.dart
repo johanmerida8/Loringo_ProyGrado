@@ -1,5 +1,9 @@
 // create_lesson_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/teacher/widgets/continue_bookmark_button.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -99,7 +103,7 @@ class _CreatePersonalizedLessonScreenState
         if (titleController.text.trim() == origTitle) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
+            SnackBar(content: Text('common.noChangesMade'.tr()), backgroundColor: AppColors.muted),
           );
           return;
         }
@@ -112,8 +116,8 @@ class _CreatePersonalizedLessonScreenState
           order: int.parse(orderController.text),
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Lesson updated'),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('teacher.create_lesson_screen.lessonUpdated'.tr()),
             backgroundColor: AppColors.success,
           ));
         }
@@ -127,8 +131,8 @@ class _CreatePersonalizedLessonScreenState
           order: int.parse(orderController.text),
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Lesson created'),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('teacher.create_lesson_screen.lessonCreated'.tr()),
             backgroundColor: AppColors.success,
           ));
         }
@@ -137,7 +141,7 @@ class _CreatePersonalizedLessonScreenState
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
+          content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
           backgroundColor: AppColors.danger,
         ));
       }
@@ -148,14 +152,21 @@ class _CreatePersonalizedLessonScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       // NOTE: no Scaffold.appBar — replaced with TeacherScreenHeader.
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
         children: [
           TeacherScreenHeader(
-            title: _isEditing ? 'Edit Lesson' : 'Create Lesson',
+            title: _isEditing
+                ? 'teacher.create_lesson_screen.editLesson'.tr()
+                : 'teacher.create_lesson_screen.createLesson'.tr(),
             color: _c,
+            trailing: ContinueBookmarkButton(
+              level: 'lesson', contentId: widget.contentId, unitId: widget.unitId,
+              getFormData: () => {'title': titleController.text.trim()},
+            ),
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -169,25 +180,31 @@ class _CreatePersonalizedLessonScreenState
                     CreateFormBanner(
                       color: _c,
                       icon: Icons.school_rounded,
-                      label: _isEditing ? 'Editing Lesson' : 'New Lesson',
-                      description: 'Create engaging lessons with tasks',
+                      label: _isEditing
+                          ? 'teacher.create_lesson_screen.editingLesson'.tr()
+                          : 'teacher.create_lesson_screen.newLesson'.tr(),
+                      description: 'teacher.create_lesson_screen.bannerDescription'.tr(),
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Lesson Title'),
+                    CreateFormLabel('teacher.create_lesson_screen.lessonTitle'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     CreateFormField(
                       controller: titleController,
                       color: _c,
                       icon: Icons.title_rounded,
-                      hint: 'e.g. Past Tense Basics',
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Title is required' : null,
+                      hint: 'teacher.create_lesson_screen.titleHint'.tr(),
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'teacher.create_lesson_screen.titleRequired'.tr()
+                          : null,
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
                     CreateFormSubmitButton(
                       color: _c,
-                      label: _isEditing ? 'UPDATE LESSON' : 'CREATE LESSON',
+                      label: _isEditing
+                          ? 'teacher.create_lesson_screen.updateLessonCap'.tr()
+                          : 'teacher.create_lesson_screen.createLessonCap'.tr(),
                       isLoading: isLoading || !_orderResolved,
                       onPressed: _submit,
                     ),

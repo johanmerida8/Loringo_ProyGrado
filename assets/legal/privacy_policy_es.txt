@@ -1,0 +1,61 @@
+Esta política explica qué información recopila Loringo, cómo la usamos y qué control tienes sobre ella, ya sea que uses la aplicación como padre/madre o tutor, docente o administrador, o que crees el perfil de un menor a tu cargo.
+
+QUÉ INFORMACIÓN RECOPILAMOS
+
+De tu propia cuenta (padre/madre o tutor, docente o administrador):
+- Tu nombre completo y correo electrónico, usados para crear e iniciar sesión en tu cuenta.
+- Tu rol dentro de la aplicación (padre, docente o administrador).
+
+De un menor, ingresados únicamente por su padre/madre o tutor:
+- El nombre del menor.
+- Un avatar ilustrado prediseñado (no es una fotografía real).
+- El progreso académico del menor: actividades y evaluaciones completadas, puntajes, intentos, respuestas y retroalimentación del docente.
+- Un código de acceso privado que el menor usa para entrar a la aplicación, en lugar de un correo y una contraseña.
+
+Los menores no crean su propia cuenta. Un padre/madre o tutor crea el perfil del menor, y el menor luego usa ese perfil ingresando su código de acceso.
+
+No recopilamos del menor: fecha de nacimiento, documento de identidad, dirección, ubicación precisa, número de teléfono, ni grabaciones persistentes de su voz.
+
+CÓMO USAMOS ESTA INFORMACIÓN
+
+Usamos esta información únicamente para el funcionamiento de la aplicación: identificar a un menor dentro de su clase, mostrar su progreso a su docente y a su padre/madre, y habilitar recompensas dentro de la app como puntos de experiencia y ligas. No la usamos con fines publicitarios ni la vendemos.
+
+INFORMACIÓN DE LOS MENORES
+
+El perfil de un menor es creado y administrado enteramente por su padre/madre o tutor — un menor nunca se registra por su cuenta ni ingresa sus propios datos personales. Toda actividad que realiza un menor, y cualquier imagen que se le muestra dentro de una actividad, es revisada antes de estar disponible, para ayudar a mantener alejado el contenido inapropiado.
+
+RECONOCIMIENTO DE VOZ
+
+Algunas actividades de pronunciación usan reconocimiento de voz para verificar si el menor dijo una palabra correctamente. Loringo conserva únicamente el resultado necesario para la actividad (por ejemplo, si la palabra fue reconocida). No conservamos intencionalmente una grabación de la voz del menor.
+
+COMPARTICIÓN DE INFORMACIÓN
+
+No vendemos información ni la compartimos con fines publicitarios. Las personas que pueden ver la información de un menor se limitan a su padre/madre o tutor y a su docente. Las notificaciones sobre el progreso de un menor se envían al padre/madre o al docente, nunca al menor.
+
+CÓDIGOS DE ACCESO
+
+El código de acceso de un menor se mantiene privado y protegido — nunca se muestra de una forma que alguien pueda simplemente leer navegando los datos de la aplicación. Antes de que un padre/madre pueda ver el código de acceso de su hijo/a, debe primero confirmar su identidad (por ejemplo, con huella digital, reconocimiento facial o la contraseña de su cuenta).
+
+CONTROL DEL PADRE/MADRE O TUTOR
+
+Como padre/madre o tutor, en cualquier momento puedes: ver el progreso de tu hijo/a, consultar su código de acceso (tras confirmar tu identidad), sacarlo de un grupo al que se haya unido, y eliminar el perfil de tu hijo/a o tu propia cuenta.
+
+ELIMINACIÓN DE CUENTAS Y PERFILES
+
+- Eliminar el perfil de un estudiante: elimina permanentemente el perfil de ese hijo/a, su código de acceso, su membresía de grupo y su progreso de aprendizaje. Tu propia cuenta, tus otros hijos y el grupo del docente no se ven afectados.
+
+- Eliminar tu cuenta de padre/madre o tutor: elimina permanentemente tu cuenta y el perfil de cada hijo/a registrado bajo ella, incluyendo el código de acceso, la membresía de grupo y el progreso de aprendizaje de cada uno. Los grupos del docente y otros estudiantes no se ven afectados.
+
+- Sacar a un estudiante de un grupo: el perfil del estudiante no se elimina. Simplemente deja ese grupo y puede unirse a uno nuevo en cualquier momento. Se conserva un registro de que estuvo en el grupo, pero el progreso de aprendizaje que obtuvo en él se elimina.
+
+- Eliminar la cuenta de un docente: elimina permanentemente la cuenta del docente y todo lo que creó — lecciones, actividades, evaluaciones/quizzes, imágenes subidas y sus grupos. El perfil de los estudiantes nunca se elimina; conservan su perfil y pueden unirse a otro grupo.
+
+- Archivar un grupo: no elimina nada. Solo congela el grupo — sus estudiantes, su progreso y su historial se conservan exactamente como están.
+
+CONSENTIMIENTO
+
+Al crear una cuenta, aceptas esta política respecto a tu propia información. Al crear el perfil de un menor a tu cargo, confirmas además que eres su padre/madre o tutor legal, y autorizas la recopilación y el uso de la información de ese menor según se describe en esta política, únicamente para brindarle las funciones educativas de la aplicación.
+
+CAMBIOS A ESTA POLÍTICA
+
+Si esta política cambia de forma importante, te pediremos que revises y aceptes la versión actualizada la próxima vez que te sea aplicable.

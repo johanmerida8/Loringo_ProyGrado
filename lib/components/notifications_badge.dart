@@ -24,6 +24,7 @@ class NotificationBadge extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
             const Icon(
               Icons.notifications_none_rounded,
@@ -40,8 +41,8 @@ class NotificationBadge extends StatelessWidget {
                 final unreadCount = snapshot.data?.docs.length ?? 0;
                 if (unreadCount == 0) return const SizedBox.shrink();
                 return Positioned(
-                  right: 0,
-                  top: 0,
+                  right: -15,
+                  top: -10,
                   child: Container(
                     padding: const EdgeInsets.all(4),
                     decoration: const BoxDecoration(

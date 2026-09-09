@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:loringo_app/components/image_dialog.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 /// SOUND MATCH
 /// The student hears a word spoken aloud (TTS reads `audioText`) and taps
@@ -102,17 +105,17 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
   @override
   String? validate() {
     if (audioTextController.text.trim().isEmpty) {
-      return 'Enter the word or phrase that will be spoken aloud';
+      return 'teacher.sound_match_task.enterAudioText'.tr();
     }
     bool hasCorrect = false;
     for (int i = 0; i < options.length; i++) {
       final hasImage = pickedImages[i] != null || imageControllers[i].text.trim().isNotEmpty;
       if (labelControllers[i].text.trim().isEmpty || !hasImage) {
-        return 'Option ${i + 1} must have a label and an image';
+        return 'teacher.sound_match_task.optionNeedsLabelAndImage'.tr(namedArgs: {'number': '${i + 1}'});
       }
       if (options[i]['isCorrect'] == true) hasCorrect = true;
     }
-    if (!hasCorrect) return 'Mark exactly one option as correct';
+    if (!hasCorrect) return 'teacher.sound_match_task.markOneCorrect'.tr();
     return null;
   }
 
@@ -166,23 +169,24 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final c = widget.groupColor;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHeader(c),
         const SizedBox(height: AppSpacing.md),
-        const Text('Word or phrase to speak',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        Text('teacher.sound_match_task.wordToSpeak'.tr(),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         const SizedBox(height: AppSpacing.xs),
         TextFormField(
           controller: audioTextController,
-          decoration: _inputDecoration(c, 'e.g. "apple"'),
+          decoration: _inputDecoration(c, 'teacher.sound_match_task.audioTextHint'.tr()),
           onChanged: (_) => widget.onChanged(),
-          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+          validator: (v) => v?.trim().isEmpty ?? true ? 'teacher.sound_match_task.required'.tr() : null,
         ),
         const SizedBox(height: AppSpacing.md),
-        const Text('Answer options', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        Text('teacher.sound_match_task.answerOptions'.tr(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         const SizedBox(height: AppSpacing.sm),
         ...List.generate(options.length, (index) => _buildOptionCard(index, c)),
         if (options.length < 4)
@@ -191,7 +195,7 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
             child: TextButton.icon(
               onPressed: _addOption,
               icon: Icon(Icons.add_circle_outline, color: c),
-              label: Text('Add option (${options.length}/4)', style: TextStyle(color: c)),
+              label: Text('teacher.sound_match_task.addOption'.tr(namedArgs: {'count': '${options.length}'}), style: TextStyle(color: c)),
             ),
           ),
       ],
@@ -211,7 +215,7 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Students hear the word spoken aloud and tap the matching image. No text is shown to them.',
+              'teacher.sound_match_task.infoBanner'.tr(),
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -235,7 +239,7 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
         children: [
           Row(
             children: [
-              Text('Option ${index + 1}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              Text('teacher.sound_match_task.optionOrdinal'.tr(namedArgs: {'number': '${index + 1}'}), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               const Spacer(),
               GestureDetector(
                 onTap: () => _setCorrect(index),
@@ -247,7 +251,7 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
                       size: 20,
                     ),
                     const SizedBox(width: 4),
-                    const Text('Correct', style: TextStyle(fontSize: 13)),
+                    Text('teacher.sound_match_task.correct'.tr(), style: const TextStyle(fontSize: 13)),
                   ],
                 ),
               ),
@@ -261,9 +265,9 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
           const SizedBox(height: AppSpacing.sm),
           TextFormField(
             controller: labelControllers[index],
-            decoration: _inputDecoration(c, 'Label for teacher reference, e.g. "Apple"'),
+            decoration: _inputDecoration(c, 'teacher.sound_match_task.labelHint'.tr()),
             onChanged: (_) => widget.onChanged(),
-            validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+            validator: (v) => v?.isEmpty ?? true ? 'teacher.sound_match_task.required'.tr() : null,
           ),
           const SizedBox(height: AppSpacing.sm),
           _buildImagePicker(index, c),
@@ -295,7 +299,7 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
                       errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 40),
                     ),
                   )
-                : Center(child: Text('No image', style: TextStyle(color: Colors.grey[500]))),
+                : Center(child: Text('teacher.sound_match_task.noImage'.tr(), style: TextStyle(color: Colors.grey[500]))),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
@@ -314,7 +318,7 @@ class _SoundMatchTaskState extends State<SoundMatchTask>
             }
           },
           icon: const Icon(Icons.image, size: 18),
-          label: const Text('Select'),
+          label: Text('teacher.sound_match_task.select'.tr()),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey[200],
             foregroundColor: Colors.black87,

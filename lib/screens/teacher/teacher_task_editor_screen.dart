@@ -1,5 +1,10 @@
 // teacher_task_editor_screen.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/hierarchy_list_cards.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -24,7 +29,7 @@ class TeacherTaskEditorScreen extends StatefulWidget {
   final String lessonId;
   final String activityId;
   final String activityTitle;
-  final Color  groupColor;
+  final Color groupColor;
   final List<String> ancestorTrail;
 
   /// True only when this screen was reached straight from
@@ -59,9 +64,91 @@ class TeacherTaskEditorScreen extends StatefulWidget {
       _TeacherTaskEditorScreenState();
 }
 
-class _TeacherTaskEditorScreenState
-    extends State<TeacherTaskEditorScreen> {
+class _TeacherTaskEditorScreenState extends State<TeacherTaskEditorScreen> {
   final Database db = Database();
+
+  // Same optimistic-local-copy pattern as
+  // teacher_activity_editor_screen.dart's _reorderingItems -- keeps the
+  // dragged item's new position visible during the confirm dialog instead
+  // of snapping back to the stream's still-unwritten order.
+  List<QueryDocumentSnapshot>? _reorderingItems;
+
+  Future<void> _handleReorder(
+    List<QueryDocumentSnapshot> current,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    if (newIndex > oldIndex) newIndex -= 1;
+    final reordered = List<QueryDocumentSnapshot>.from(current);
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, moved);
+
+    setState(() => _reorderingItems = reordered);
+
+    final movedTitle = _displayTitle(moved.data() as Map<String, dynamic>);
+    final confirm =
+        await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.md),
+            ),
+            title: Text('teacher.teacher_task_editor_screen.reorderTasks'.tr()),
+            content: Text(
+              'teacher.teacher_task_editor_screen.moveToPosition'.tr(
+                namedArgs: {
+                  'title': movedTitle,
+                  'position': '${newIndex + 1}',
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('common.cancel'.tr()),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.groupColor,
+                  foregroundColor: AppColors.onPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadii.sm),
+                  ),
+                ),
+                child: Text('common.confirm'.tr()),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirm) {
+      if (mounted) setState(() => _reorderingItems = null);
+      return;
+    }
+
+    try {
+      await db.reorderPersonalizedTasks(
+        contentId: widget.contentId,
+        unitId: widget.unitId,
+        lessonId: widget.lessonId,
+        activityId: widget.activityId,
+        orderedTaskIds: reordered.map((d) => d.id).toList(),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reorderingItems = null);
+    }
+  }
 
   // ─── Display title resolver ─────────────────────────────────────────────
   // 'title' is now a mandatory top-level field on every task, entered by
@@ -89,30 +176,36 @@ class _TeacherTaskEditorScreenState
     if (legacyQuestion != null && legacyQuestion.trim().isNotEmpty) {
       return legacyQuestion;
     }
-    return 'Untitled — open to add a title';
+    return 'teacher.teacher_task_editor_screen.untitledOpenToAddTitle'.tr();
   }
 
   Future<void> _deleteTask(String taskId, String displayTitle) async {
-    final confirm = await showDialog<bool>(
+    final confirm =
+        await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadii.md)),
-            title: const Text('Delete Task'),
-            content: const Text('Delete this task?'),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+            ),
+            title: Text('teacher.teacher_task_editor_screen.deleteTask'.tr()),
+            content: Text(
+              'teacher.teacher_task_editor_screen.deleteThisTask'.tr(),
+            ),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Cancel')),
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('common.cancel'.tr()),
+              ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.danger,
                   foregroundColor: AppColors.onPrimary,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadii.sm)),
+                    borderRadius: BorderRadius.circular(AppRadii.sm),
+                  ),
                 ),
-                child: const Text('Delete'),
+                child: Text('common.delete'.tr()),
               ),
             ],
           ),
@@ -121,21 +214,29 @@ class _TeacherTaskEditorScreenState
     if (!confirm) return;
     try {
       await db.deletePersonalizedTask(
-        widget.groupId, widget.contentId, widget.unitId,
-        widget.lessonId, widget.activityId, taskId,
+        widget.groupId,
+        widget.contentId,
+        widget.unitId,
+        widget.lessonId,
+        widget.activityId,
+        taskId,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Task deleted'),
-          backgroundColor: AppColors.primary,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('teacher.teacher_task_editor_screen.taskDeleted'.tr()),
+            backgroundColor: AppColors.primary,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: AppColors.danger,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
+            backgroundColor: AppColors.danger,
+          ),
+        );
       }
     }
   }
@@ -145,19 +246,19 @@ class _TeacherTaskEditorScreenState
       context,
       MaterialPageRoute(
         builder: (_) => CreatePersonalizedTaskScreen(
-          groupId:    widget.groupId,
-          contentId:  widget.contentId,
-          unitId:     widget.unitId,
-          lessonId:   widget.lessonId,
+          groupId: widget.groupId,
+          contentId: widget.contentId,
+          unitId: widget.unitId,
+          lessonId: widget.lessonId,
           activityId: widget.activityId,
           groupColor: widget.groupColor,
-          taskId:     taskId,
+          taskId: taskId,
           existingData: {
-            'title':    data['title'],
+            'title': data['title'],
             'question': data['question'],
-            'order':    data['order'],
-            'type':     data['type'],
-            'data':     data['data'],
+            'order': data['order'],
+            'type': data['type'],
+            'data': data['data'],
           },
         ),
       ),
@@ -250,45 +351,51 @@ class _TeacherTaskEditorScreenState
   }
 
   String _typeLabel(String type) {
-    const map = {
-      'image_select':         'Image Selection',
-      'image_select_reverse': 'Image Select Reverse',
-      'fill_blank':           'Fill the Blank',
-      'arrange':              'Arrange Words',
-      'complete_the_chat':    'Complete Chat',
-      'word_match':           'Word Match',
-      'match':                'Match',
-      'reading':              'Reading',
-      'sentence_builder':     'Sentence Builder',
-      'repeat_after_me':      'Repeat After Me',
-      'listen_and_speak':     'Listen & Speak',
-      'sound_match':          'Sound Match',
-      'odd_one_out':          'Odd One Out',
+    final map = {
+      'image_select': 'teacher.teacher_task_editor_screen.typeImageSelect'.tr(),
+      'image_select_reverse':
+          'teacher.teacher_task_editor_screen.typeImageSelectReverse'.tr(),
+      'fill_blank': 'teacher.teacher_task_editor_screen.typeFillBlank'.tr(),
+      'arrange': 'teacher.teacher_task_editor_screen.typeArrange'.tr(),
+      'complete_the_chat':
+          'teacher.teacher_task_editor_screen.typeCompleteTheChat'.tr(),
+      'word_match': 'teacher.teacher_task_editor_screen.typeWordMatch'.tr(),
+      'match': 'teacher.teacher_task_editor_screen.typeMatch'.tr(),
+      'reading': 'teacher.teacher_task_editor_screen.typeReading'.tr(),
+      'sentence_builder':
+          'teacher.teacher_task_editor_screen.typeSentenceBuilder'.tr(),
+      'repeat_after_me':
+          'teacher.teacher_task_editor_screen.typeRepeatAfterMe'.tr(),
+      'listen_and_speak':
+          'teacher.teacher_task_editor_screen.typeListenAndSpeak'.tr(),
+      'sound_match': 'teacher.teacher_task_editor_screen.typeSoundMatch'.tr(),
+      'odd_one_out': 'teacher.teacher_task_editor_screen.typeOddOneOut'.tr(),
     };
     return map[type] ?? type;
   }
 
   IconData _typeIcon(String type) {
     const map = {
-      'image_select':         Icons.image,
+      'image_select': Icons.image,
       'image_select_reverse': Icons.image_search,
-      'fill_blank':           Icons.edit_note,
-      'arrange':              Icons.sort,
-      'complete_the_chat':    Icons.chat,
-      'word_match':           Icons.shuffle,
-      'match':                Icons.compare_arrows,
-      'reading':              Icons.menu_book,
-      'sentence_builder':     Icons.translate,
-      'repeat_after_me':      Icons.record_voice_over,
-      'listen_and_speak':     Icons.hearing,
-      'sound_match':          Icons.volume_up,
-      'odd_one_out':          Icons.category_outlined,
+      'fill_blank': Icons.edit_note,
+      'arrange': Icons.sort,
+      'complete_the_chat': Icons.chat,
+      'word_match': Icons.shuffle,
+      'match': Icons.compare_arrows,
+      'reading': Icons.menu_book,
+      'sentence_builder': Icons.translate,
+      'repeat_after_me': Icons.record_voice_over,
+      'listen_and_speak': Icons.hearing,
+      'sound_match': Icons.volume_up,
+      'odd_one_out': Icons.category_outlined,
     };
     return map[type] ?? Icons.help_outline;
   }
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final c = widget.groupColor;
 
     return Scaffold(
@@ -298,7 +405,7 @@ class _TeacherTaskEditorScreenState
         children: [
           TeacherScreenHeader(
             title: widget.activityTitle,
-            subtitle: 'Tasks',
+            subtitle: 'teacher.teacher_task_editor_screen.tasks'.tr(),
             color: c,
           ),
           // Nothing has been saved to Firestore yet — see the field doc
@@ -316,8 +423,11 @@ class _TeacherTaskEditorScreenState
           if (widget.isPendingActivity)
             StreamBuilder(
               stream: db.getPersonalizedTasksStream(
-                widget.groupId, widget.contentId, widget.unitId,
-                widget.lessonId, widget.activityId,
+                widget.groupId,
+                widget.contentId,
+                widget.unitId,
+                widget.lessonId,
+                widget.activityId,
               ),
               builder: (context, snapshot) {
                 final hasAnyTask = (snapshot.data?.docs ?? []).isNotEmpty;
@@ -326,18 +436,26 @@ class _TeacherTaskEditorScreenState
                   width: double.infinity,
                   color: AppColors.warning.withOpacity(0.12),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, color: AppColors.warning, size: 16),
+                      const Icon(
+                        Icons.info_outline,
+                        color: AppColors.warning,
+                        size: 16,
+                      ),
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
-                          'Not saved yet — define your tasks here, then tap CREATE ACTIVITY back on the activity form to save everything.',
+                          'teacher.teacher_task_editor_screen.notSavedYetBanner'
+                              .tr(),
                           style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.orange.shade800),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade800,
+                          ),
                         ),
                       ),
                     ],
@@ -348,68 +466,120 @@ class _TeacherTaskEditorScreenState
           Expanded(
             child: StreamBuilder(
               stream: db.getPersonalizedTasksStream(
-                widget.groupId, widget.contentId, widget.unitId,
-                widget.lessonId, widget.activityId,
+                widget.groupId,
+                widget.contentId,
+                widget.unitId,
+                widget.lessonId,
+                widget.activityId,
               ),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator(color: c));
                 }
-                final tasks = snapshot.data?.docs ?? [];
+                final streamTasks = snapshot.data?.docs ?? [];
+                final tasks = _reorderingItems ?? streamTasks;
 
                 if (tasks.isEmpty) {
                   return HierarchyEmptyState(
-                    icon:        Icons.help_outline,
-                    title:       'No Tasks Yet',
-                    subtitle:    'Tap + to create your first task',
-                    color:       c,
-                    actionLabel: 'Create First Task',
+                    icon: Icons.help_outline,
+                    title: 'teacher.teacher_task_editor_screen.noTasksYet'.tr(),
+                    subtitle:
+                        'teacher.teacher_task_editor_screen.tapPlusToCreateFirstTask'
+                            .tr(),
+                    color: c,
+                    actionLabel:
+                        'teacher.teacher_task_editor_screen.createFirstTask'
+                            .tr(),
                     onAction: () => _openTaskTypeSelector(kMaxTasksPerActivity),
                   );
                 }
 
-                return ListView.builder(
+                return ReorderableListView.builder(
                   // Bottom padding leaves room so the FAB(s) don't cover
                   // the last card in the list.
                   padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.md, AppSpacing.md, AppSpacing.md, 100),
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    100,
+                  ),
                   itemCount: tasks.length,
+                  // Off: its automatic web/desktop handle appends at the
+                  // TRAILING edge of every item, landing right on top of
+                  // this tile's own "⋮" popup menu. We provide our own
+                  // handle placement instead -- see below.
+                  buildDefaultDragHandles: false,
+                  onReorder: (oldIndex, newIndex) =>
+                      _handleReorder(tasks, oldIndex, newIndex),
                   itemBuilder: (context, i) {
-                    final doc      = tasks[i];
-                    final data     = doc.data() as Map<String, dynamic>;
+                    final doc = tasks[i];
+                    final data = doc.data() as Map<String, dynamic>;
                     final displayTitle = _displayTitle(data);
-                    final type     = data['type']     ?? 'unknown';
-                    final order    = data['order']    ?? 0;
+                    final type = data['type'] ?? 'unknown';
+                    final order = data['order'] ?? 0;
 
-                    return Container(
+                    final card = Container(
                       margin: const EdgeInsets.only(bottom: AppSpacing.md - 2),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(AppRadii.md),
                         boxShadow: [
                           BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3))
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
                         ],
                       ),
                       child: ListTile(
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md,
-                            vertical: AppSpacing.sm - 2),
-                        leading: Container(
-                          width: 44, height: 44,
-                          decoration: BoxDecoration(
-                            color: c.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(AppRadii.md),
-                          ),
-                          child: Center(
-                              child: Icon(_typeIcon(type), color: c, size: 22)),
+                          horizontal: AppSpacing.md,
+                          vertical: AppSpacing.sm - 2,
+                        ),
+                        leading: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Web/mouse: no long-press gesture exists, so
+                            // give it an explicit handle rendered as part
+                            // of this tile itself. Mobile/touch: nothing
+                            // here -- unchanged long-press-anywhere, via
+                            // the delayed-drag listener wrapping the
+                            // whole tile below.
+                            if (kIsWeb) ...[
+                              ReorderableDragStartListener(
+                                index: i,
+                                child: Icon(
+                                  Icons.drag_indicator_rounded,
+                                  color: Colors.grey[400],
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.xs),
+                            ],
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: c.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.md,
+                                ),
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  _typeIcon(type),
+                                  color: c,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         title: Text(
                           '$order. $displayTitle',
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -420,30 +590,52 @@ class _TeacherTaskEditorScreenState
                             alignment: Alignment.centerLeft,
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: AppSpacing.sm, vertical: 2),
+                                horizontal: AppSpacing.sm,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: c.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(AppRadii.sm),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.sm,
+                                ),
                               ),
-                              child: Text(_typeLabel(type),
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: c)),
+                              child: Text(
+                                _typeLabel(type),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: c,
+                                ),
+                              ),
                             ),
                           ),
                         ),
                         trailing: HierarchyPopupActions(
                           onEdit: () => _editTask(doc.id, {
-                            'title':    data['title'],
+                            'title': data['title'],
                             'question': data['question'],
-                            'order':    order,
-                            'type':     type,
-                            'data':     data['data'],
+                            'order': order,
+                            'type': type,
+                            'data': data['data'],
                           }),
                           onDelete: () => _deleteTask(doc.id, displayTitle),
                         ),
                       ),
+                    );
+
+                    // Web: the tile's own drag handle (above, in
+                    // `leading`) already registers the drag start, so
+                    // just key it. Mobile: wrap the whole tile so
+                    // long-press-anywhere works, same delayed-drag
+                    // listener buildDefaultDragHandles uses internally
+                    // for touch platforms.
+                    if (kIsWeb) {
+                      return KeyedSubtree(key: ValueKey(doc.id), child: card);
+                    }
+                    return ReorderableDelayedDragStartListener(
+                      key: ValueKey(doc.id),
+                      index: i,
+                      child: card,
                     );
                   },
                 );
@@ -460,8 +652,11 @@ class _TeacherTaskEditorScreenState
       // without restructuring the body's StreamBuilder above.
       floatingActionButton: StreamBuilder(
         stream: db.getPersonalizedTasksStream(
-          widget.groupId, widget.contentId, widget.unitId,
-          widget.lessonId, widget.activityId,
+          widget.groupId,
+          widget.contentId,
+          widget.unitId,
+          widget.lessonId,
+          widget.activityId,
         ),
         builder: (context, snapshot) {
           final docs = snapshot.data?.docs ?? [];
@@ -485,23 +680,29 @@ class _TeacherTaskEditorScreenState
               if (isFull)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(AppRadii.md),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3)),
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
                     ],
                   ),
                   child: Text(
-                    'Limit reached: $kMaxTasksPerActivity tasks max per activity',
+                    'teacher.teacher_task_editor_screen.limitReached'.tr(
+                      namedArgs: {'max': '$kMaxTasksPerActivity'},
+                    ),
                     style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[700]),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[700],
+                    ),
                   ),
                 )
               // NEW: activity is closed by an existing Reading task -- show
@@ -510,25 +711,30 @@ class _TeacherTaskEditorScreenState
               else if (hasExistingReading)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(AppRadii.md),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3)),
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
                     ],
                   ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 25.0),
                     child: Text(
-                      'This activity contains a Reading Comprehension task and can\'t hold any other tasks',
+                      'teacher.teacher_task_editor_screen.readingBlocksOtherTasks'
+                          .tr(),
                       style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey[700]),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700],
+                      ),
                     ),
                   ),
                 )
@@ -538,9 +744,17 @@ class _TeacherTaskEditorScreenState
                   onPressed: () => _openGenerator(remaining),
                   backgroundColor: AppColors.warning,
                   elevation: 3,
-                  icon: const Icon(Icons.auto_awesome, color: AppColors.onPrimary),
-                  label: const Text('Generate',
-                      style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
+                  icon: const Icon(
+                    Icons.auto_awesome,
+                    color: AppColors.onPrimary,
+                  ),
+                  label: Text(
+                    'teacher.teacher_task_editor_screen.generate'.tr(),
+                    style: const TextStyle(
+                      color: AppColors.onPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
                 FloatingActionButton.extended(
                   heroTag: null,
@@ -548,8 +762,13 @@ class _TeacherTaskEditorScreenState
                   backgroundColor: c,
                   elevation: 3,
                   icon: const Icon(Icons.add, color: AppColors.onPrimary),
-                  label: const Text('Add Task',
-                      style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
+                  label: Text(
+                    'teacher.teacher_task_editor_screen.addTask'.tr(),
+                    style: const TextStyle(
+                      color: AppColors.onPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
             ],

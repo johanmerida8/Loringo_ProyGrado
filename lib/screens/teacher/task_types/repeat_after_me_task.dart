@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -54,7 +57,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
   String get typeId => 'repeat_after_me';
 
   @override
-  String get displayName => 'Repeat After Me';
+  String get displayName => 'teacher.repeat_after_me_task.displayName'.tr();
 
   @override
   Widget buildEditor(BuildContext context) {
@@ -63,6 +66,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -88,7 +92,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
   @override
   String? validate() {
     if (phraseController.text.trim().isEmpty) {
-      return 'Please enter a phrase for students to repeat';
+      return 'teacher.repeat_after_me_task.phraseRequiredError'.tr();
     }
     return null;
   }
@@ -133,7 +137,7 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              'Students listen to the phrase and repeat it out loud. They must repeat it correctly to continue.',
+              'teacher.repeat_after_me_task.infoBanner'.tr(),
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -146,26 +150,26 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'English Phrase',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+        Text(
+          'teacher.repeat_after_me_task.phraseLabel'.tr(),
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: AppSpacing.xs),
         TextFormField(
           controller: phraseController,
           decoration: InputDecoration(
-            hintText: 'Enter the phrase students should repeat',
+            hintText: 'teacher.repeat_after_me_task.phraseHint'.tr(),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
             filled: true,
             fillColor: Colors.white,
           ),
           maxLines: 3,
           onChanged: (_) => widget.onChanged(),
-          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+          validator: (v) => v?.trim().isEmpty ?? true ? 'teacher.repeat_after_me_task.requiredError'.tr() : null,
         ),
         const SizedBox(height: 8),
         Text(
-          'This phrase will be spoken aloud by the voice assistant. Students must repeat it correctly.',
+          'teacher.repeat_after_me_task.phraseHelperText'.tr(),
           style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
         ),
       ],
@@ -186,15 +190,15 @@ class _RepeatAfterMeTaskState extends State<RepeatAfterMeTask> with TaskTypeEdit
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Show phrase to students',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                Text(
+                  'teacher.repeat_after_me_task.showPhraseLabel'.tr(),
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   showPhrase
-                      ? 'Students see the written phrase while listening.'
-                      : 'Students only hear the phrase. They can reveal the text if needed.',
+                      ? 'teacher.repeat_after_me_task.showPhraseOnDescription'.tr()
+                      : 'teacher.repeat_after_me_task.showPhraseOffDescription'.tr(),
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 ),
               ],

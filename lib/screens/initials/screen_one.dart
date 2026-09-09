@@ -1,10 +1,13 @@
 // screen_one.dart
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 // import 'package:just_audio/just_audio.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -158,6 +161,7 @@ class _ScreenOneState extends State<ScreenOne> with RetryableTask {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     const backgroundGradient = LinearGradient(
       colors: [Color(0xFFE8F5E9), Colors.white],
       begin: Alignment.topCenter,
@@ -239,9 +243,9 @@ class _ScreenOneState extends State<ScreenOne> with RetryableTask {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        const Text(
-                          'Select the correct image',
-                          style: TextStyle(fontSize: 20, color: Colors.black54),
+                        Text(
+                          'initials.screen_one.selectCorrectImage'.tr(),
+                          style: const TextStyle(fontSize: 20, color: Colors.black54),
                         ),
                         const SizedBox(height: 16),
                         Expanded(
@@ -329,9 +333,9 @@ class _ScreenOneState extends State<ScreenOne> with RetryableTask {
                                 ),
                                 elevation: 5,
                               ),
-                              child: const Text(
-                                'Check',
-                                style: TextStyle(
+                              child: Text(
+                                'common.check'.tr(),
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,

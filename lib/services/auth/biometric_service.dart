@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -165,8 +166,8 @@ class BiometricService {
 
   /// Get biometric type name for display
   static String getBiometricTypeName(List<BiometricType> types) {
-    if (types.isEmpty) return 'Biometrics';
-    
+    if (types.isEmpty) return 'common.biometricGeneric'.tr();
+
     if (types.contains(BiometricType.face)) {
       return 'Face ID';
     } else if (types.contains(BiometricType.fingerprint)) {
@@ -174,7 +175,7 @@ class BiometricService {
     } else if (types.contains(BiometricType.iris)) {
       return 'Iris';
     } else {
-      return 'Biometrics';
+      return 'common.biometricGeneric'.tr();
     }
   }
   

@@ -1,8 +1,13 @@
 // create_activity_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_task_editor_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/continue_bookmark_button.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 // import 'package:loringo_app/screens/teacher/widgets/create_form_widgets.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -46,9 +51,7 @@ class _CreatePersonalizedActivityScreenState
 
   bool isLoading = false;
   bool _activitiesLoaded = false;
-  String? requiredActivityId;
   String difficulty = 'easy';
-  List<Map<String, dynamic>> existingActivities = [];
 
   // FEATURE: scheduled availability / due date / close date, extracted
   // into TurnInSettingsWidget (see turn_in_widget.dart) since it grew
@@ -81,10 +84,15 @@ class _CreatePersonalizedActivityScreenState
   @override
   void initState() {
     super.initState();
-    titleController = TextEditingController(text: widget.existingData?['title'] ?? '');
-    orderController = TextEditingController(text: widget.existingData?['order']?.toString() ?? '');
-    xpBaseController = TextEditingController(text: widget.existingData?['xpBase']?.toString() ?? '10');
-    requiredActivityId = widget.existingData?['requiredActivityId'];
+    titleController = TextEditingController(
+      text: widget.existingData?['title'] ?? '',
+    );
+    orderController = TextEditingController(
+      text: widget.existingData?['order']?.toString() ?? '',
+    );
+    xpBaseController = TextEditingController(
+      text: widget.existingData?['xpBase']?.toString() ?? '10',
+    );
 
     _turnIn = TurnInSettings.fromFirestore(widget.existingData);
 
@@ -99,6 +107,12 @@ class _CreatePersonalizedActivityScreenState
     _loadExistingActivities();
   }
 
+  // Order/prerequisite are no longer teacher-editable here -- a new
+  // activity is always appended to the end of the lesson (order = current
+  // count + 1), and its prerequisite is derived automatically from that
+  // position (see Database._relinkActivityChain). This fetch only exists
+  // to know how many activities already exist, for that append-at-end
+  // order number.
   Future<void> _loadExistingActivities() async {
     try {
       final snapshot = await FirebaseFirestore.instance
@@ -109,27 +123,14 @@ class _CreatePersonalizedActivityScreenState
           .collection('lessons')
           .doc(widget.lessonId)
           .collection('activities')
-          .orderBy('order')
           .get();
-
-      setState(() {
-        existingActivities = snapshot.docs
-            .where((doc) => doc.id != widget.activityId)
-            .map((doc) => {
-                  'id': doc.id,
-                  'title': doc.data()['title'] ?? 'Untitled',
-                  'order': doc.data()['order'] ?? 0,
-                  'requiredActivityId': doc.data()['requiredActivityId'],
-                })
-            .toList();
-        _activitiesLoaded = true;
-      });
 
       if (!_isEditing) {
         orderController.text = (snapshot.docs.length + 1).toString();
       }
     } catch (e) {
       debugPrint('Error loading activities: $e');
+    } finally {
       if (mounted) setState(() => _activitiesLoaded = true);
     }
   }
@@ -163,43 +164,18 @@ class _CreatePersonalizedActivityScreenState
   String _getDifficultyLabel(String diff) {
     switch (diff) {
       case 'easy':
-        return '🟢 Easy (0–15 XP)';
+        return '🟢 ${'teacher.create_activity_screen.easyXp'.tr()}';
       case 'medium':
-        return '🟡 Medium (16–30 XP)';
+        return '🟡 ${'teacher.create_activity_screen.mediumXp'.tr()}';
       case 'hard':
-        return '🔴 Hard (31–50 XP)';
+        return '🔴 ${'teacher.create_activity_screen.hardXp'.tr()}';
       default:
-        return 'Unknown';
+        return 'common.unknown'.tr();
     }
-  }
-
-  String? _validateChainIntegrity() {
-    if (requiredActivityId == null) {
-      final otherEntryPoint = existingActivities.cast<Map<String, dynamic>?>().firstWhere(
-            (a) => a!['requiredActivityId'] == null,
-            orElse: () => null,
-          );
-      if (otherEntryPoint != null) {
-        return '"${otherEntryPoint['title']}" is already set to Always '
-            'Unlocked. Only one activity per lesson can be the starting '
-            'point — pick it as this activity\'s prerequisite instead, or '
-            'change "${otherEntryPoint['title']}" first.';
-      }
-    }
-
-    return null;
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-
-    final chainError = _validateChainIntegrity();
-    if (chainError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(chainError), backgroundColor: AppColors.danger),
-      );
-      return;
-    }
 
     // Belt-and-suspenders re-check: covers the case where a picked date
     // has since slipped stale purely because the teacher sat on the
@@ -220,8 +196,8 @@ class _CreatePersonalizedActivityScreenState
     // Close/Until stay optional — only Due is mandatory.
     if (_turnIn.dueDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Set a due date — Turn-in Schedule is required.'),
+        SnackBar(
+          content: Text('teacher.create_activity_screen.dueDateRequired'.tr()),
           backgroundColor: AppColors.danger,
         ),
       );
@@ -241,16 +217,17 @@ class _CreatePersonalizedActivityScreenState
       final activityId = widget.activityId!;
       final origTitle = widget.existingData?['title'] as String? ?? '';
       final origXp = widget.existingData?['xpBase']?.toString() ?? '10';
-      final origRequired = widget.existingData?['requiredActivityId'] as String?;
       final origTurnIn = TurnInSettings.fromFirestore(widget.existingData);
       final noChanges =
           titleController.text.trim() == origTitle &&
           xpBaseController.text.trim() == origXp &&
-          requiredActivityId == origRequired &&
           _turnIn == origTurnIn;
       if (noChanges) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No changes made'), backgroundColor: AppColors.muted),
+          SnackBar(
+            content: Text('common.noChangesMade'.tr()),
+            backgroundColor: AppColors.muted,
+          ),
         );
         return;
       }
@@ -262,7 +239,6 @@ class _CreatePersonalizedActivityScreenState
         activityId: activityId,
         title: titleController.text.trim(),
         order: int.parse(orderController.text.trim()),
-        requiredActivityId: requiredActivityId,
         xpBase: int.parse(xpBaseController.text.trim()),
         difficulty: difficulty,
         scheduledDate: _turnIn.scheduledDate,
@@ -271,14 +247,20 @@ class _CreatePersonalizedActivityScreenState
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Activity updated successfully!'), backgroundColor: AppColors.success),
+          SnackBar(
+            content: Text('teacher.create_activity_screen.activityUpdated'.tr()),
+            backgroundColor: AppColors.success,
+          ),
         );
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
+          SnackBar(
+            content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
+            backgroundColor: AppColors.danger,
+          ),
         );
       }
     } finally {
@@ -344,7 +326,6 @@ class _CreatePersonalizedActivityScreenState
         activityId: _draftActivityId!,
         title: titleController.text.trim(),
         order: int.parse(orderController.text.trim()),
-        requiredActivityId: requiredActivityId,
         xpBase: int.parse(xpBaseController.text.trim()),
         difficulty: difficulty,
         scheduledDate: _turnIn.scheduledDate,
@@ -352,7 +333,8 @@ class _CreatePersonalizedActivityScreenState
         closeDate: _turnIn.closeDate,
       );
       for (final r in _stagedTasks!) {
-        final taskId = 'task_${DateTime.now().millisecondsSinceEpoch}_${r.order}';
+        final taskId =
+            'task_${DateTime.now().millisecondsSinceEpoch}_${r.order}';
         await db.createPersonalizedTask(
           groupId: widget.groupId,
           contentId: widget.contentId,
@@ -371,7 +353,9 @@ class _CreatePersonalizedActivityScreenState
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Activity and ${_stagedTasks!.length} task${_stagedTasks!.length == 1 ? '' : 's'} created successfully!'),
+              'teacher.create_activity_screen.activityAndTasksCreated'
+                  .plural(_stagedTasks!.length),
+            ),
             backgroundColor: AppColors.success,
           ),
         );
@@ -380,7 +364,10 @@ class _CreatePersonalizedActivityScreenState
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.danger),
+          SnackBar(
+            content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
+            backgroundColor: AppColors.danger,
+          ),
         );
       }
     } finally {
@@ -390,24 +377,43 @@ class _CreatePersonalizedActivityScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final diffColor = _getDifficultyColor(difficulty);
-    final safeValue = requiredActivityId != null &&
-            existingActivities.any((a) => a['id'] == requiredActivityId)
-        ? requiredActivityId
-        : null;
 
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
         children: [
           TeacherScreenHeader(
-            title: _isEditing ? 'Edit Activity' : 'Create Activity',
+            title: _isEditing
+                ? 'teacher.create_activity_screen.editActivity'.tr()
+                : 'teacher.create_activity_screen.createActivity'.tr(),
             color: _c,
+            trailing: ContinueBookmarkButton(
+              level: 'activity',
+              contentId: widget.contentId,
+              unitId: widget.unitId,
+              lessonId: widget.lessonId,
+              getFormData: () => {
+                'title': titleController.text.trim(),
+                'xpBase': int.tryParse(xpBaseController.text.trim()),
+                if (_turnIn.scheduledDate != null)
+                  'scheduledDate': Timestamp.fromDate(_turnIn.scheduledDate!),
+                if (_turnIn.dueDate != null)
+                  'dueDate': Timestamp.fromDate(_turnIn.dueDate!),
+                if (_turnIn.closeDate != null)
+                  'closeDate': Timestamp.fromDate(_turnIn.closeDate!),
+              },
+            ),
           ),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+                AppSpacing.lg,
+                0,
+                AppSpacing.lg,
+                AppSpacing.lg,
+              ),
               child: Form(
                 key: _formKey,
                 child: Column(
@@ -416,36 +422,55 @@ class _CreatePersonalizedActivityScreenState
                     CreateFormBanner(
                       color: _c,
                       icon: Icons.movie_creation_outlined,
-                      label: _isEditing ? 'Editing Activity' : 'New Activity',
-                      description: 'Groups multiple tasks together',
+                      label: _isEditing
+                          ? 'teacher.create_activity_screen.editingActivity'.tr()
+                          : 'teacher.create_activity_screen.newActivity'.tr(),
+                      description:
+                          'teacher.create_activity_screen.groupsTasksTogether'.tr(),
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Activity Title'),
+                    CreateFormLabel('teacher.create_activity_screen.activityTitle'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     CreateFormField(
                       controller: titleController,
                       color: _c,
                       icon: Icons.title,
-                      hint: 'e.g. Listening Exercise',
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter a title' : null,
+                      hint: 'teacher.create_activity_screen.titleHint'.tr(),
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'teacher.create_activity_screen.enterTitle'.tr()
+                          : null,
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
-                    const CreateFormLabel('Base XP Reward'),
+                    CreateFormLabel('teacher.create_activity_screen.baseXpReward'.tr()),
                     const SizedBox(height: AppSpacing.sm),
                     CreateFormField(
                       controller: xpBaseController,
                       color: _c,
                       icon: Icons.stars,
-                      hint: 'e.g. 25',
-                      helperText: 'Points earned upon completion (0–50)',
+                      hint: 'teacher.create_activity_screen.xpHint'.tr(),
+                      helperText:
+                          'teacher.create_activity_screen.xpHelperText'.tr(),
                       keyboardType: TextInputType.number,
+                      // Max valid value is 50 -- two digits -- so typing a
+                      // third digit is blocked outright instead of only
+                      // being caught by the validator after Continue/Save
+                      // is tapped (previously the field happily accepted
+                      // "10000" and only rejected it on submit).
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(2),
+                      ],
+                      autovalidateMode: AutovalidateMode.onUserInteraction,
                       validator: (v) {
-                        if (v == null || v.trim().isEmpty) return 'Please enter base XP';
+                        if (v == null || v.trim().isEmpty)
+                          return 'teacher.create_activity_screen.enterBaseXp'.tr();
                         final xp = int.tryParse(v.trim());
-                        if (xp == null) return 'Please enter a valid number';
-                        if (xp < 0 || xp > 50) return 'XP must be between 0 and 50';
+                        if (xp == null)
+                          return 'teacher.create_activity_screen.enterValidNumber'.tr();
+                        if (xp < 0 || xp > 50)
+                          return 'teacher.create_activity_screen.xpRange'.tr();
                         return null;
                       },
                     ),
@@ -458,49 +483,38 @@ class _CreatePersonalizedActivityScreenState
                         borderRadius: AppRadii.mdAll,
                         border: Border.all(color: diffColor.withOpacity(0.3)),
                       ),
-                      child: Row(children: [
-                        Icon(
-                          difficulty == 'easy'
-                              ? Icons.trending_down
-                              : difficulty == 'medium'
-                                  ? Icons.trending_flat
-                                  : Icons.trending_up,
-                          color: diffColor,
-                          size: 20,
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Difficulty Level', style: AppText.caption),
-                            const SizedBox(height: 2),
-                            Text(_getDifficultyLabel(difficulty),
-                                style: TextStyle(fontSize: 14, color: diffColor, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ]),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-
-                    const CreateFormLabel('Prerequisites'),
-                    const SizedBox(height: AppSpacing.sm),
-                    DropdownButtonFormField<String>(
-                      value: safeValue,
-                      isExpanded: true,
-                      decoration: AppInput.decoration(
-                        accent: _c,
-                        hint: 'Select activity to unlock this one',
-                        icon: Icons.lock_outline,
-                        helper: 'Leave empty if this is the first activity',
+                      child: Row(
+                        children: [
+                          Icon(
+                            difficulty == 'easy'
+                                ? Icons.trending_down
+                                : difficulty == 'medium'
+                                ? Icons.trending_flat
+                                : Icons.trending_up,
+                            color: diffColor,
+                            size: 20,
+                          ),
+                          const SizedBox(width: AppSpacing.md),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'teacher.create_activity_screen.difficultyLevel'.tr(),
+                                style: AppText.caption,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _getDifficultyLabel(difficulty),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: diffColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      items: [
-                        const DropdownMenuItem<String>(value: null, child: Text('None (Always Unlocked)')),
-                        ...existingActivities.map((activity) => DropdownMenuItem<String>(
-                              value: activity['id'],
-                              child: Text('${activity['order']}. ${activity['title']}', overflow: TextOverflow.ellipsis),
-                            )),
-                      ],
-                      onChanged: (value) => setState(() => requiredActivityId = value),
                     ),
                     const SizedBox(height: AppSpacing.lg),
 
@@ -515,20 +529,34 @@ class _CreatePersonalizedActivityScreenState
                     if (_stagedTasks != null) ...[
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md,
+                          vertical: AppSpacing.sm,
+                        ),
                         decoration: BoxDecoration(
                           color: AppColors.success.withOpacity(0.1),
                           borderRadius: AppRadii.mdAll,
-                          border: Border.all(color: AppColors.success.withOpacity(0.4)),
+                          border: Border.all(
+                            color: AppColors.success.withOpacity(0.4),
+                          ),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.check_circle_outline, color: AppColors.success, size: 16),
+                            const Icon(
+                              Icons.check_circle_outline,
+                              color: AppColors.success,
+                              size: 16,
+                            ),
                             const SizedBox(width: AppSpacing.sm),
                             Expanded(
                               child: Text(
-                                '${_stagedTasks!.length} task${_stagedTasks!.length == 1 ? '' : 's'} ready. Tap Create Activity to save everything.',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success),
+                                'teacher.create_activity_screen.tasksReady'
+                                    .plural(_stagedTasks!.length),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.success,
+                                ),
                               ),
                             ),
                           ],
@@ -547,8 +575,10 @@ class _CreatePersonalizedActivityScreenState
                       // actually creates the activity and its tasks
                       // together, so the label switches to say that.
                       label: _isEditing
-                          ? 'UPDATE ACTIVITY'
-                          : (_stagedTasks != null ? 'CREATE ACTIVITY' : 'CONTINUE'),
+                          ? 'teacher.create_activity_screen.updateActivityCap'.tr()
+                          : (_stagedTasks != null
+                                ? 'teacher.create_activity_screen.createActivityCap'.tr()
+                                : 'teacher.create_activity_screen.continueCap'.tr()),
                       isLoading: isLoading || !_activitiesLoaded,
                       onPressed: _submit,
                     ),

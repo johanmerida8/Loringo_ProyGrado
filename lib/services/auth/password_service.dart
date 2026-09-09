@@ -2,10 +2,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 
 class PasswordService {
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static FirebaseAuth get _auth => authInstance;
+  static FirebaseFirestore get _firestore => firestoreInstance;
 
   // configuration
   static const int RESET_COOLDOWN_MINUTES = 15;

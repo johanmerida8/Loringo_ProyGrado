@@ -52,8 +52,11 @@
 // v1 wrapped the content in a DraggableScrollableSheet with a fixed
 // initialChildSize. v2 sizes the sheet to its actual content instead.
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class TaskResultSheet extends StatelessWidget {
   /// Whether the answer was correct. Drives the animation, color, and
@@ -144,6 +147,7 @@ class TaskResultSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final showPracticeNote = isPracticeRound && !isCorrect;
 
     // PopScope here, not just on the calling screen: this sheet is its
@@ -230,7 +234,7 @@ class TaskResultSheet extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          "This is a practice round — it won't count against your score. Take another look and try again!",
+                          'initials.task_result_sheet.practiceRoundNote'.tr(),
                           style: TextStyle(
                             fontSize: 13,
                             color: Colors.orange.shade800,
@@ -270,7 +274,7 @@ class TaskResultSheet extends StatelessWidget {
                   child: Text(
                     // Both correct and wrong now read "Continue" by
                     // default — see v3 note at the top of this file.
-                    buttonLabel ?? 'Continue',
+                    buttonLabel ?? 'common.continue'.tr(),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 18,
@@ -342,6 +346,7 @@ class TaskResultSpokenTextBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (!showLabel) {
       return Text(
         '"$spokenText"',
@@ -363,10 +368,10 @@ class TaskResultSpokenTextBox extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Text(
-            'You said:',
+          Text(
+            'initials.task_result_sheet.youSaid'.tr(),
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
           ),
           const SizedBox(height: 4),
           Text(

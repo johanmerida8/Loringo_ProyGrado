@@ -1,12 +1,15 @@
 // teacher_home_screen.dart
-import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 // import 'package:loringo_app/components/app_drawer.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
 import 'package:loringo_app/components/notifications_badge.dart';
 import 'package:loringo_app/components/responsive_scaffold.dart';
-import 'package:loringo_app/screens/parent/parent_notifications_screen.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/shared/notifications_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_content_editor_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
 import 'package:loringo_app/screens/teacher/archived_groups_screen.dart';
@@ -14,6 +17,7 @@ import 'package:loringo_app/screens/teacher/teacher_league_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/group_card.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/widget/secured_screen.dart';
 
@@ -29,11 +33,27 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
   String _userName = '';
   bool _wasInBackground = false;
 
+  // Created once here rather than inline in build()'s StreamBuilder: a
+  // fresh Stream<QuerySnapshot> from .snapshots() is a new object every
+  // call, and StreamBuilder resubscribes (briefly dropping back to
+  // ConnectionState.waiting, replacing the whole groups list with
+  // AppLoadingIndicator) whenever the stream instance it's given changes.
+  // Any rebuild of this screen — e.g. opening a group card's "⋮" popup
+  // menu — was enough to trigger that reset, which visually looked like
+  // tapping the card or the menu just showed a spinner instead of doing
+  // anything.
+  late final Stream<QuerySnapshot> _groupsStream;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadUserName();
+    final teacherId = FirebaseAuth.instance.currentUser?.uid;
+    _groupsStream = FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .where('teacherId', isEqualTo: teacherId)
+        .snapshots();
   }
 
   @override
@@ -53,15 +73,44 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
   }
 
   Future<void> _checkBiometricOnResume() async {
+    // Skip entirely when this screen isn't the topmost route — e.g. the
+    // teacher pushed TeacherProfileScreen on top and is toggling
+    // notifications via system Settings. This screen's observer stays
+    // armed the whole time it's buried in the stack, so without this
+    // guard a resume triggered by ANY screen above it (not just an
+    // actual app lock/backgrounding of the home screen itself) fires a
+    // biometric prompt unrelated to what the user is doing — and a
+    // failed/raced attempt force-signs-out and wipes the entire
+    // navigation stack out from under them.
+    if (!mounted) return;
+    final initialRoute = ModalRoute.of(context);
+    if (initialRoute != null && !initialRoute.isCurrent) return;
+
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     final enabled = await BiometricService.isBiometricEnabled(uid);
     if (!enabled) return;
+
+    // Invoking the native biometric prompt the instant onResume fires —
+    // e.g. right as the Settings app is still closing — is a known-fragile
+    // pattern on Android that can make the prompt fail to attach or return
+    // a spurious cancel. A short delay lets the resume transition settle.
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
+
     final authenticated = await BiometricService.authenticate(
-      reason: 'Verify your identity to continue',
+      reason: 'teacher.teacher_home_screen.biometricResumeReason'.tr(),
     );
-    if (!authenticated && mounted) {
+
+    // Re-check we're still the topmost route (and mounted) before acting —
+    // another screen may have been pushed while the prompt was pending.
+    if (!mounted) return;
+    final currentRoute = ModalRoute.of(context);
+    if (currentRoute != null && !currentRoute.isCurrent) return;
+
+    if (!authenticated) {
       await FirebaseAuth.instance.signOut();
+      if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const AuthGate()),
         (route) => false,
@@ -94,7 +143,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
         await FirebaseFirestore.instance.collection('teacherGroups').add({
           'name':         newGroupData['name'],
           'color':        newGroupData['color'],
-          'groupCode':    newGroupData['groupCode'],
+          'groupCodeHash':      newGroupData['groupCodeHash'],
+          'groupCodeEncrypted': newGroupData['groupCodeEncrypted'],
           'academicYear': newGroupData['academicYear'],
           'classroom':    newGroupData['classroom'],
           'teacherId':    teacherId,
@@ -103,7 +153,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Group created! Code: ${newGroupData['groupCode']}'),
+            content: Text('teacher.teacher_home_screen.groupCreatedMsg'
+                .tr(namedArgs: {'code': '${newGroupData['groupCode']}'})),
             backgroundColor: AppColors.primary,
             duration: const Duration(seconds: 3),
           ));
@@ -111,7 +162,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Error creating group: $e'),
+            content: Text('teacher.teacher_home_screen.errorCreatingGroup'
+                .tr(namedArgs: {'error': '$e'})),
             backgroundColor: AppColors.danger,
           ));
         }
@@ -121,17 +173,18 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final teacherId = FirebaseAuth.instance.currentUser?.uid;
 
     return SecuredScreen(
       child: ResponsiveScaffold(
         headerIcon: Icons.school,
-        drawerTitle: 'Teacher Panel',
+        drawerTitle: 'teacher.teacher_home_screen.drawerTitle'.tr(),
         drawerSubtitle: _userName.isNotEmpty ? _userName : null,
         navItemsBuilder: (context, isWide) => [
           ListTile(
             leading: const Icon(Icons.group, color: AppColors.primary),
-            title: const Text('My Groups'),
+            title: Text('teacher.teacher_home_screen.myGroups'.tr()),
             selected: true,
             selectedTileColor: AppColors.primarySoft(0.08),
             onTap: () {
@@ -140,7 +193,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           ),
           ListTile(
             leading: const Icon(Icons.archive_rounded, color: AppColors.primary),
-            title: const Text('Archived Groups'),
+            title: Text('teacher.teacher_home_screen.archivedGroups'.tr()),
             onTap: () {
               if (!isWide) Navigator.pop(context);
               Navigator.push(context,
@@ -150,7 +203,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           const Divider(),
           ListTile(
             leading: const Icon(Icons.folder_rounded, color: AppColors.primary),
-            title: const Text('Content'),
+            title: Text('teacher.teacher_home_screen.content'.tr()),
             onTap: () {
               if (!isWide) Navigator.pop(context);
               Navigator.push(context,
@@ -159,7 +212,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           ),
           ListTile(
             leading: const Icon(Icons.photo_library_rounded, color: AppColors.primary),
-            title: const Text('Media Library'),
+            title: Text('teacher.teacher_home_screen.mediaLibrary'.tr()),
             onTap: () {
               if (!isWide) Navigator.pop(context);
               Navigator.push(context,
@@ -168,7 +221,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           ),
           ListTile(
             leading: const Icon(Icons.emoji_events_rounded, color: AppColors.primary),
-            title: const Text('League & Ranking'),
+            title: Text('teacher.teacher_home_screen.leagueRanking'.tr()),
             onTap: () {
               if (!isWide) Navigator.pop(context);
               Navigator.push(context,
@@ -181,9 +234,9 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
           backgroundColor: AppColors.primary,
           elevation: 3,
           icon: const Icon(Icons.add, color: AppColors.onPrimary),
-          label: const Text(
-            'Create Group',
-            style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
+          label: Text(
+            'teacher.teacher_home_screen.createGroup'.tr(),
+            style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
           ),
         ),
         bodyBuilder: (context, isWide) => Builder(
@@ -209,7 +262,10 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                           ),
                         ),
                       if (!isWide) const SizedBox(width: AppSpacing.md),
-                      const Expanded(child: Text('My Groups', style: AppText.h1)),
+                      Expanded(
+                          child: Text(
+                              'teacher.teacher_home_screen.myGroups'.tr(),
+                              style: AppText.h1)),
                       // NotificationBadge is role-agnostic (streams
                       // `notifications` by userId, not by role), so the
                       // same component the parent dashboard uses works
@@ -221,7 +277,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (_) => const ParentNotificationsScreen()),
+                              builder: (_) => const NotificationsScreen()),
                         ),
                       ),
                     ],
@@ -229,14 +285,11 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
                 ),
               ),
               StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('teacherGroups')
-                    .where('teacherId', isEqualTo: teacherId)
-                    .snapshots(),
+                stream: _groupsStream,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const SliverFillRemaining(
-                      child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+                      child: AppLoadingIndicator(),
                     );
                   }
                   if (snapshot.hasError) {
@@ -305,9 +358,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
     final data = doc.data() as Map<String, dynamic>;
     return GroupCard(
       groupId: doc.id,
-      name: data['name'] ?? 'Untitled',
+      name: data['name'] ?? 'common.untitled'.tr(),
       colorHex: data['color'] ?? '#4CAF50',
-      groupCode: data['groupCode'] ?? '',
       academicYear: (data['academicYear'] as int?) ?? DateTime.now().year,
       classroom: (data['classroom'] as String?) ?? legacyPeriodLabel(data['period']),
     );
@@ -321,17 +373,18 @@ class _EmptyGroupsState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.school_rounded, size: 80, color: AppColors.divider),
           const SizedBox(height: AppSpacing.md),
-          Text('No groups yet',
+          Text('teacher.teacher_home_screen.emptyGroupsTitle'.tr(),
               style: AppText.subtitle.copyWith(
                   fontSize: 18, fontWeight: FontWeight.w500)),
           const SizedBox(height: AppSpacing.sm),
-          Text('Tap + to create your first group',
+          Text('teacher.teacher_home_screen.emptyGroupsHint'.tr(),
               style: AppText.caption.copyWith(fontSize: 14)),
         ],
       ),
@@ -345,6 +398,7 @@ class _ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -352,7 +406,8 @@ class _ErrorState extends StatelessWidget {
           const Icon(Icons.error_outline_rounded,
               size: 60, color: AppColors.danger),
           const SizedBox(height: AppSpacing.md),
-          const Text('Something went wrong', style: AppText.body),
+          Text('teacher.teacher_home_screen.somethingWentWrong'.tr(),
+              style: AppText.body),
           const SizedBox(height: AppSpacing.md),
           ElevatedButton.icon(
             onPressed: onRetry,
@@ -363,7 +418,7 @@ class _ErrorState extends StatelessWidget {
                   borderRadius: BorderRadius.circular(AppRadii.md)),
             ),
             icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Retry'),
+            label: Text('common.retry'.tr()),
           ),
         ],
       ),
@@ -404,12 +459,6 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
     Color(0xFFFF5722),
   ];
 
-  String _generateGroupCode() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final random = Random();
-    return List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
-  }
-
   /// Checks whether this teacher already has a group with the same name
   /// (case-insensitive, trimmed), regardless of academic year — the
   /// scope is global per teacher, not per-year, since the same title
@@ -446,7 +495,8 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
     if (duplicate) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('You already have a group named "${nameController.text.trim()}". Choose a different name.'),
+          content: Text('teacher.teacher_home_screen.duplicateGroupNameMsg'
+              .tr(namedArgs: {'name': nameController.text.trim()})),
           backgroundColor: AppColors.danger,
         ));
       }
@@ -455,11 +505,35 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
 
     final colorHex =
         '#${selectedColor.value.toRadixString(16).substring(2).toUpperCase()}';
+
+    // Generated + hashed/encrypted server-side (functions/src/groupCode.ts)
+    // — the plaintext is only ever held here momentarily for the one-time
+    // "group created" display; the doc itself stores groupCodeHash/
+    // groupCodeEncrypted, never groupCode.
+    setState(() => _isChecking = true);
+    final Map<String, String> codeFields;
+    try {
+      codeFields = await Database().generateGroupCode();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isChecking = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('teacher.teacher_home_screen.errorCreatingGroup'
+              .tr(namedArgs: {'error': '$e'})),
+          backgroundColor: AppColors.danger,
+        ));
+      }
+      return;
+    }
+    if (mounted) setState(() => _isChecking = false);
+
     if (mounted) {
       Navigator.pop(context, {
         'name':         nameController.text.trim(),
         'color':        colorHex,
-        'groupCode':    _generateGroupCode(),
+        'groupCode':    codeFields['groupCode'],
+        'groupCodeHash':      codeFields['groupCodeHash'],
+        'groupCodeEncrypted': codeFields['groupCodeEncrypted'],
         'academicYear': selectedYear,
         'classroom':    classroomController.text.trim(),
       });
@@ -475,6 +549,7 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Container(
       padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -507,7 +582,8 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Create New Group', style: AppText.h1),
+                  Text('teacher.teacher_home_screen.createNewGroupTitle'.tr(),
+                      style: AppText.h1),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close_rounded),
@@ -518,19 +594,23 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
               const SizedBox(height: AppSpacing.lg),
 
               // Name field
-              _ModalLabel('Group Name', Icons.group_outlined),
+              _ModalLabel('teacher.teacher_home_screen.groupNameLabel'.tr(),
+                  Icons.group_outlined),
               const SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: nameController,
                 textCapitalization: TextCapitalization.words,
-                decoration: _inputDecoration('e.g. Grade 1 – Morning'),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Enter a group name' : null,
+                decoration: _inputDecoration(
+                    'teacher.teacher_home_screen.groupNameHint'.tr()),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'teacher.teacher_home_screen.groupNameValidation'.tr()
+                    : null,
               ),
               const SizedBox(height: AppSpacing.lg),
 
               // Academic year
-              _ModalLabel('Academic Year', Icons.calendar_today_outlined),
+              _ModalLabel('teacher.teacher_home_screen.academicYearLabel'.tr(),
+                  Icons.calendar_today_outlined),
               const SizedBox(height: AppSpacing.sm),
               _ChipRow<int>(
                 items:         _years,
@@ -543,17 +623,20 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
 
               // Classroom (free text identifier — replaces the old fixed
               // Period 1/2 date-range selector)
-              _ModalLabel('Classroom', Icons.meeting_room_outlined),
+              _ModalLabel('teacher.teacher_home_screen.classroomLabel'.tr(),
+                  Icons.meeting_room_outlined),
               const SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: classroomController,
                 textCapitalization: TextCapitalization.words,
-                decoration: _inputDecoration('e.g. Aula 3, Room B'),
+                decoration: _inputDecoration(
+                    'teacher.teacher_home_screen.classroomHint'.tr()),
               ),
               const SizedBox(height: AppSpacing.lg),
 
               // Color
-              _ModalLabel('Group Color', Icons.palette_outlined),
+              _ModalLabel('teacher.teacher_home_screen.groupColorLabel'.tr(),
+                  Icons.palette_outlined),
               const SizedBox(height: AppSpacing.md),
               Wrap(
                 spacing: AppSpacing.md,
@@ -601,8 +684,8 @@ class _CreateGroupModalState extends State<CreateGroupModal> {
                           child: CircularProgressIndicator(
                               color: AppColors.onPrimary, strokeWidth: 2),
                         )
-                      : const Text('Create Group',
-                          style: TextStyle(
+                      : Text('teacher.teacher_home_screen.createGroup'.tr(),
+                          style: const TextStyle(
                               fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),

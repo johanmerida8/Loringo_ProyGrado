@@ -34,9 +34,12 @@
 // (15:30, never 3:30 PM) regardless of device locale, so the three
 // dates read unambiguously side by side.
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:provider/provider.dart';
 
 /// Immutable snapshot of everything this widget manages. Passed in as
 /// the starting point and handed back via [TurnInSettingsWidget.onChanged]
@@ -100,19 +103,19 @@ String? validateTurnInSettings(TurnInSettings s) {
   final now = DateTime.now();
 
   if (s.scheduledDate != null && s.scheduledDate!.isBefore(now)) {
-    return 'The scheduled activity time has passed — please choose a new one.';
+    return 'teacher.turn_in_widget.scheduledTimePassed'.tr();
   }
   if (s.scheduledDate != null && s.dueDate == null) {
-    return 'Set a due date — Schedule Activity needs a due date to schedule against.';
+    return 'teacher.turn_in_widget.needsDueDateForSchedule'.tr();
   }
   if (s.scheduledDate != null && s.dueDate != null && !s.dueDate!.isAfter(s.scheduledDate!)) {
-    return 'The due date must be after the scheduled activity date.';
+    return 'teacher.turn_in_widget.dueMustBeAfterScheduled'.tr();
   }
   if (s.closeDate != null && s.dueDate == null) {
-    return 'Set a due date first — Close/Until is measured against it.';
+    return 'teacher.turn_in_widget.needsDueDateForClose'.tr();
   }
   if (s.closeDate != null && s.dueDate != null && s.closeDate!.isBefore(s.dueDate!)) {
-    return 'The close date should be the same as, or after, the due date.';
+    return 'teacher.turn_in_widget.closeMustBeAfterDue'.tr();
   }
   return null;
 }
@@ -266,9 +269,19 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
   /// "Jul 22, 2026 at 15:30" — always 24-hour time, independent of device
   /// locale, so 15:30 never round-trips through this widget as "3:30 PM".
   String _formatDate(DateTime d) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    final months = [
+      'teacher.turn_in_widget.monthJan'.tr(),
+      'teacher.turn_in_widget.monthFeb'.tr(),
+      'teacher.turn_in_widget.monthMar'.tr(),
+      'teacher.turn_in_widget.monthApr'.tr(),
+      'teacher.turn_in_widget.monthMay'.tr(),
+      'teacher.turn_in_widget.monthJun'.tr(),
+      'teacher.turn_in_widget.monthJul'.tr(),
+      'teacher.turn_in_widget.monthAug'.tr(),
+      'teacher.turn_in_widget.monthSep'.tr(),
+      'teacher.turn_in_widget.monthOct'.tr(),
+      'teacher.turn_in_widget.monthNov'.tr(),
+      'teacher.turn_in_widget.monthDec'.tr(),
     ];
     final datePart = '${months[d.month - 1]} ${d.day}, ${d.year}';
     final hour = d.hour.toString().padLeft(2, '0');
@@ -313,7 +326,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                 icon: const Icon(Icons.close, size: 18),
                 color: Colors.grey,
                 onPressed: onClear,
-                tooltip: 'Clear date',
+                tooltip: 'teacher.turn_in_widget.clearDate'.tr(),
               ),
           ],
         ),
@@ -357,11 +370,17 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
   }
 
   String get _summaryLabel {
-    if (!_settings.hasAnyDate) return 'Set turn-in schedule';
+    if (!_settings.hasAnyDate) return 'teacher.turn_in_widget.setTurnInSchedule'.tr();
     final parts = <String>[];
-    if (_settings.scheduledDate != null) parts.add('Opens ${_formatDate(_settings.scheduledDate!)}');
-    if (_settings.dueDate != null) parts.add('Due ${_formatDate(_settings.dueDate!)}');
-    if (_settings.closeDate != null) parts.add('Closes ${_formatDate(_settings.closeDate!)}');
+    if (_settings.scheduledDate != null) {
+      parts.add('teacher.turn_in_widget.opensDate'.tr(namedArgs: {'date': _formatDate(_settings.scheduledDate!)}));
+    }
+    if (_settings.dueDate != null) {
+      parts.add('teacher.turn_in_widget.dueDateSummary'.tr(namedArgs: {'date': _formatDate(_settings.dueDate!)}));
+    }
+    if (_settings.closeDate != null) {
+      parts.add('teacher.turn_in_widget.closesDate'.tr(namedArgs: {'date': _formatDate(_settings.closeDate!)}));
+    }
     return parts.join(' · ');
   }
 
@@ -373,6 +392,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) {
+            sheetContext.watch<LocaleProvider>();
             void refresh() => setSheetState(() {});
 
             return Container(
@@ -401,7 +421,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Turn-in Schedule', style: AppText.h1),
+                        Text('teacher.turn_in_widget.turnInSchedule'.tr(), style: AppText.h1),
                         IconButton(
                           onPressed: () => Navigator.pop(sheetContext),
                           icon: const Icon(Icons.close_rounded),
@@ -447,10 +467,10 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                     // against.
                     Row(
                       children: [
-                        const CreateFormLabel('Due'),
+                        CreateFormLabel('teacher.turn_in_widget.due'.tr()),
                         const SizedBox(width: AppSpacing.sm),
                         Text(
-                          'REQUIRED',
+                          'common.required'.tr().toUpperCase(),
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
@@ -465,7 +485,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                       icon: Icons.event_busy_outlined,
                       accent: AppColors.warning,
                       isSet: _settings.dueDate != null,
-                      label: _settings.dueDate != null ? _formatDate(_settings.dueDate!) : 'No due date',
+                      label: _settings.dueDate != null ? _formatDate(_settings.dueDate!) : 'teacher.turn_in_widget.noDueDate'.tr(),
                       onTap: () => _pickDueDate(refresh),
                       onClear: () {
                         _update(_settings.copyWith(clearDueDate: true));
@@ -474,7 +494,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                     ),
                     const SizedBox(height: AppSpacing.xs),
                     Text(
-                      'Work submitted after this moment is tagged overdue for the student, parent, and teacher — it never blocks submission by itself.',
+                      'teacher.turn_in_widget.dueDateHelperText'.tr(),
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                     ),
                     const SizedBox(height: AppSpacing.lg),
@@ -489,7 +509,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                     // Due (see validateTurnInSettings), surfacing the error
                     // inline in the sheet if Due isn't set yet.
                     _toggleSectionHeader(
-                      title: 'Schedule Activity',
+                      title: 'teacher.turn_in_widget.scheduleActivity'.tr(),
                       accent: _c,
                       checked: _scheduleEnabled,
                       onChanged: (checked) {
@@ -509,7 +529,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                         isSet: _settings.scheduledDate != null,
                         label: _settings.scheduledDate != null
                             ? _formatDate(_settings.scheduledDate!)
-                            : 'Tap to choose a schedule date',
+                            : 'teacher.turn_in_widget.tapToChooseScheduleDate'.tr(),
                         onTap: () => _pickScheduledDate(refresh),
                         onClear: () {
                           _scheduleEnabled = false;
@@ -519,13 +539,13 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       Text(
-                        'Before this moment the activity is hidden/locked. Must be earlier than the Due date.',
+                        'teacher.turn_in_widget.scheduleHelperText'.tr(),
                         style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                       ),
                     ] else ...[
                       const SizedBox(height: AppSpacing.xs),
                       Text(
-                        'Unchecked — the activity is available immediately, as soon as its prerequisite is met.',
+                        'teacher.turn_in_widget.scheduleUncheckedText'.tr(),
                         style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                       ),
                     ],
@@ -538,7 +558,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                     // Activity above — the pick itself still validates
                     // against Due.
                     _toggleSectionHeader(
-                      title: 'Close / Until',
+                      title: 'teacher.turn_in_widget.closeUntil'.tr(),
                       accent: AppColors.danger,
                       checked: _closeEnabled,
                       onChanged: (checked) {
@@ -558,7 +578,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                         isSet: _settings.closeDate != null,
                         label: _settings.closeDate != null
                             ? _formatDate(_settings.closeDate!)
-                            : 'Tap to choose a close date',
+                            : 'teacher.turn_in_widget.tapToChooseCloseDate'.tr(),
                         onTap: () => _pickCloseDate(refresh),
                         onClear: () {
                           _closeEnabled = false;
@@ -569,16 +589,16 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                       const SizedBox(height: AppSpacing.xs),
                       Text(
                         _settings.closeDate == null
-                            ? 'Must be the same time as, or later than, the Due date.'
+                            ? 'teacher.turn_in_widget.closeHelperTextUnset'.tr()
                             : (_settings.allowsLateWindow
-                                ? 'Set after Due — creates a grace window: late turn-ins are accepted (and tagged overdue) until this moment, then the activity locks for everyone.'
-                                : 'Equal to Due — no late submissions at all. The activity locks the moment it\'s due.'),
+                                ? 'teacher.turn_in_widget.closeHelperTextGrace'.tr()
+                                : 'teacher.turn_in_widget.closeHelperTextNoLate'.tr()),
                         style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                       ),
                     ] else ...[
                       const SizedBox(height: AppSpacing.xs),
                       Text(
-                        'Unchecked — the activity stays open forever, no matter how late.',
+                        'teacher.turn_in_widget.closeUncheckedText'.tr(),
                         style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                       ),
                     ],
@@ -595,7 +615,7 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
                           elevation: 0,
                         ),
-                        child: const Text('Done', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        child: Text('teacher.turn_in_widget.done'.tr(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -610,10 +630,11 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const CreateFormLabel('Turn-in Schedule'),
+        CreateFormLabel('teacher.turn_in_widget.turnInSchedule'.tr()),
         const SizedBox(height: AppSpacing.sm),
         InkWell(
           onTap: _openSheet,
@@ -651,8 +672,8 @@ class TurnInSettingsWidgetState extends State<TurnInSettingsWidget> {
         const SizedBox(height: AppSpacing.xs),
         Text(
           _settings.dueDate == null
-              ? 'Required — tap to set a due date. Scheduling and a close cutoff are optional.'
-              : 'Tap to change when this activity opens, when it\'s due, or whether late turn-ins are accepted.',
+              ? 'teacher.turn_in_widget.summaryHelperRequired'.tr()
+              : 'teacher.turn_in_widget.summaryHelperSet'.tr(),
           style: TextStyle(
             fontSize: 12,
             color: _settings.dueDate == null ? AppColors.danger : Colors.grey.shade600,

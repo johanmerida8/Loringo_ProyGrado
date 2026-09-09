@@ -1,6 +1,9 @@
 // task_generator_dialog.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:provider/provider.dart';
 
 enum ActivityTaskType {
   vocabulary,
@@ -131,6 +134,7 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.lg)),
       child: Container(
@@ -148,10 +152,10 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
               children: [
                 Icon(Icons.auto_awesome, color: _c, size: 28),
                 const SizedBox(width: AppSpacing.sm),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Generate Tasks',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    'teacher.task_generator_dialog.generateTasks'.tr(),
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                 ),
                 IconButton(
@@ -178,12 +182,10 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
                         children: [
                           Icon(Icons.info_outline, color: _c),
                           const SizedBox(width: AppSpacing.sm),
-                          const Expanded(
+                          Expanded(
                             child: Text(
-                              'Pick the categories and how many tasks you want. '
-                              'You\'ll define the content of each one next — '
-                              'nothing is created yet.',
-                              style: TextStyle(fontSize: 13),
+                              'teacher.task_generator_dialog.pickCategoriesBannerText'.tr(),
+                              style: const TextStyle(fontSize: 13),
                             ),
                           ),
                         ],
@@ -191,8 +193,8 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
                     ),
                     const SizedBox(height: AppSpacing.md),
 
-                    const Text('Activity Types',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    Text('teacher.task_generator_dialog.activityTypes'.tr(),
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                     const SizedBox(height: AppSpacing.sm),
                     Container(
                       decoration: BoxDecoration(
@@ -235,9 +237,9 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
                     // ── Number of tasks ──────────────────────────────
                     Row(
                       children: [
-                        const Expanded(
-                          child: Text('Number of Tasks (total)',
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                        Expanded(
+                          child: Text('teacher.task_generator_dialog.numberOfTasksTotal'.tr(),
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                         ),
                         Container(
                           decoration: BoxDecoration(
@@ -277,8 +279,8 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
                     const SizedBox(height: AppSpacing.sm),
                     Text(
                       widget.maxTasks < _maxTasksPerBatch
-                          ? 'Only $_maxTasks slot${_maxTasks == 1 ? '' : 's'} left in this activity (15 max) · types may repeat'
-                          : 'Max per batch: $_maxTasks · types may repeat',
+                          ? 'teacher.task_generator_dialog.onlySlotsLeft'.plural(_maxTasks)
+                          : 'teacher.task_generator_dialog.maxPerBatch'.tr(namedArgs: {'max': '$_maxTasks'}),
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                     ),
                     const SizedBox(height: AppSpacing.lg),
@@ -295,7 +297,7 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
                             borderRadius: BorderRadius.circular(AppRadii.md)),
                         ),
                         child: Text(
-                          'Continue with $_numberOfTasks Task${_numberOfTasks == 1 ? '' : 's'}',
+                          'teacher.task_generator_dialog.continueWithTasks'.plural(_numberOfTasks),
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -313,26 +315,26 @@ class _TaskGeneratorDialogState extends State<TaskGeneratorDialog> {
   String _categoryLabel(ActivityTaskType type) {
     switch (type) {
       case ActivityTaskType.vocabulary:
-        return 'Vocabulary';
+        return 'teacher.task_generator_dialog.categoryVocabulary'.tr();
       case ActivityTaskType.grammar:
-        return 'Grammar';
+        return 'teacher.task_generator_dialog.categoryGrammar'.tr();
       case ActivityTaskType.speakingListening:
-        return 'Speaking and Listening';
+        return 'teacher.task_generator_dialog.categorySpeakingListening'.tr();
       case ActivityTaskType.conversation:
-        return 'Conversation';
+        return 'teacher.task_generator_dialog.categoryConversation'.tr();
     }
   }
 
   String _categoryDescription(ActivityTaskType type) {
     switch (type) {
       case ActivityTaskType.vocabulary:
-        return 'Image select, image select reverse, match, sound match, odd one out';
+        return 'teacher.task_generator_dialog.categoryVocabularyDescription'.tr();
       case ActivityTaskType.grammar:
-        return 'Fill blank, arrange, sentence builder';
+        return 'teacher.task_generator_dialog.categoryGrammarDescription'.tr();
       case ActivityTaskType.speakingListening:
-        return 'Repeat after me, listen and speak';
+        return 'teacher.task_generator_dialog.categorySpeakingListeningDescription'.tr();
       case ActivityTaskType.conversation:
-        return 'Complete the chat';
+        return 'teacher.task_generator_dialog.categoryConversationDescription'.tr();
     }
   }
 }

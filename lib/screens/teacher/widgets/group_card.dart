@@ -4,6 +4,7 @@
 // teacher_home_screen.dart so both lists render groups identically instead
 // of drifting into two slightly different card designs over time.
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/teacher/group_navigation_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -13,8 +14,8 @@ import 'package:loringo_app/theme/app_theme.dart';
 /// string if there's nothing to fall back to, so the UI can decide how to
 /// display "no classroom set" rather than showing a confusing "Period null".
 String legacyPeriodLabel(dynamic period) {
-  if (period == 1) return 'Period 1';
-  if (period == 2) return 'Period 2';
+  if (period == 1) return 'teacher.group_card.period1'.tr();
+  if (period == 2) return 'teacher.group_card.period2'.tr();
   return '';
 }
 
@@ -22,7 +23,6 @@ class GroupCard extends StatelessWidget {
   final String groupId;
   final String name;
   final String colorHex;
-  final String groupCode;
   final int    academicYear;
   final String classroom;
 
@@ -37,7 +37,6 @@ class GroupCard extends StatelessWidget {
     required this.groupId,
     required this.name,
     required this.colorHex,
-    required this.groupCode,
     required this.academicYear,
     required this.classroom,
     this.isArchived = false,
@@ -59,7 +58,6 @@ class GroupCard extends StatelessWidget {
         builder: (_) => TeacherGroupDetailsScreen(
           groupId:   groupId,
           groupName: name,
-          groupCode: groupCode,
           groupColor: color,
           initialTabIndex: initialTabIndex,
         ),
@@ -81,16 +79,16 @@ class GroupCard extends StatelessWidget {
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadii.md)),
-        title: Text(archiving ? 'Archive Group' : 'Unarchive Group'),
+        title: Text(archiving
+            ? 'teacher.group_card.archiveGroupTitle'.tr()
+            : 'teacher.group_card.unarchiveGroupTitle'.tr()),
         content: Text(archiving
-            ? 'Archive "$name"? Students, progress and content stay '
-                'untouched — you can unarchive it anytime from Archived '
-                'Groups in the drawer.'
-            : 'Unarchive "$name"? It will show up again in My Groups.'),
+            ? 'teacher.group_card.archiveGroupMsg'.tr(namedArgs: {'name': name})
+            : 'teacher.group_card.unarchiveGroupMsg'.tr(namedArgs: {'name': name})),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text('common.cancel'.tr()),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -100,7 +98,9 @@ class GroupCard extends StatelessWidget {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadii.sm)),
             ),
-            child: Text(archiving ? 'Archive' : 'Unarchive'),
+            child: Text(archiving
+                ? 'teacher.group_card.archive'.tr()
+                : 'teacher.group_card.unarchive'.tr()),
           ),
         ],
       ),
@@ -113,14 +113,16 @@ class GroupCard extends StatelessWidget {
           .update({'archived': archiving});
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(archiving ? 'Group archived' : 'Group unarchived'),
+          content: Text(archiving
+              ? 'teacher.group_card.groupArchived'.tr()
+              : 'teacher.group_card.groupUnarchived'.tr()),
           backgroundColor: AppColors.primary,
         ));
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
+          content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
           backgroundColor: AppColors.danger,
         ));
       }
@@ -133,8 +135,7 @@ class GroupCard extends StatelessWidget {
     return FutureBuilder<int>(
       future: _getAssignedUnitsCount(groupId),
       builder: (context, snapshot) {
-        final count       = snapshot.data ?? 0;
-        final contentText = count == 1 ? 'content' : 'contents';
+        final count = snapshot.data ?? 0;
 
         return GestureDetector(
           onTap: () => _openGroup(context, color),
@@ -206,8 +207,8 @@ class GroupCard extends StatelessWidget {
                             const Icon(Icons.archive_rounded,
                                 color: AppColors.onPrimary, size: 13),
                             const SizedBox(width: AppSpacing.xs),
-                            const Text('Archived',
-                                style: TextStyle(
+                            Text('teacher.group_card.archived'.tr(),
+                                style: const TextStyle(
                                   color: AppColors.onPrimary,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 11,
@@ -217,56 +218,37 @@ class GroupCard extends StatelessWidget {
                       ),
                       const SizedBox(width: AppSpacing.sm),
                     ],
-                    // Code chip
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md, vertical: AppSpacing.xs + 2),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.22),
-                        borderRadius: BorderRadius.circular(AppRadii.pill),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.vpn_key_rounded,
-                              color: AppColors.onPrimary, size: 13),
-                          const SizedBox(width: AppSpacing.xs),
-                          Text(
-                            groupCode,
-                            style: const TextStyle(
-                              color: AppColors.onPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    // The group code is never shown on the card, and this
+                    // widget never even holds it (it's no longer stored in
+                    // plaintext at all — see functions/src/groupCode.ts).
+                    // Wherever a teacher deliberately views/shares it (e.g.
+                    // the invite flow), it's fetched on demand via
+                    // Database.revealGroupCode(groupId).
                     // "⋮" — Edit / Archive-Unarchive. A PopupMenuButton
                     // claims its own tap in the gesture arena, so this
                     // doesn't also trigger the card's onTap above (same
                     // nesting HierarchyPopupActions relies on elsewhere in
                     // the app).
                     PopupMenuButton<String>(
-                      tooltip: 'Group options',
+                      tooltip: 'teacher.group_card.groupOptions'.tr(),
                       icon: const Icon(Icons.more_vert_rounded,
                           color: AppColors.onPrimary, size: 20),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(AppRadii.md)),
                       onSelected: (value) {
                         if (value == 'edit') {
-                          _openGroup(context, color, initialTabIndex: 3);
+                          _openGroup(context, color, initialTabIndex: 4);
                         } else if (value == 'archive') {
                           _toggleArchive(context);
                         }
                       },
                       itemBuilder: (_) => [
-                        const PopupMenuItem(
+                        PopupMenuItem(
                           value: 'edit',
                           child: Row(children: [
-                            Icon(Icons.edit_outlined, color: Colors.blue, size: 18),
-                            SizedBox(width: AppSpacing.sm),
-                            Text('Edit'),
+                            const Icon(Icons.edit_outlined, color: Colors.blue, size: 18),
+                            const SizedBox(width: AppSpacing.sm),
+                            Text('common.edit'.tr()),
                           ]),
                         ),
                         PopupMenuItem(
@@ -278,7 +260,9 @@ class GroupCard extends StatelessWidget {
                                     : Icons.archive_outlined,
                                 color: AppColors.warning, size: 18),
                             const SizedBox(width: AppSpacing.sm),
-                            Text(isArchived ? 'Unarchive' : 'Archive'),
+                            Text(isArchived
+                                ? 'teacher.group_card.unarchive'.tr()
+                                : 'teacher.group_card.archive'.tr()),
                           ]),
                         ),
                       ],
@@ -292,7 +276,7 @@ class GroupCard extends StatelessWidget {
                         color: AppColors.onPrimary, size: 18),
                     const SizedBox(width: AppSpacing.xs),
                     Text(
-                      '$count $contentText',
+                      'teacher.group_card.contentCount'.plural(count),
                       style: const TextStyle(
                         color: AppColors.onPrimary,
                         fontSize: 13,

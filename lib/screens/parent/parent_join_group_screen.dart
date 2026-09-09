@@ -1,5 +1,10 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 /// Parent Join Group Screen
@@ -45,7 +50,7 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
   void _joinGroup() async {
     if (groupCodeController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter the group code')),
+        SnackBar(content: Text('common.enterGroupCode'.tr())),
       );
       return;
     }
@@ -53,52 +58,45 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
     setState(() => isLoading = true);
 
     try {
-      // Find group by code
-      final groupSnapshot = await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .where(
-            'groupCode',
-            isEqualTo: groupCodeController.text.trim().toUpperCase(),
-          )
-          .get();
+      // Find group by code — hashed/verified server-side, see
+      // functions/src/groupCode.ts (the group code is never stored in
+      // plaintext, so this can't be a direct Firestore query anymore).
+      final group = await Database(firestore: firestoreInstance)
+          .findGroupByCode(groupCodeController.text.trim().toUpperCase());
 
-      if (groupSnapshot.docs.isEmpty) {
-        throw Exception('Invalid group code');
+      if (group == null) {
+        throw Exception('parent.parent_join_group_screen.invalidCode'.tr());
       }
 
-      final groupDoc = groupSnapshot.docs.first;
-      if (groupDoc.data()['archived'] == true) {
-        throw Exception('This group is no longer accepting new students');
+      if (group['archived'] == true) {
+        throw Exception('parent.parent_join_group_screen.groupNotAccepting'.tr());
       }
-      final groupId = groupDoc.id;
-      final groupName = groupDoc.data()['name'] as String;
+      final groupId = group['groupId'] as String;
+      final groupName = group['name'] as String;
       final studentId = widget.child['id'];
 
-      // Update student with groupId
-      await FirebaseFirestore.instance
-          .collection('students')
-          .doc(studentId)
-          .update({
-            'groupId': groupId,
-            'lastUpdate': FieldValue.serverTimestamp(),
-          });
+      // If the student was already in a different group, mark that
+      // membership as left before switching — their XP/progress/reports
+      // stay exactly where they are under the old group, untouched. The
+      // student starts fresh under the new group.
+      final studentSnapshot =
+          await firestoreInstance.collection('students').doc(studentId).get();
+      final previousGroupId = studentSnapshot.data()?['groupId'] as String?;
 
-      // Create subcollection entry in the group using student UID
-      await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .doc(groupId)
-          .collection('students')
-          .doc(studentId)
-          .set({
-            'studentId': studentId,
-            'joinedAt': FieldValue.serverTimestamp(),
-          });
+      await Database(firestore: firestoreInstance).switchGroup(
+        studentId: studentId,
+        oldGroupId: previousGroupId,
+        newGroupId: groupId,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '✅ ${widget.child['names']} joined the group: $groupName',
+              '✅ ${'parent.parent_join_group_screen.joinedGroup'.tr(namedArgs: {
+                'name': '${widget.child['names']}',
+                'group': groupName,
+              })}',
             ),
             backgroundColor: AppColors.success,
           ),
@@ -109,8 +107,9 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('❌ Error: $e'),
-              backgroundColor: AppColors.danger),
+            content: Text('❌ ${'common.errorWithMessage'.tr(namedArgs: {'error': '$e'})}'),
+            backgroundColor: AppColors.danger,
+          ),
         );
       }
     } finally {
@@ -118,215 +117,192 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
     }
   }
 
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.md),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding: const EdgeInsets.all(AppSpacing.sm),
-              decoration: BoxDecoration(
-                color: AppColors.primarySoft(0.1),
-                borderRadius: AppRadii.mdAll,
-              ),
-              child: const Icon(Icons.arrow_back_ios_new_rounded,
-                  color: AppColors.primary, size: 18),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          const Text('Join Group', style: AppText.h1),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
-      // NOTE: no Scaffold.appBar — replaced with the inline
-      // _buildHeader() below, matching ParentProfileScreen /
-      // ParentRegisterChildScreen.
+      // NOTE: no Scaffold.appBar — replaced with ParentScreenHeader below,
+      // matching every other screen pushed from My Children.
       backgroundColor: AppColors.scaffoldBackground,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-
-                const SizedBox(height: AppSpacing.sm),
-
-                // Info Card
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(AppSpacing.lg),
-                  decoration: BoxDecoration(
-                    color: AppColors.tint(AppColors.info, 0.12),
-                    borderRadius: AppRadii.lgAll,
-                    border: Border.all(
-                      color: AppColors.info,
-                      width: 2,
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      const Icon(
-                        Icons.school_rounded,
-                        size: 60,
-                        color: AppColors.info,
-                      ),
-                      const SizedBox(height: AppSpacing.md - 4),
-                      Text(
-                        widget.child['names'] ?? 'Your child',
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryDark,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      const Text(
-                        'will join the group',
-                        style: TextStyle(
-                            fontSize: 16, color: AppColors.textPrimary),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
-
-                const Text(
-                  'Group Code',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primaryDark,
-                  ),
-                ),
-
-                const SizedBox(height: AppSpacing.sm),
-
-                Text(
-                  'Enter the 6-character code shared by the teacher',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                ),
-
-                const SizedBox(height: AppSpacing.lg),
-
-                // Group code textfield
-                TextField(
-                  controller: groupCodeController,
-                  textCapitalization: TextCapitalization.characters,
-                  maxLength: 6,
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 4,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'ABC123',
-                    hintStyle: TextStyle(
-                      color: Colors.grey[400],
-                      letterSpacing: 4,
-                    ),
-                    prefixIcon: const Icon(
-                      Icons.vpn_key_rounded,
-                      color: AppColors.primary,
-                      size: 28,
-                    ),
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    counterText: '',
-                    border: OutlineInputBorder(
-                      borderRadius: AppRadii.lgAll,
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: AppRadii.lgAll,
-                      borderSide: BorderSide(
-                        color: Colors.grey.shade300,
-                        width: 2,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: AppRadii.lgAll,
-                      borderSide: const BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
-
-                // Join button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: isLoading ? null : _joinGroup,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.onPrimary,
-                      disabledBackgroundColor: Colors.grey[300],
-                      padding: const EdgeInsets.symmetric(
-                          vertical: AppSpacing.lg - 6),
-                      shape: RoundedRectangleBorder(
+      body: Column(
+        children: [
+          ParentScreenHeader(title: 'common.joinGroup'.tr()),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Info Card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      decoration: BoxDecoration(
+                        color: AppColors.tint(AppColors.info, 0.12),
                         borderRadius: AppRadii.lgAll,
+                        border: Border.all(color: AppColors.info, width: 2),
                       ),
-                      elevation: 4,
-                    ),
-                    child: isLoading
-                        ? const SizedBox(
-                            height: 24,
-                            width: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.onPrimary,
+                      child: Column(
+                        children: [
+                          const Icon(
+                            Icons.school_rounded,
+                            size: 60,
+                            color: AppColors.info,
+                          ),
+                          const SizedBox(height: AppSpacing.md - 4),
+                          Text(
+                            widget.child['names'] ?? 'parent.parent_join_group_screen.yourChild'.tr(),
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primaryDark,
                             ),
-                          )
-                        : const Text('Join Group', style: AppText.button),
-                  ),
-                ),
-
-                const SizedBox(height: AppSpacing.lg),
-
-                // Info message
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: AppColors.tint(AppColors.success, 0.15),
-                    borderRadius: AppRadii.mdAll,
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.info_outline_rounded,
-                        color: AppColors.success,
-                        size: 24,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            'common.willJoin'.tr(),
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: AppSpacing.md - 4),
-                      Expanded(
-                        child: Text(
-                          'The code is provided by the teacher of the group you want to join',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[800],
+                    ),
+
+                    const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
+
+                    Text(
+                      'common.groupCode'.tr(),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryDark,
+                      ),
+                    ),
+
+                    const SizedBox(height: AppSpacing.sm),
+
+                    Text(
+                      'common.groupCodeMsg'.tr(),
+                      style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    ),
+
+                    const SizedBox(height: AppSpacing.lg),
+
+                    // Group code textfield
+                    TextField(
+                      controller: groupCodeController,
+                      textCapitalization: TextCapitalization.characters,
+                      maxLength: 6,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 4,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'ABC123',
+                        hintStyle: TextStyle(
+                          color: Colors.grey[400],
+                          letterSpacing: 4,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.vpn_key_rounded,
+                          color: AppColors.primary,
+                          size: 28,
+                        ),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        counterText: '',
+                        border: OutlineInputBorder(
+                          borderRadius: AppRadii.lgAll,
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: AppRadii.lgAll,
+                          borderSide: BorderSide(
+                            color: Colors.grey.shade300,
+                            width: 2,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: AppRadii.lgAll,
+                          borderSide: const BorderSide(
+                            color: AppColors.primary,
+                            width: 2,
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+
+                    const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
+
+                    // Join button
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: isLoading ? null : _joinGroup,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: AppColors.onPrimary,
+                          disabledBackgroundColor: Colors.grey[300],
+                          padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.lg - 6,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: AppRadii.lgAll,
+                          ),
+                          elevation: 4,
+                        ),
+                        child: isLoading
+                            ? const SizedBox(
+                                height: 24,
+                                width: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.onPrimary,
+                                ),
+                              )
+                            : Text('common.joinGroup'.tr(), style: AppText.button),
+                      ),
+                    ),
+
+                    const SizedBox(height: AppSpacing.lg),
+
+                    // Info message
+                    Container(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: AppColors.tint(AppColors.success, 0.15),
+                        borderRadius: AppRadii.mdAll,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.info_outline_rounded,
+                            color: AppColors.success,
+                            size: 24,
+                          ),
+                          const SizedBox(width: AppSpacing.md - 4),
+                          Expanded(
+                            child: Text(
+                              'common.groupCodeMsg2'.tr(),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[800],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

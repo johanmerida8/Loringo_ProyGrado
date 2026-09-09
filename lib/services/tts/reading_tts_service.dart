@@ -1,35 +1,43 @@
 // lib/services/tts/reading_tts_service.dart
-// Reading narration via flutter_edge_tts (Microsoft Edge neural voices).
-// Free, no API key, no quota. Default voice: Oliver (en-GB-OliverNeural).
-// Caches synthesized audio + word-boundary metadata in memory per
-// (voice, speed, text) so repeats are instant. Call prefetchPages() after
-// loading a task to warm the cache in the background.
+// Reading narration via the `generateReadingAudio` Cloud Function (Google
+// Cloud Text-to-Speech). Caches synthesized audio + word-boundary metadata
+// in memory per (voice, speed, text) so repeats are instant.
 //
-// Word boundaries: enableWordBoundary:true makes synthesize() return
-// per-word timing (offset/duration in 100ns ticks) alongside the audio,
-// used by screen_seven.dart to highlight the word currently being
-// spoken. Converted to milliseconds here (ticks / 10000) so callers
-// don't need to know about ticks.
+// PREFETCHING: screen_seven.dart calls prefetchPages() with every page's
+// text as soon as a reading task's content loads, so by the time the
+// student flips to page 3 or 8, that page's audio is either already in
+// _cache or already in flight -- speak() then only has to await the same
+// in-flight future rather than starting a fresh request. This is on top
+// of (not a replacement for) prewarmTtsCache.ts server-side, which
+// pre-synthesizes the Cloudinary-cached audio the moment a teacher saves
+// the page -- prefetchPages here is what gets that already-cached audio
+// (or a URL from a genuine cache-miss synthesis) into THIS device's
+// in-memory cache ahead of when it's actually needed to play.
 //
-// FIX: _voice and _tts were previously initialized to two different
-// voices (_voice defaulted to maisie, _tts was hardcoded to oliver's
-// edgeId) -- callers reading `voice` would see "maisie" while audio
-// actually played in Oliver's voice, and any code trusting `voice` for
-// display/cache-key purposes would be wrong from the very first launch,
-// before setVoice() was ever called. Both are now seeded from the same
-// ReadingVoice value so they can never disagree on startup.
+// WHY A CLOUD FUNCTION INSTEAD OF flutter_edge_tts: the previous
+// implementation talked to Microsoft Edge's neural voices over a raw
+// dart:io WebSocket, which doesn't exist on Flutter Web -- narration
+// silently failed there. Moving synthesis server-side (a plain callable,
+// same mechanism as moderateImage) works identically on every platform.
+// See functions/src/generateReadingAudio.ts for the synthesis + word-timing
+// logic (SSML <mark> timepointing takes the place of Edge's word-boundary
+// events).
 //
-// FIX: _cacheKey did not include the voice, only speed+text. Once
-// voice became switchable, replaying the same text after a setVoice()
-// call would silently return the PREVIOUS voice's cached audio instead
-// of resynthesizing -- the student would hear the old voice with no
-// error, which is worse than a crash because it's silent. Voice is now
-// part of the key.
+// Word boundaries: the Cloud Function returns per-word start/end times in
+// milliseconds directly (no ticks-to-ms conversion needed client-side, since
+// that conversion now happens server-side), used by screen_seven.dart to
+// highlight the word currently being spoken.
+//
+// AUDIO DELIVERY: the Cloud Function returns an audioUrl (a Cloudinary URL,
+// or a data: URI as a fallback -- see generateReadingAudio.ts) rather than
+// raw base64 bytes, since synthesized audio is cached in Cloudinary, not in
+// Firestore. just_audio plays straight from that URL via setUrl(), so there
+// is no decode/StreamAudioSource step on this side any more.
 
-import 'dart:typed_data';
+import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_edge_tts/flutter_edge_tts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:loringo_app/services/tts/reading_voices.dart';
 
@@ -46,32 +54,19 @@ class WordTiming {
 }
 
 class ReadingResult {
-  final Uint8List audioBytes;
+  final String audioUrl;
   final List<WordTiming> words;
-  const ReadingResult({required this.audioBytes, required this.words});
+  const ReadingResult({required this.audioUrl, required this.words});
 }
 
 class ReadingTtsService {
   static final AudioPlayer _player = AudioPlayer();
 
-  // Single source of truth for the default voice. Both _voice and the
-  // initial _tts instance are seeded from this constant so they start
-  // in agreement -- change this one line to change the app-wide default.
-  static const ReadingVoice _defaultVoice = ReadingVoice.ryan;
+  // Single source of truth for the default voice.
+  static const ReadingVoice _defaultVoice = ReadingVoice.maisie;
 
   static ReadingVoice _voice = _defaultVoice;
   static ReadingVoice get voice => _voice;
-
-  static FlutterEdgeTts _tts = FlutterEdgeTts(
-    voice: _defaultVoice.edgeId,
-    outputFormat: EdgeTtsOutputFormat.audio24Khz96KbitrateMonoMp3,
-    enableWordBoundary: true,
-  );
-
-  static const Map<ReadingSpeed, EdgeTtsProsody> _prosodyBySpeed = {
-    ReadingSpeed.slow: EdgeTtsProsody(rate: '-50%', pitch: '+3Hz'),
-    ReadingSpeed.normal: EdgeTtsProsody(rate: '-25%', pitch: '+3Hz'),
-  };
 
   static ReadingSpeed _speed = ReadingSpeed.normal;
   static ReadingSpeed get speed => _speed;
@@ -89,17 +84,12 @@ class ReadingTtsService {
   static bool get isPlaying => _player.playing;
 
   /// Switches the active voice. Clears the cache since cache keys are
-  /// voice-scoped (see _cacheKey) -- old entries just become
-  /// unreachable dead weight rather than wrong, but clearing keeps
-  /// memory from growing unbounded across repeated voice switches.
+  /// voice-scoped (see _cacheKey) -- old entries just become unreachable
+  /// dead weight rather than wrong, but clearing keeps memory from growing
+  /// unbounded across repeated voice switches.
   static void setVoice(ReadingVoice newVoice) {
     if (newVoice == _voice) return;
     _voice = newVoice;
-    _tts = FlutterEdgeTts(
-      voice: newVoice.edgeId,
-      outputFormat: EdgeTtsOutputFormat.audio24Khz96KbitrateMonoMp3,
-      enableWordBoundary: true,
-    );
     _cache.clear();
   }
 
@@ -122,10 +112,10 @@ class ReadingTtsService {
     try {
       final result = await _getOrSynthesize(trimmed);
       if (myToken != _playToken) return SpeakResult.cancelled; // superseded during synthesis
-      if (result == null || result.audioBytes.isEmpty) return SpeakResult.failed;
+      if (result == null || result.audioUrl.isEmpty) return SpeakResult.failed;
 
       _currentWords = result.words;
-      await _player.setAudioSource(_BytesAudioSource(result.audioBytes));
+      await _player.setUrl(result.audioUrl);
       if (myToken != _playToken) return SpeakResult.cancelled; // superseded during load
 
       onAudioReady?.call();
@@ -144,16 +134,20 @@ class ReadingTtsService {
     }
   }
 
-  /// Warms the cache in the background for the current voice+speed.
-  /// Not awaited.
+  /// Kicks off synthesis for every page up front (title + all pages), so
+  /// speak() later just hits an already-resolved (or already in-flight)
+  /// cache entry instead of starting fresh. Fire-and-forget by design --
+  /// callers don't await this, it just warms _cache/_inFlight in the
+  /// background while the student reads. Errors are swallowed here (same
+  /// as any other _getOrSynthesize failure): a page that fails to
+  /// prefetch just falls back to speak()'s normal on-demand synthesis
+  /// when the student actually reaches it.
   static void prefetchPages(List<String> texts) {
-    () async {
-      for (final text in texts) {
-        final trimmed = text.trim();
-        if (trimmed.isEmpty) continue;
-        await _getOrSynthesize(trimmed);
-      }
-    }();
+    for (final text in texts) {
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) continue;
+      unawaited(_getOrSynthesize(trimmed));
+    }
   }
 
   static Future<ReadingResult?> _getOrSynthesize(String text) {
@@ -172,29 +166,44 @@ class ReadingTtsService {
 
   static Future<ReadingResult?> _synthesizeAndCache(String text, String key) async {
     try {
-      final result = await _tts.synthesize(text, prosody: _prosodyBySpeed[_speed]!);
-      if (result.audioBytes.isEmpty) return null;
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'generateReadingAudio',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+      );
+      final result = await callable.call({
+        'text': text,
+        'voice': _voice.edgeId,
+        'speed': _speed.name,
+      });
 
-      final words = <WordTiming>[];
-      for (final item in result.metadata) {
-        if (item.type != 'WordBoundary') continue;
-        final word = item.data.text?.text;
-        if (word == null || word.isEmpty) continue;
-        // offset/duration are in 100ns ticks -- /10000 to get ms.
-        final startMs = item.data.offset ~/ 10000;
-        final endMs = startMs + (item.data.duration ~/ 10000);
-        words.add(WordTiming(text: word, startMs: startMs, endMs: endMs));
+      final data = result.data as Map;
+      final audioUrl = data['audioUrl'] as String?;
+      if (audioUrl == null || audioUrl.isEmpty) {
+        debugPrint('ReadingTtsService: no audio returned');
+        return null;
       }
 
-      final reading = ReadingResult(audioBytes: result.audioBytes, words: words);
+      final wordsJson = (data['words'] as List?) ?? const [];
+      final words = wordsJson
+          .cast<Map>()
+          .map((w) => WordTiming(
+                text: w['text'] as String,
+                startMs: (w['startMs'] as num).toInt(),
+                endMs: (w['endMs'] as num).toInt(),
+              ))
+          .toList();
+
+      final reading = ReadingResult(audioUrl: audioUrl, words: words);
       _cache[key] = reading;
       return reading;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('ReadingTtsService: generateReadingAudio failed: ${e.code} - ${e.message}');
+      return null;
     } catch (e) {
-      // If you're debugging the "Couldn't play narration" issue with
-      // Oliver: this is the line that will print the real cause. Check
-      // your console/logcat output right here when the error happens --
-      // whether it's a network timeout, a word-boundary parsing failure
-      // specific to this voice, or something else determines the fix.
+      // If you're debugging a "Couldn't play narration" issue: this is the
+      // line that will print the real cause. Check your console/logcat
+      // output right here when the error happens -- whether it's a network
+      // timeout, a malformed response, or something else determines the fix.
       debugPrint('ReadingTtsService: synthesize failed: $e');
       return null;
     }
@@ -210,24 +219,5 @@ class ReadingTtsService {
 
   static Future<void> dispose() async {
     await _player.dispose();
-    await _tts.close();
-  }
-}
-
-class _BytesAudioSource extends StreamAudioSource {
-  final Uint8List _bytes;
-  _BytesAudioSource(this._bytes) : super(tag: 'reading-tts');
-
-  @override
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
-    start ??= 0;
-    end ??= _bytes.length;
-    return StreamAudioResponse(
-      sourceLength: _bytes.length,
-      contentLength: end - start,
-      offset: start,
-      stream: Stream.value(_bytes.sublist(start, end)),
-      contentType: 'audio/mpeg',
-    );
   }
 }

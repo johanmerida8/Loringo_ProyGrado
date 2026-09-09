@@ -1,8 +1,15 @@
 // admin_navigation_screen.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:loringo_app/components/app_drawer.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/app_bottom_nav_bar.dart';
+import 'package:loringo_app/components/responsive_scaffold.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/admin/admin_dashboard_screen.dart';
 import 'package:loringo_app/screens/admin/admin_images_screen.dart';
+import 'package:loringo_app/screens/admin/admin_profile_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/widget/secured_screen.dart';
 
@@ -13,47 +20,43 @@ class AdminNavigationScreen extends StatefulWidget {
   State<AdminNavigationScreen> createState() => _AdminNavigationScreenState();
 }
 
-// Breakpoint above which the drawer becomes a permanent side panel.
-const double _kWideBreakpoint = 900;
-const double _kSidePanelWidth = 280;
-
 class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
   int _currentIndex = 0;
+  String _name = '';
 
-  Widget _getCurrentScreen() {
-    switch (_currentIndex) {
-      case 0:
-        return const AdminDashboardScreen();
-      case 1:
-        return const AdminImagesScreen();
-      default:
-        return const AdminDashboardScreen();
-    }
+  @override
+  void initState() {
+    super.initState();
+    _loadUser();
   }
+
+  Future<void> _loadUser() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    if (!mounted) return;
+    setState(() {
+      _name = (doc.data()?['name'] as String?) ?? '';
+    });
+  }
+
+  // Rebuilt fresh on every build (not cached) so each tab always reflects
+  // current state (e.g. _name once loaded) — same pattern student/parent
+  // main screens use. Flutter's element reconciliation keeps each tab's
+  // own State alive across rebuilds since type + position stay the same.
+  List<Widget> _buildTabs() => [
+        AdminDashboardScreen(name: _name),
+        const AdminImagesScreen(),
+        const AdminProfileScreen(),
+      ];
 
   List<Widget> _buildNavItems(bool isWide) {
     return [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-        child: Row(
-          children: const [
-            Icon(Icons.dashboard, size: 16, color: AppColors.primary),
-            SizedBox(width: 6),
-            Text(
-              'ADMIN TOOLS',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-                letterSpacing: 1,
-              ),
-            ),
-          ],
-        ),
-      ),
+      const SizedBox(height: AppSpacing.sm),
       ListTile(
         leading: const Icon(Icons.dashboard_rounded, color: AppColors.primary),
-        title: const Text('Dashboard'),
+        title: Text('admin.admin_navigation_screen.dashboard'.tr()),
         selected: _currentIndex == 0,
         selectedTileColor: AppColors.primarySoft(0.08),
         trailing: _currentIndex == 0
@@ -66,7 +69,7 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
       ),
       ListTile(
         leading: const Icon(Icons.image, color: AppColors.primary),
-        title: const Text('Images'),
+        title: Text('admin.admin_navigation_screen.images'.tr()),
         selected: _currentIndex == 1,
         selectedTileColor: AppColors.primarySoft(0.08),
         trailing: _currentIndex == 1
@@ -82,86 +85,32 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentTitle = _currentIndex == 0 ? 'Admin Dashboard' : 'Manage Images';
-
+    context.watch<LocaleProvider>();
     return SecuredScreen(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= _kWideBreakpoint;
-
-          return Scaffold(
-            backgroundColor: AppColors.scaffoldBackground,
-            drawer: isWide
-                ? null
-                : AppDrawer(
-                    headerIcon: Icons.admin_panel_settings,
-                    title: 'Image Manager',
-                    subtitle: 'Manage Educational Images',
-                    navItems: _buildNavItems(false),
-                  ),
-            body: SafeArea(
-              child: Row(
-                children: [
-                  if (isWide)
-                    SizedBox(
-                      width: _kSidePanelWidth,
-                      child: Material(
-                        elevation: 1,
-                        color: Colors.white,
-                        child: AppDrawer(
-                          headerIcon: Icons.admin_panel_settings,
-                          title: 'Image Manager',
-                          subtitle: 'Manage Educational Images',
-                          navItems: _buildNavItems(true),
-                          wrapInDrawer: false,
-                        ),
-                      ),
-                    ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                              AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-                          child: Row(
-                            children: [
-                              if (!isWide)
-                                Builder(
-                                  builder: (ctx) => GestureDetector(
-                                    onTap: () => Scaffold.of(ctx).openDrawer(),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(AppSpacing.sm),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primarySoft(0.1),
-                                        borderRadius: BorderRadius.circular(AppRadii.md),
-                                      ),
-                                      child: const Icon(Icons.menu_rounded,
-                                          color: AppColors.primary, size: 22),
-                                    ),
-                                  ),
-                                ),
-                              if (!isWide) const SizedBox(width: AppSpacing.md),
-                              Text(currentTitle, style: AppText.h1),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 1400),
-                              child: SizedBox.expand(child: _getCurrentScreen()),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+      child: ResponsiveScaffold(
+        headerIcon: Icons.admin_panel_settings,
+        drawerTitle: 'admin.admin_navigation_screen.imageManagerTitle'.tr(),
+        drawerSubtitle:
+            _name.isNotEmpty ? _name : 'admin.admin_profile_screen.notSet'.tr(),
+        hideBottomNavOnWide: true,
+        navItemsBuilder: (context, isWide) => _buildNavItems(isWide),
+        bottomNavigationBar: AppBottomNavBar(
+          currentIndex: _currentIndex,
+          onTap: (index) => setState(() => _currentIndex = index),
+          showLabels: false,
+          items: [
+            AppNavItem(
+                icon: Icons.dashboard_rounded,
+                label: 'admin.admin_navigation_screen.dashboard'.tr()),
+            AppNavItem(
+                icon: Icons.image, label: 'admin.admin_navigation_screen.images'.tr()),
+            AppNavItem(icon: Icons.person_rounded, label: 'common.myProfile'.tr()),
+          ],
+        ),
+        bodyBuilder: (context, isWide) => IndexedStack(
+          index: _currentIndex,
+          children: _buildTabs(),
+        ),
       ),
     );
   }

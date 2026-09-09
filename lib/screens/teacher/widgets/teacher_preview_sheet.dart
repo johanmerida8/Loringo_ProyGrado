@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // ── Preview sheet ─────────────────────────────────────────────────────────────
@@ -19,6 +22,7 @@ class TeacherPreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
       maxChildSize:     0.95,
@@ -56,12 +60,12 @@ class TeacherPreviewSheet extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                          'Preview — ${selectedFiles.length} '
-                          'image${selectedFiles.length != 1 ? "s" : ""}',
+                          'teacher.teacher_preview_sheet.previewCount'
+                              .plural(selectedFiles.length),
                           style: const TextStyle(
                               fontSize: 17, fontWeight: FontWeight.bold)),
-                      const Text('Tap × to remove',
-                          style: TextStyle(
+                      Text('teacher.teacher_preview_sheet.tapToRemove'.tr(),
+                          style: const TextStyle(
                               fontSize: 11, color: AppColors.muted)),
                     ],
                   ),
@@ -74,8 +78,8 @@ class TeacherPreviewSheet extends StatelessWidget {
                     onPressed: onSelectMore,
                     icon: const Icon(Icons.add_photo_alternate_outlined,
                         size: 16, color: AppColors.primary),
-                    label: const Text('Select More',
-                        style: TextStyle(
+                    label: Text('teacher.teacher_preview_sheet.selectMore'.tr(),
+                        style: const TextStyle(
                             color: AppColors.primary,
                             fontSize: 12,
                             fontWeight: FontWeight.w600)),
@@ -94,7 +98,7 @@ class TeacherPreviewSheet extends StatelessWidget {
                     onPressed: onClearAll,
                     icon: Icon(Icons.delete_sweep,
                         size: 16, color: AppColors.danger),
-                    label: Text('Clear all',
+                    label: Text('teacher.teacher_preview_sheet.clearAll'.tr(),
                         style: TextStyle(
                             color: AppColors.danger,
                             fontSize: 12,
@@ -145,8 +149,8 @@ class TeacherPreviewSheet extends StatelessWidget {
                                         .image_aspect_ratio_rounded,
                                     color: Colors.blue[300],
                                     size: 32),
-                                const Text('SVG',
-                                    style: TextStyle(
+                                Text('teacher.teacher_preview_sheet.svgLabel'.tr(),
+                                    style: const TextStyle(
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold,
                                         color: Colors.blue)),
@@ -216,8 +220,8 @@ class TeacherPreviewSheet extends StatelessWidget {
                 icon: const Icon(Icons.cloud_upload_rounded,
                     color: AppColors.onPrimary, size: 20),
                 label: Text(
-                    'Upload ${selectedFiles.length} '
-                    'Image${selectedFiles.length != 1 ? "s" : ""}',
+                    'teacher.teacher_preview_sheet.uploadCount'
+                        .plural(selectedFiles.length),
                     style: const TextStyle(
                         color: AppColors.onPrimary,
                         fontWeight: FontWeight.bold,

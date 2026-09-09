@@ -43,7 +43,19 @@ class NotificationPermissionService {
   static Future<bool> requestPermission() async {
     if (kIsWeb) return false;
     try {
-      final status = await Permission.notification.request();
+      // On Android, swiping the system permission dialog away (rather than
+      // tapping "Allow"/"Don't Allow") can leave permission_handler's
+      // native completer waiting forever — the dialog is gone but no
+      // result callback ever fires, so `.request()` never resolves. A
+      // try/catch around it doesn't help since nothing throws; it just
+      // hangs. Bounding it with a timeout and falling back to a fresh
+      // `.status` read (a separate, lightweight platform-channel call not
+      // tied to the dismissed dialog's callback) unblocks the caller
+      // either way, reflecting whatever the OS actually recorded.
+      final status = await Permission.notification.request().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => Permission.notification.status,
+      );
       final granted = status.isGranted;
 
       final prefs = await SharedPreferences.getInstance();

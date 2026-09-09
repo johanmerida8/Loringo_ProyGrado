@@ -1,10 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class TeacherFeedbackDialog extends StatefulWidget {
   final String studentId;
+  final String groupId;
   final String reportId;
   final String currentFeedback;
   final String studentName;
@@ -13,6 +17,7 @@ class TeacherFeedbackDialog extends StatefulWidget {
   const TeacherFeedbackDialog({
     super.key,
     required this.studentId,
+    required this.groupId,
     required this.reportId,
     required this.currentFeedback,
     required this.studentName,
@@ -45,6 +50,8 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
 
     try {
       await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .doc(widget.groupId)
         .collection('students')
         .doc(widget.studentId)
         .collection('reports')
@@ -55,8 +62,8 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Feedback saved successfully'),
+          SnackBar(
+            content: Text('teacher.feedback_dialog.feedbackSaved'.tr()),
             backgroundColor: AppColors.success,
           ),
         );
@@ -66,7 +73,8 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error saving feedback: $e'),
+            content: Text('teacher.feedback_dialog.errorSavingFeedback'
+                .tr(namedArgs: {'error': '$e'})),
             backgroundColor: Colors.red,
           ),
         );
@@ -78,13 +86,14 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Row(
         children: [
           const Icon(Icons.comment_rounded, color: AppColors.primary),
           const SizedBox(width: 12),
-          const Text('Teacher Feedback'),
+          Text('teacher.feedback_dialog.title'.tr()),
         ],
       ),
       content: Column(
@@ -92,27 +101,28 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Student: ${widget.studentName}',
+            'teacher.feedback_dialog.studentLabel'
+                .tr(namedArgs: {'name': widget.studentName}),
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
           Text(
-            'Unit: ${widget.unitTitle}',
+            'teacher.feedback_dialog.unitLabel'
+                .tr(namedArgs: {'unit': widget.unitTitle}),
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
           const SizedBox(height: 16),
           const Divider(),
           const SizedBox(height: 12),
-          const Text(
-            'Write personalized feedback for the parent:',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          Text(
+            'teacher.feedback_dialog.writeFeedbackPrompt'.tr(),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: _feedbackController,
             maxLines: 5,
             decoration: InputDecoration(
-              hintText: 'E.g., "Great improvement! Keep practicing vocabulary."\n'
-                  'Or: "Needs extra help with verb conjugations. Please review Unit 2."',
+              hintText: 'teacher.feedback_dialog.feedbackHint'.tr(),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -122,7 +132,7 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
           ),
           const SizedBox(height: 8),
           Text(
-            'This feedback will appear on the parent\'s PDF report.',
+            'teacher.feedback_dialog.feedbackDisclaimer'.tr(),
             style: TextStyle(fontSize: 11, color: Colors.grey[500]),
           ),
         ],
@@ -130,7 +140,7 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text('common.cancel'.tr()),
         ),
         ElevatedButton(
           onPressed: _isSaving ? null : _saveFeedback,
@@ -149,7 +159,7 @@ class _TeacherFeedbackDialogState extends State<TeacherFeedbackDialog> {
                     color: Colors.white,
                   ),
                 )
-              : const Text('Save Feedback'),
+              : Text('teacher.feedback_dialog.saveFeedback'.tr()),
         ),
       ],
     );

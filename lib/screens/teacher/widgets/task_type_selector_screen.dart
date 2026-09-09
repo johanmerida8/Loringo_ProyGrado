@@ -1,10 +1,13 @@
 // task_type_selector_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/create_task_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_batch_review_screen.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:provider/provider.dart';
 
 // ── TaskTypeSelectorScreen ──────────────────────────────────────────────────
 // Replaces the old behavior of "Add Task" (which used to jump straight
@@ -159,13 +162,14 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
         children: [
           TeacherScreenHeader(
-            title: 'Add Tasks',
-            subtitle: 'Choose types and how many of each',
+            title: 'teacher.task_type_selector_screen.addTasks'.tr(),
+            subtitle: 'teacher.task_type_selector_screen.chooseTypesAndCount'.tr(),
             color: _c,
           ),
           Expanded(
@@ -182,12 +186,10 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
                   child: Row(children: [
                     Icon(Icons.info_outline, color: _c),
                     const SizedBox(width: AppSpacing.sm),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'Pick exactly which task types you want and how '
-                        'many of each. You\'ll define the content of every '
-                        'one next — nothing is created yet.',
-                        style: TextStyle(fontSize: 13),
+                        'teacher.task_type_selector_screen.pickTypesBannerText'.tr(),
+                        style: const TextStyle(fontSize: 13),
                       ),
                     ),
                   ]),
@@ -219,7 +221,10 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '$_total / ${_isReadingSelected ? 1 : widget.maxTasks} tasks selected',
+                'teacher.task_type_selector_screen.tasksSelectedProgress'.tr(namedArgs: {
+                  'count': '$_total',
+                  'max': '${_isReadingSelected ? 1 : widget.maxTasks}',
+                }),
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -237,8 +242,8 @@ class _TaskTypeSelectorScreenState extends State<TaskTypeSelectorScreen> {
                   ),
                   child: Text(
                     _total == 0
-                        ? 'Select at least one task'
-                        : 'Continue with $_total Task${_total == 1 ? '' : 's'}',
+                        ? 'teacher.task_type_selector_screen.selectAtLeastOneTask'.tr()
+                        : 'teacher.task_type_selector_screen.continueWithTasks'.plural(_total),
                     style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.bold),
                   ),
@@ -281,13 +286,14 @@ class _TypeGroupSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.only(
               top: AppSpacing.md, bottom: AppSpacing.xs),
-          child: Text(groupName.toUpperCase(),
+          child: Text(taskGroupLabel(groupName).toUpperCase(),
               style: AppText.fieldLabel.copyWith(color: AppColors.textSecondary)),
         ),
         ...options.map((option) {
@@ -302,12 +308,11 @@ class _TypeGroupSection extends StatelessWidget {
 
           String? reason;
           if (isReadingTile && readingBlockedByExistingTasks) {
-            reason = 'This activity already has tasks — Reading Comprehension '
-                'must be the only task in an activity';
+            reason = 'teacher.task_type_selector_screen.readingBlockedByExistingTasks'.tr();
           } else if (isReadingTile && isOtherTypeSelected) {
-            reason = 'Reading Comprehension can\'t be combined with other tasks';
+            reason = 'teacher.task_type_selector_screen.readingCantCombine'.tr();
           } else if (!isReadingTile && isReadingSelected) {
-            reason = 'Remove Reading Comprehension to add other tasks';
+            reason = 'teacher.task_type_selector_screen.removeReadingToAddOthers'.tr();
           }
 
           return _TypeCounterTile(
@@ -350,6 +355,7 @@ class _TypeCounterTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
       padding: const EdgeInsets.symmetric(
@@ -379,7 +385,7 @@ class _TypeCounterTile extends StatelessWidget {
             const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Text(
-                option.label,
+                taskTypeLabel(option),
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   color: _isSelected ? color : AppColors.textPrimary,

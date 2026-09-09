@@ -1,6 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 // import 'package:firebase_auth/firebase_auth.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
 import 'package:loringo_app/screens/initials/screen_eight.dart';
 import 'package:loringo_app/screens/initials/screen_nine.dart';
@@ -134,7 +138,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
       if (tasks.isEmpty) _showNoTasksDialog();
     } catch (e) {
       setState(() => isLoading = false);
-      _showErrorDialog('Error loading tasks: $e');
+      _showErrorDialog('${'common.loadingTaskErr'.tr()}: $e');
     }
   }
 
@@ -142,15 +146,15 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('No Tasks'),
-        content: const Text('This activity has no tasks yet.'),
+        title: Text('common.noTask'.tr()),
+        content: Text('common.activityTask'.tr()),
         actions: [
           TextButton(
               onPressed: () {
                 Navigator.pop(context);
                 Navigator.pop(context);
               },
-              child: const Text('OK')),
+              child: Text('common.ok'.tr())),
         ],
       ),
     );
@@ -160,7 +164,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Error'),
+        title: Text('common.error'.tr()),
         content: Text(message),
         actions: [
           TextButton(
@@ -168,7 +172,7 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
                 Navigator.pop(context);
                 Navigator.pop(context);
               },
-              child: const Text('OK')),
+              child: Text('common.ok'.tr())),
         ],
       ),
     );
@@ -318,6 +322,27 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
     _showCompletionDialog();
   }
 
+  /// Safety net for the rare case a student already has this screen open
+  /// the instant a teacher archives their group — the primary gate is
+  /// student_activities_screen.dart not even offering this activity once
+  /// archived, but a screen already in progress bypasses that. Checks the
+  /// student's *current* group (not whatever was true when this screen
+  /// opened), since the archive could happen mid-session.
+  Future<bool> _isCurrentGroupArchived() async {
+    if (widget.studentId == null) return false;
+    final studentDoc = await FirebaseFirestore.instance
+        .collection('students')
+        .doc(widget.studentId)
+        .get();
+    final groupId = studentDoc.data()?['groupId'] as String?;
+    if (groupId == null) return false;
+    final groupDoc = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .doc(groupId)
+        .get();
+    return groupDoc.data()?['archived'] == true;
+  }
+
   void _showCompletionDialog() async {
     final db = Database();
     final totalQuestions = correctAnswers + wrongAnswers;
@@ -328,20 +353,32 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
     int xpEarned = 0;
     try {
       if (!widget.isPreview && widget.studentId != null) {
-        xpEarned = await db.saveActivityCompletion(
-          studentId: widget.studentId!,
-          activityId: widget.activityId,
-          contentId: widget.contentId,
-          unitId: widget.unitId,
-          score: score,
-          correctAnswers: correctAnswers,
-          wrongAnswers: wrongAnswers,
-          xpBase: widget.xpBase ?? 100,
-          bonusXP: widget.bonusXP ?? 0,
-          // Only overwritten server-side when this attempt's score beats
-          // the previously stored bestScore — see database.dart.
-          taskAnswers: taskAnswers,
-        );
+        if (await _isCurrentGroupArchived()) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content:
+                    Text('initials.activity_play_screen.groupArchived'.tr()),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+        } else {
+          xpEarned = await db.saveActivityCompletion(
+            studentId: widget.studentId!,
+            activityId: widget.activityId,
+            contentId: widget.contentId,
+            unitId: widget.unitId,
+            score: score,
+            correctAnswers: correctAnswers,
+            wrongAnswers: wrongAnswers,
+            xpBase: widget.xpBase ?? 100,
+            bonusXP: widget.bonusXP ?? 0,
+            // Only overwritten server-side when this attempt's score beats
+            // the previously stored bestScore — see database.dart.
+            taskAnswers: taskAnswers,
+          );
+        }
       }
     } catch (e) {
       debugPrint('Error saving activity progress: $e');
@@ -353,7 +390,6 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => ActivityCompleteScreen(
-          screenTitle: 'Activity Complete!',
           activityTitle: widget.activityTitle,
           scorePercent: score,
           correctAnswers: correctAnswers,
@@ -569,15 +605,16 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
                 children: [
               const Icon(Icons.error_outline, size: 100, color: Colors.grey),
               const SizedBox(height: 24),
-              Text('Task type "$taskType" not yet implemented',
+              Text(
+                  '${'common.taskType'.tr()} "$taskType" ${'common.notImplemented'.tr()}',
                   style: const TextStyle(fontSize: 18, color: Colors.grey)),
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: () => nextTask(false),
                 style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF4CAF50)),
-                child: const Text('Skip Task',
-                    style: TextStyle(color: Colors.white)),
+                child: Text('common.skipTask'.tr(),
+                    style: const TextStyle(color: Colors.white)),
               ),
             ]),
           ),
@@ -587,11 +624,13 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: AppLoadingIndicator());
     }
     if (tasks.isEmpty) {
-      return const Scaffold(body: Center(child: Text('No tasks available')));
+      return Scaffold(
+          body: Center(child: Text('common.taskAvailability'.tr())));
     }
 
     if (showingPracticeIntro) {
@@ -635,6 +674,7 @@ class _ReviewRoundBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Positioned(
       top: MediaQuery.of(context).padding.top + 8,
       left: 0,
@@ -654,14 +694,14 @@ class _ReviewRoundBanner extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.replay_rounded, size: 14, color: Colors.white),
-                SizedBox(width: 6),
+                const Icon(Icons.replay_rounded, size: 14, color: Colors.white),
+                const SizedBox(width: 6),
                 Text(
-                  'Practice Round',
-                  style: TextStyle(
+                  'initials.activity_play_screen.practiceRound'.tr(),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.bold,

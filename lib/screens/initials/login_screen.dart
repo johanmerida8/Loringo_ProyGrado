@@ -1,14 +1,18 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
 import 'package:loringo_app/components/my_loading.dart';
 import 'package:loringo_app/components/my_textfield.dart';
 import 'package:loringo_app/components/recaptcha/recaptcha_widget.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/reset_password_screen.dart';
 import 'package:loringo_app/screens/student/student_code_screen.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/student_auth_service.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -45,26 +49,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signIn() async {
     if (kIsWeb && !_captchaVerified) {
-      _snack('Please complete the captcha');
+      _snack('common.captcha'.tr());
       return;
     }
     if (_emailCtrl.text.trim().isEmpty) {
-      _snack('Email is required');
+      _snack('common.emailValidation1'.tr());
       return;
     }
     if (!_emailCtrl.text.contains('@')) {
-      _snack('Please enter a valid email');
+      _snack('common.emailValidation2'.tr());
       return;
     }
     if (_passCtrl.text.isEmpty) {
-      _snack('Password is required');
+      _snack('common.passwordValidation1'.tr());
       return;
     }
 
     setState(() => _isLoading = true);
     try {
       await StudentAuthService.clearStudentLogin();
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      await authInstance.signInWithEmailAndPassword(
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text.trim(),
       );
@@ -77,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } on FirebaseAuthException {
       resetRecaptcha();
       setState(() => _captchaVerified = false);
-      _snack('Incorrect email or password');
+      _snack('common.emailIncorrect'.tr());
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -85,6 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (_isLoading) {
       return const Scaffold(
         body: ColoredBox(
@@ -101,21 +106,21 @@ class _LoginScreenState extends State<LoginScreen> {
         height: kIsWeb ? 180 : 185,
         fit: BoxFit.contain,
       ),
-      title: 'Welcome back!',
-      subtitle: 'Sign in to Loringo',
+      title: 'initials.login_screen.welcomeBack'.tr(),
+      subtitle: 'initials.login_screen.signInSubtitle'.tr(),
       form: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           MyTextField(
             controller: _emailCtrl,
-            hintText: 'Email',
+            hintText: 'common.email'.tr(),
             obscureText: false,
             isEnabled: true,
           ),
           const SizedBox(height: AppSpacing.md),
           MyTextField(
             controller: _passCtrl,
-            hintText: 'Password',
+            hintText: 'common.password'.tr(),
             obscureText: true,
             isEnabled: true,
           ),
@@ -125,9 +130,9 @@ class _LoginScreenState extends State<LoginScreen> {
             child: GestureDetector(
               onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ResetPasswordScreen())),
-              child: const Text(
-                'Forgot password?',
-                style: TextStyle(
+              child: Text(
+                'common.forgotPassword'.tr(),
+                style: const TextStyle(
                   fontSize: 13,
                   color: AppColors.primary,
                   fontWeight: FontWeight.w600,
@@ -152,8 +157,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
               elevation: 0,
             ),
-            child: const Text('Sign In',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            child: Text('common.signIn'.tr(),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -182,8 +187,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   Icon(Icons.school_rounded, color: AppColors.primary, size: 20),
                   const SizedBox(width: AppSpacing.sm),
-                  const Text('Student Login',
-                      style: TextStyle(
+                  Text('common.studentLogin'.tr(),
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
                         color: AppColors.primary,
@@ -196,16 +201,16 @@ class _LoginScreenState extends State<LoginScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('New here? ',
+              Text('initials.login_screen.newHere'.tr(),
                   style: TextStyle(
                       color: Colors.grey.shade600,
                       fontSize: 14,
                       fontWeight: FontWeight.w500)),
               GestureDetector(
                 onTap: widget.onTap,
-                child: const Text(
-                  'Create account',
-                  style: TextStyle(
+                child: Text(
+                  'initials.login_screen.createAccount'.tr(),
+                  style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     color: AppColors.primary,
                     fontSize: 14,

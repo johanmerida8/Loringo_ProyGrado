@@ -2,7 +2,10 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -184,7 +187,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
       context,
       isCorrect: correct,
       isPracticeRound: widget.isPracticeRound,
-      buttonLabel: isLastTurn ? 'Finish' : 'Continue',
+      buttonLabel: isLastTurn ? 'common.finish'.tr() : 'common.continue'.tr(),
       onContinue: () {
         if (isLastTurn) {
           final overallCorrect = _correctCount > _wrongCount;
@@ -326,6 +329,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     const grad = BoxDecoration(
       gradient: LinearGradient(colors: [Color(0xFFE8F5E9), Colors.white], begin: Alignment.topCenter, end: Alignment.bottomCenter),
     );
@@ -335,7 +339,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
     }
 
     if (_turns.isEmpty) {
-      return const Scaffold(body: Center(child: Text('No conversation data')));
+      return Scaffold(body: Center(child: Text('common.noConversationData'.tr())));
     }
 
     final currentTurnData = _turns[_currentTurn];
@@ -387,7 +391,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Text(
-                            'Your reply',
+                            'common.yourReply'.tr(),
                             style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
                           ),
                         ),
@@ -416,9 +420,9 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
                         padding: const EdgeInsets.symmetric(vertical: 17),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      child: const Text(
-                        'Check',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                      child: Text(
+                        'common.check'.tr(),
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
                       ),
                     ),
                   ),

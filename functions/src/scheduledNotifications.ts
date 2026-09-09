@@ -106,6 +106,30 @@ function formatDueDate(d: Date): string {
 }
 
 /**
+ * Formats a close TIME the way a parent reads a clock, e.g. "2:30 PM" --
+ * used by notifyClosingSoonActivities so the notification states exactly
+ * when the window shuts (the time the teacher actually picked) instead of
+ * the generic "within 24 hours" wording that used to be there.
+ * @param {Date} d The close date/time to format.
+ * @return {string} The formatted time, e.g. "2:30 PM".
+ */
+// d.getHours()/getMinutes() read the CLOCK's own timezone, which on Cloud
+// Functions is UTC regardless of the onSchedule({timeZone}) option below
+// (that only controls when the cron trigger fires, not what a Date's
+// getters return). A 9:30 PM America/La_Paz (UTC-4) closeDate was landing
+// on getHours() as 1 (01:30 UTC), rendering as "1:30 AM" instead of
+// "9:30 PM". Intl.DateTimeFormat with an explicit timeZone formats in
+// that zone regardless of the runtime's own local time.
+function formatCloseTime(d: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/La_Paz",
+  }).format(d);
+}
+
+/**
  * Runs once every hour, on the hour. Firestore Cloud Scheduler cron
  * syntax: "0 * * * *" = minute 0 of every hour, in the function's
  * configured timeZone.
@@ -171,7 +195,7 @@ export const notifyScheduledActivities = onSchedule(
 
     // Each activity doc's path is content/{contentId}/units/{unitId}/
     // lessons/{lessonId}/activities/{activityId} — contentId is what
-    // ties back to assignedTo (groupIds). Deduplicated into a Map
+    // ties back to the content's owning groupId. Deduplicated into a Map
     // keyed by contentId since multiple activities opening in the same
     // run under the same content shouldn't fan out into separate
     // per-activity notifications to the same parent. Also tracks each
@@ -203,16 +227,18 @@ export const notifyScheduledActivities = onSchedule(
       const contentDoc = await db.collection("content").doc(contentId).get();
       if (!contentDoc.exists) continue;
 
-      const assignedGroupIds = (contentDoc.data()?.assignedTo as string[]) ?? [];
-      if (assignedGroupIds.length === 0) continue;
+      // Content can be assigned to multiple groups at once -- notify
+      // every assigned group's students, not just one.
+      const groupIds = (contentDoc.data()?.assignedTo as string[] | undefined) ?? [];
+      if (groupIds.length === 0) continue;
 
-      for (const groupId of assignedGroupIds) {
-        const groupStudentsSnap = await db
-          .collection("teacherGroups")
-          .doc(groupId)
-          .collection("students")
-          .get();
+      const groupStudentsSnaps = await Promise.all(
+        groupIds.map((groupId) =>
+          db.collection("teacherGroups").doc(groupId).collection("students").get()
+        )
+      );
 
+      for (const groupStudentsSnap of groupStudentsSnaps) {
         for (const studentRefDoc of groupStudentsSnap.docs) {
           const studentId = studentRefDoc.id;
           const studentDoc = await db.collection("students").doc(studentId).get();
@@ -343,52 +369,69 @@ export const notifyClosingSoonActivities = onSchedule(
       const activityId = activityDoc.id;
       const activityTitle = (activityDoc.data().title as string | undefined) ?? "an activity";
       const contentId = activityDoc.ref.path.split("/")[1];
+      // The actual clock time the teacher picked for closeDate, e.g.
+      // "2:30 PM" -- always defined here since this query already
+      // filters to closeDate within the next 24h.
+      const closeTimestamp = activityDoc.data().closeDate as Timestamp;
+      const closeTimeLabel = formatCloseTime(closeTimestamp.toDate());
 
       const contentDoc = await db.collection("content").doc(contentId).get();
       if (!contentDoc.exists) continue;
 
-      const assignedGroupIds = (contentDoc.data()?.assignedTo as string[]) ?? [];
-      if (assignedGroupIds.length === 0) continue;
+      // Content can be assigned to multiple groups at once -- collect
+      // students across all of them, deduped, rather than just one.
+      const groupIds = (contentDoc.data()?.assignedTo as string[] | undefined) ?? [];
+      if (groupIds.length === 0) continue;
 
-      for (const groupId of assignedGroupIds) {
-        const groupStudentsSnap = await db
-          .collection("teacherGroups")
-          .doc(groupId)
-          .collection("students")
-          .get();
-
-        for (const studentRefDoc of groupStudentsSnap.docs) {
-          const studentId = studentRefDoc.id;
-
-          const progressDoc = await db
-            .collection("students")
-            .doc(studentId)
-            .collection("progress")
-            .doc(activityId)
-            .get();
-          const isCompleted = progressDoc.exists && progressDoc.data()?.isCompleted === true;
-          if (isCompleted) continue;
-
-          if (progressDoc.exists && progressDoc.data()?.closingSoonNotifiedAt) {
-            continue;
-          }
-
-          const studentDoc = await db.collection("students").doc(studentId).get();
-          if (!studentDoc.exists) continue;
-          const parentId = studentDoc.data()?.parentId as string | undefined;
-          if (!parentId) continue;
-          const childName = (studentDoc.data()?.names as string | undefined) ?? "your child";
-
-          if (!parentsToNotify.has(parentId)) {
-            parentsToNotify.set(parentId, new Set());
-          }
-          parentsToNotify.get(parentId)!.add(`${childName}: ${activityTitle}`);
-
-          await progressDoc.ref.set(
-            { closingSoonNotifiedAt: Timestamp.now() },
-            { merge: true }
-          );
+      const groupStudentsSnaps = await Promise.all(
+        groupIds.map((groupId) =>
+          db.collection("teacherGroups").doc(groupId).collection("students").get()
+        )
+      );
+      // studentId -> the group whose roster it was found under, so the
+      // per-student progress lookup below can target the right nested
+      // path. A student only ever has one active roster doc at a time,
+      // so the last group wins if somehow found in more than one.
+      const studentGroupIds = new Map<string, string>();
+      for (let i = 0; i < groupStudentsSnaps.length; i++) {
+        for (const doc of groupStudentsSnaps[i].docs) {
+          studentGroupIds.set(doc.id, groupIds[i]);
         }
+      }
+
+      for (const [studentId, studentGroupId] of studentGroupIds) {
+        const progressDoc = await db
+          .collection("teacherGroups")
+          .doc(studentGroupId)
+          .collection("students")
+          .doc(studentId)
+          .collection("progress")
+          .doc(activityId)
+          .get();
+        const isCompleted = progressDoc.exists && progressDoc.data()?.isCompleted === true;
+        if (isCompleted) continue;
+
+        if (progressDoc.exists && progressDoc.data()?.closingSoonNotifiedAt) {
+          continue;
+        }
+
+        const studentDoc = await db.collection("students").doc(studentId).get();
+        if (!studentDoc.exists) continue;
+        const parentId = studentDoc.data()?.parentId as string | undefined;
+        if (!parentId) continue;
+        const childName = (studentDoc.data()?.names as string | undefined) ?? "your child";
+
+        if (!parentsToNotify.has(parentId)) {
+          parentsToNotify.set(parentId, new Set());
+        }
+        parentsToNotify.get(parentId)!.add(
+          `${childName}: ${activityTitle} closes at ${closeTimeLabel}`
+        );
+
+        await progressDoc.ref.set(
+          { closingSoonNotifiedAt: Timestamp.now() },
+          { merge: true }
+        );
       }
     }
 
@@ -401,7 +444,10 @@ export const notifyClosingSoonActivities = onSchedule(
       const summary = Array.from(pairs).slice(0, 5).join("; ");
       const extra = pairs.size > 5 ? ` and ${pairs.size - 5} more` : "";
       const title = "Closing soon";
-      const body = `${summary}${extra} — closes within 24 hours and isn't done yet.`;
+      // Per-item close time is already embedded in each pairLabel (see
+      // above), so the body doesn't need its own generic "within 24
+      // hours" tail anymore -- states the actual time instead.
+      const body = `${summary}${extra}`;
 
       sends.push(pushToParent(parentId, title, body));
       sends.push(

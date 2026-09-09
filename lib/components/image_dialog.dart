@@ -73,8 +73,11 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
       itemCount: categories.length,
       itemBuilder: (_, index) {
         final cat = categories[index];
-        // Field is now 'categoryName'
-        final catName = cat['categoryName'] as String? ?? '';
+        // displayName is what the user typed; categoryName is the
+        // folder-safe form (see Database.createCategory) — falls back to
+        // categoryName for categories created before displayName existed.
+        final catName = cat['displayName'] as String? ??
+            cat['categoryName'] as String? ?? '';
         final catOwnerId = cat['ownerId'] as String? ?? '';
         return ListTile(
           leading: Container(width: 36, height: 36, decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.folder_rounded, color: _green, size: 20)),

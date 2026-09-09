@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/material.dart';
 
@@ -34,22 +35,21 @@ class SpeechPermissions {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('Microphone Access Needed'),
-        content: const Text(
-          'This app needs microphone access to practice your English pronunciation. '
-          'Please grant permission to continue.',
+        title: Text('initials.speech_permissions.title'.tr()),
+        content: Text(
+          'initials.speech_permissions.body'.tr(),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not Now'),
+            child: Text('initials.speech_permissions.notNow'.tr()),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
             ),
-            child: const Text('Grant Permission'),
+            child: Text('initials.speech_permissions.grantPermission'.tr()),
           ),
         ],
       ),

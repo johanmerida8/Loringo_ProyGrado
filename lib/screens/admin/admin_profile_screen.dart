@@ -1,15 +1,22 @@
 // admin_profile_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/edit_text_dialog.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/admin/widgets/admin_screen_header.dart';
 import 'package:loringo_app/screens/initials/reset_in_app_screen.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class AdminProfileScreen extends StatefulWidget {
-  const AdminProfileScreen({super.key});
+  final bool showBackButton;
+
+  const AdminProfileScreen({super.key, this.showBackButton = false});
 
   @override
   State<AdminProfileScreen> createState() => _AdminProfileScreenState();
@@ -69,13 +76,13 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadii.lg)),
-        title: const Text('Log Out'),
-        content: const Text('Are you sure you want to log out?'),
+        title: Text('common.logout'.tr()),
+        content: Text('common.logoutMsg'.tr()),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppColors.muted))),
+              child: Text('common.cancel'.tr(),
+                  style: const TextStyle(color: AppColors.muted))),
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
@@ -88,8 +95,8 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
               }
             },
             style: TextButton.styleFrom(foregroundColor: AppColors.warning),
-            child: const Text('Log Out',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            child: Text('common.logout'.tr(),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -98,6 +105,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final biometricProvider = context.watch<BiometricProvider>();
     final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -125,20 +133,22 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
       child: Row(children: [
-        GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: AppColors.primarySoft(0.1),
-              borderRadius: BorderRadius.circular(AppRadii.md),
+        if (widget.showBackButton) ...[
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft(0.1),
+                borderRadius: BorderRadius.circular(AppRadii.md),
+              ),
+              child: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: AppColors.primary, size: 18),
             ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded,
-                color: AppColors.primary, size: 18),
           ),
-        ),
-        const SizedBox(width: AppSpacing.md),
-        const Text('My Profile', style: AppText.h1),
+          const SizedBox(width: AppSpacing.md),
+        ],
+        Text('common.myProfile'.tr(), style: AppText.h1),
       ]),
     );
   }
@@ -174,7 +184,10 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
           ),
         ),
         const SizedBox(height: AppSpacing.md),
-        Text(_name.isNotEmpty ? _name : 'Admin',
+        Text(
+            _name.isNotEmpty
+                ? _name
+                : 'admin.admin_dashboard_screen.imageManager'.tr(),
             style: const TextStyle(
                 color: Colors.white,
                 fontSize: 22,
@@ -187,8 +200,8 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
             color: Colors.white.withOpacity(0.2),
             borderRadius: BorderRadius.circular(AppRadii.pill),
           ),
-          child: const Text('Admin',
-              style: TextStyle(
+          child: Text('admin.admin_dashboard_screen.imageManager'.tr(),
+              style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12,
                   fontWeight: FontWeight.w600)),
@@ -211,32 +224,37 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
           ),
         ],
       ),
-      child: Column(
-        children: [
-          _buildMenuItem(
-            icon: Icons.person_outline_rounded,
-            title: 'Personal Data',
-            subtitle: 'View and manage your information',
-            onTap: () => _navigateToPersonalData(),
-          ),
-          const Divider(height: 1, indent: 56, endIndent: 16),
-          _buildMenuItem(
-            icon: Icons.security_rounded,
-            title: 'Security',
-            subtitle: 'Biometric & password settings',
-            onTap: () => _navigateToSecurity(),
-          ),
-          const Divider(height: 1, indent: 56, endIndent: 16),
-          // _buildBiometricToggle(biometricProvider, userId),
-          // const Divider(height: 1, indent: 56, endIndent: 16),
-          _buildMenuItem(
-            icon: Icons.logout_rounded,
-            title: 'Log Out',
-            subtitle: 'Sign out from your account',
-            onTap: _showLogoutConfirmation,
-            isDestructive: true,
-          ),
-        ],
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            _buildMenuItem(
+              icon: Icons.person_outline_rounded,
+              title: 'common.personalData'.tr(),
+              subtitle: 'admin.admin_profile_screen.viewManageInfo'.tr(),
+              onTap: () => _navigateToPersonalData(),
+            ),
+            const Divider(height: 1, indent: 56, endIndent: 16),
+            _buildMenuItem(
+              icon: Icons.security_rounded,
+              title: 'common.security'.tr(),
+              subtitle: 'admin.admin_profile_screen.biometricPasswordSettings'.tr(),
+              onTap: () => _navigateToSecurity(),
+            ),
+            const Divider(height: 1, indent: 56, endIndent: 16),
+            // _buildBiometricToggle(biometricProvider, userId),
+            // const Divider(height: 1, indent: 56, endIndent: 16),
+            _buildMenuItem(
+              icon: Icons.logout_rounded,
+              title: 'common.logout'.tr(),
+              subtitle: 'common.signOut'.tr(),
+              onTap: _showLogoutConfirmation,
+              isDestructive: true,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -302,25 +320,39 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => Scaffold(
-          backgroundColor: const Color(0xFFEFF6EE),
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildPersonalDataHeader(context),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildPersonalDataCard(),
-                ],
-              ),
-            ),
-          ),
-        ),
+        builder: (context) {
+          context.watch<LocaleProvider>();
+          return StatefulBuilder(
+            builder: (context, setLocalState) {
+              _personalDataRefresh = setLocalState;
+              return Scaffold(
+                backgroundColor: const Color(0xFFEFF6EE),
+                body: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildPersonalDataHeader(context),
+                        const SizedBox(height: AppSpacing.lg),
+                        _buildPersonalDataCard(),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
-    );
+    ).then((_) => _personalDataRefresh = null);
   }
+
+  /// Forces the currently-pushed personal-data route to rebuild instantly
+  /// when the name is edited — that route lives outside this widget's own
+  /// subtree (it's a sibling under the Navigator), so setState() here alone
+  /// doesn't reach it.
+  void Function(void Function())? _personalDataRefresh;
 
   Widget _buildPersonalDataHeader(BuildContext context) {
     return Row(children: [
@@ -337,7 +369,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
         ),
       ),
       const SizedBox(width: AppSpacing.md),
-      const Text('Personal Data', style: AppText.h1),
+      Text('common.personalData'.tr(), style: AppText.h1),
     ]);
   }
 
@@ -351,12 +383,19 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
         children: [
           _buildInfoRow(
               icon: Icons.badge_outlined,
-              label: 'Display Name',
-              value: _name.isNotEmpty ? _name : 'Not set'),
+              label: 'common.displayName'.tr(),
+              value: _name.isNotEmpty
+                  ? _name
+                  : 'admin.admin_profile_screen.notSet'.tr(),
+              trailing: IconButton(
+                icon: const Icon(Icons.edit_outlined,
+                    size: 18, color: AppColors.primary),
+                onPressed: _editName,
+              )),
           const Divider(height: 1, indent: 40),
           _buildInfoRow(
               icon: Icons.email_outlined,
-              label: 'Email Address',
+              label: 'common.emailAddress'.tr(),
               value: _email),
         ],
       ),
@@ -367,6 +406,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
     required IconData icon,
     required String label,
     required String value,
+    Widget? trailing,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md - 2),
@@ -391,8 +431,30 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
             ],
           ),
         ),
+        if (trailing != null) trailing,
       ]),
     );
+  }
+
+  Future<void> _editName() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final newName = await showEditTextDialog(
+      context,
+      title: 'common.displayName'.tr(),
+      initialValue: _name,
+      onSave: (value) => Database().updateUser(uid: uid, name: value),
+    );
+
+    if (newName != null && mounted) {
+      _name = newName;
+      _personalDataRefresh?.call(() {});
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('common.displayNameUpdate'.tr())),
+      );
+    }
   }
 
   void _navigateToSecurity() {
@@ -411,6 +473,7 @@ class _AdminSecurityScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final biometricProvider = context.watch<BiometricProvider>();
     final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -449,7 +512,7 @@ class _AdminSecurityScreen extends StatelessWidget {
         ),
       ),
       const SizedBox(width: AppSpacing.md),
-      const Text('Security', style: AppText.h1),
+      Text('common.security'.tr(), style: AppText.h1),
     ]);
   }
 
@@ -459,39 +522,47 @@ class _AdminSecurityScreen extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppRadii.lg),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text('Password',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary)),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.primarySoft(0.1),
-                borderRadius: BorderRadius.circular(12),
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text('common.password'.tr(),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary)),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primarySoft(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.lock_reset_outlined,
+                    color: AppColors.primary, size: 22),
               ),
-              child: const Icon(Icons.lock_reset_outlined,
-                  color: AppColors.primary, size: 22),
+              title: Text('common.changePassword'.tr(),
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              subtitle: Text('admin.admin_profile_screen.updateYourPassword'.tr(),
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ResetInAppScreen(
+                        header: AdminScreenHeader(
+                            title: 'common.changePassword'.tr()))),
+              ),
             ),
-            title: const Text('Change Password',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            subtitle: const Text('Update your password',
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-            trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ResetInAppScreen()),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -502,45 +573,50 @@ class _AdminSecurityScreen extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppRadii.lg),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text('Biometric Authentication',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary)),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: provider.isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: AppColors.primary))
-                : provider.isSupported
-                    ? SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(provider.biometricTypeName,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 15)),
-                        subtitle: const Text('Use biometrics to sign in quickly'),
-                        value: provider.isEnabled,
-                        activeColor: AppColors.primary,
-                        onChanged: (value) => provider.toggle(context, userId),
-                      )
-                    : const Row(children: [
-                        Icon(Icons.fingerprint_outlined, size: 24, color: Colors.grey),
-                        SizedBox(width: 16),
-                        Expanded(
-                          child: Text('Biometrics not available on this device',
-                              style: TextStyle(fontSize: 14, color: Colors.grey)),
-                        ),
-                      ]),
-          ),
-        ],
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text('common.biometricAuth'.tr(),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary)),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: provider.isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.primary))
+                  : provider.isSupported
+                      ? SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(provider.biometricTypeName,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 15)),
+                          subtitle: Text('common.biometricSignIn'.tr()),
+                          value: provider.isEnabled,
+                          activeColor: AppColors.primary,
+                          onChanged: (value) => provider.toggle(context, userId),
+                        )
+                      : Row(children: [
+                          const Icon(Icons.fingerprint_outlined, size: 24, color: Colors.grey),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Text('common.biometricsNotAvailable'.tr(),
+                                style: const TextStyle(fontSize: 14, color: Colors.grey)),
+                          ),
+                        ]),
+            ),
+          ],
+        ),
       ),
     );
   }

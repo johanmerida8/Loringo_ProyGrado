@@ -1,9 +1,12 @@
 // lib/screens/parent/parent_home_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/avatar_image.dart';
 import 'package:loringo_app/components/notification_permission_card.dart';
 import 'package:loringo_app/components/notifications_badge.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/parent/child_report_detail_screen.dart';
 import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
@@ -38,6 +41,14 @@ class ParentHomeScreen extends StatelessWidget {
   final VoidCallback onNavigateToNotifications;
   final VoidCallback onLogout;
   final VoidCallback onDeleteAccount;
+  // Re-runs ParentNavigationScreen._loadData(), which refetches myChildren
+  // with a fresh List instance. _FollowUpsSection's didUpdateWidget already
+  // reloads its own (separately-fetched) overdue/due-today data whenever
+  // that reference changes -- this callback is what actually triggers it,
+  // since without a way to re-run _loadData, Follow-ups only ever fetched
+  // once per app session and never noticed a teacher editing an activity's
+  // due date afterwards.
+  final Future<void> Function() onRefresh;
 
   const ParentHomeScreen({
     super.key,
@@ -53,6 +64,7 @@ class ParentHomeScreen extends StatelessWidget {
     required this.onNavigateToNotifications,
     required this.onLogout,
     required this.onDeleteAccount,
+    required this.onRefresh,
   });
 
   /// Latest report per child (by generatedAt), most recent first, capped
@@ -77,10 +89,15 @@ class ParentHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final activity = _recentActivity;
 
-    return SingleChildScrollView(
-      child: Column(
+    return RefreshIndicator(
+      color: AppColors.primary,
+      onRefresh: onRefresh,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
@@ -129,7 +146,9 @@ class ParentHomeScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
               decoration: BoxDecoration(
                   color: AppColors.primary, borderRadius: BorderRadius.circular(20)),
-              child: Text('Hello, $parentName!',
+              child: Text(
+                  'parent.parent_home_screen.helloName'
+                      .tr(namedArgs: {'name': parentName}),
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
@@ -168,10 +187,10 @@ class ParentHomeScreen extends StatelessWidget {
           // ── Recent activity feed ──
           if (activity.isNotEmpty) ...[
             const SizedBox(height: 24),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: Text('Recent Activity',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text('parent.parent_home_screen.recentActivity'.tr(),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 12),
             Padding(
@@ -205,14 +224,14 @@ class ParentHomeScreen extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('My Children',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('common.myChildren'.tr(),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 TextButton.icon(
                   onPressed: onSeeAllChildren,
                   icon: const Icon(Icons.arrow_forward,
                       size: 16, color: AppColors.primary),
-                  label: const Text('See all',
-                      style: TextStyle(color: AppColors.primary)),
+                  label: Text('parent.parent_home_screen.seeAll'.tr(),
+                      style: const TextStyle(color: AppColors.primary)),
                 ),
               ],
             ),
@@ -242,6 +261,7 @@ class ParentHomeScreen extends StatelessWidget {
                 )),
           const SizedBox(height: 8),
         ],
+        ),
       ),
     );
   }
@@ -249,8 +269,10 @@ class ParentHomeScreen extends StatelessWidget {
   Widget _activityTile(BuildContext context, _ActivityEntry entry) {
     final child = entry.child;
     final report = entry.report;
-    final childName = child['names'] as String? ?? 'Student';
-    final unitTitle = report['unitTitle'] as String? ?? 'Unit';
+    final childName = child['names'] as String? ??
+        'parent.parent_home_screen.studentFallback'.tr();
+    final unitTitle = report['unitTitle'] as String? ??
+        'parent.parent_home_screen.unitFallback'.tr();
     final percent = (report['quizPercent'] as num?)?.toInt() ?? 0;
     final generatedAt = report['generatedAt'] as Timestamp?;
     final dateStr = generatedAt != null ? formatDate(generatedAt.toDate()) : '';
@@ -305,7 +327,8 @@ class ParentHomeScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '$childName completed $unitTitle',
+                      'parent.parent_home_screen.childCompletedActivity'
+                          .tr(namedArgs: {'child': childName, 'unit': unitTitle}),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
@@ -350,8 +373,9 @@ class ParentHomeScreen extends StatelessWidget {
 
   Widget _childSummaryCardInner(Map<String, dynamic> child, {required int overdueCount}) {
     final hasGroup = (child['groupId'] as String?)?.isNotEmpty == true;
-    final avatarPath = child['avatar'] as String? ?? 'assets/avatars/panda.png';
-    final childName = child['names'] as String? ?? 'Student';
+    final avatarPath = child['avatar'] as String? ?? kAvatarFallbackAsset;
+    final childName = child['names'] as String? ??
+        'parent.parent_home_screen.studentFallback'.tr();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -372,21 +396,18 @@ class ParentHomeScreen extends StatelessWidget {
             radius: 24,
             backgroundColor: AppColors.primarySoft(0.15),
             child: ClipOval(
-              child: Image.asset(
-                avatarPath,
+              child: AvatarImage(
+                avatar: avatarPath,
                 fit: BoxFit.cover,
-                width: 48,
-                height: 48,
-                errorBuilder: (context, error, stackTrace) {
-                  return Text(
-                    childName[0].toUpperCase(),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                      fontSize: 18,
-                    ),
-                  );
-                },
+                size: 48,
+                fallbackBuilder: (context) => Text(
+                  childName[0].toUpperCase(),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                    fontSize: 18,
+                  ),
+                ),
               ),
             ),
           ),
@@ -413,7 +434,8 @@ class ParentHomeScreen extends StatelessWidget {
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          '$overdueCount overdue',
+                          'parent.parent_home_screen.overdueCount'
+                              .plural(overdueCount),
                           style: const TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
@@ -426,8 +448,8 @@ class ParentHomeScreen extends StatelessWidget {
                 ),
                 Text(
                   hasGroup
-                      ? groupNames[child['id']] ?? 'Unknown Group'
-                      : 'No group assigned',
+                      ? groupNames[child['id']] ?? 'common.unknownGroup'.tr()
+                      : 'common.noGroupAssigned'.tr(),
                   style: TextStyle(
                     fontSize: 12,
                     color: hasGroup ? AppColors.primary : Colors.orange,
@@ -449,7 +471,7 @@ class ParentHomeScreen extends StatelessWidget {
           children: [
             Icon(Icons.child_care_rounded, size: 64, color: Colors.grey[300]),
             const SizedBox(height: 10),
-            Text('No children registered yet', style: TextStyle(color: Colors.grey[500])),
+            Text('common.noChildRegistered'.tr(), style: TextStyle(color: Colors.grey[500])),
           ],
         ),
       ),
@@ -512,7 +534,8 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
         return <Map<String, dynamic>>[];
       }
       final items = await _db.getChildActivityStatusList(groupId: groupId, studentId: childId);
-      final childName = child['names'] as String? ?? 'Student';
+      final childName = child['names'] as String? ??
+          'parent.parent_home_screen.studentFallback'.tr();
       // Tag each item with which child/card it belongs to — the
       // Database method itself doesn't know about parents/children,
       // only groupId/studentId, so this is where that context gets
@@ -540,20 +563,29 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
     switch (status) {
       case 'past_due':
         final due = item['dueDate'] as DateTime?;
-        return due == null ? 'Past due' : 'Overdue since ${widget.formatDate(due)}';
+        return due == null
+            ? 'parent.parent_home_screen.pastDue'.tr()
+            : 'parent.parent_home_screen.overdueSince'
+                .tr(namedArgs: {'date': widget.formatDate(due)});
       case 'due_today':
-        return 'Due today';
+        return 'parent.parent_home_screen.dueToday'.tr();
       case 'due_tomorrow':
-        return 'Due tomorrow';
+        return 'parent.parent_home_screen.dueTomorrow'.tr();
       case 'not_open_yet':
         if (item['notOpenReason'] == 'scheduled') {
           final scheduled = item['scheduledDate'] as DateTime?;
-          return scheduled == null ? 'Not open yet' : 'Opens ${widget.formatDate(scheduled)}';
+          return scheduled == null
+              ? 'parent.parent_home_screen.notOpenYet'.tr()
+              : 'parent.parent_home_screen.opensOn'
+                  .tr(namedArgs: {'date': widget.formatDate(scheduled)});
         }
-        return 'Locked — complete earlier activities first';
+        return 'parent.parent_home_screen.lockedEarlierActivities'.tr();
       default:
         final due = item['dueDate'] as DateTime?;
-        return due == null ? 'No due date' : 'Due ${widget.formatDate(due)}';
+        return due == null
+            ? 'parent.parent_home_screen.noDueDate'.tr()
+            : 'parent.parent_home_screen.dueOn'
+                .tr(namedArgs: {'date': widget.formatDate(due)});
     }
   }
 
@@ -574,6 +606,7 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _future,
       builder: (context, snapshot) {
@@ -592,15 +625,15 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Follow-ups',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('parent.parent_home_screen.followUps'.tr(),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
                     child: _countCard(
                       icon: Icons.warning_amber_rounded,
-                      label: 'Past Due',
+                      label: 'parent.parent_home_screen.pastDue'.tr(),
                       value: '$pastDueCount',
                       color: AppColors.danger,
                     ),
@@ -609,7 +642,7 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
                   Expanded(
                     child: _countCard(
                       icon: Icons.today_rounded,
-                      label: 'Due Today',
+                      label: 'parent.parent_home_screen.dueToday'.tr(),
                       value: '$dueTodayCount',
                       color: AppColors.warning,
                     ),
@@ -632,8 +665,8 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
                       Expanded(
                         child: Text(
                           all.isEmpty
-                              ? 'Nothing assigned yet.'
-                              : 'All caught up — nothing past due or due today!',
+                              ? 'parent.parent_home_screen.nothingAssignedYet'.tr()
+                              : 'parent.parent_home_screen.allCaughtUp'.tr(),
                           style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                         ),
                       ),
@@ -729,7 +762,34 @@ class _FollowUpsSectionState extends State<_FollowUpsSection> {
   }
 }
 
-// ── Task-type insights section ──────────────────────────────────────
+// ── Skill insights section ──────────────────────────────────────────
+//
+// Per child (not merged across siblings — a parent with several kids
+// needs to know THIS one's strongest/weakest skill, not a blended
+// average that belongs to nobody), aggregated at the CATEGORY level
+// (Vocabulary/Grammar/Reading/Speaking & Listening/Conversation, via
+// taskCategoryFor -- kTaskTypeGroups) rather than by individual task
+// type: a parent never sees "Image Select" or "Fill in the Blank"
+// themselves (they don't do the activities), but "Vocabulary" and
+// "Grammar" mean something to them. A category only counts as "needs
+// practice" below _kNeedsPracticeThreshold -- otherwise a child with no
+// real weak spot gets a reassuring "no practice needed" line instead of
+// an arbitrary second-best category being flagged as if it were a
+// problem.
+
+/// Average accuracy below which a category is flagged as needing
+/// practice -- matches the 2-star cutoff used elsewhere for
+/// activity/quiz scoring (Database.saveActivityCompletion), so "needs
+/// practice" lines up with the same bar the rest of the app already
+/// uses for "doing fine" vs. "could improve".
+const double _kNeedsPracticeThreshold = 70;
+
+class _ChildSkillInsight {
+  final Map<String, dynamic> child;
+  final MapEntry<String, _TypeStat> strongest;
+  final MapEntry<String, _TypeStat>? needsPractice;
+  const _ChildSkillInsight({required this.child, required this.strongest, this.needsPractice});
+}
 
 class _TaskInsightsSection extends StatefulWidget {
   final List<Map<String, dynamic>> myChildren;
@@ -741,7 +801,7 @@ class _TaskInsightsSection extends StatefulWidget {
 }
 
 class _TaskInsightsSectionState extends State<_TaskInsightsSection> {
-  late Future<Map<String, _TypeStat>> _future;
+  late Future<List<_ChildSkillInsight>> _future;
 
   @override
   void initState() {
@@ -757,26 +817,28 @@ class _TaskInsightsSectionState extends State<_TaskInsightsSection> {
     }
   }
 
-  /// Aggregates every completed task's score, grouped by task type,
-  /// across all children — reads progress.taskAnswers, the same map
+  /// Aggregates every completed task's score, grouped by skill category,
+  /// one child at a time — reads progress.taskAnswers, the same map
   /// activity_play_screen.dart writes per task (each entry carries
   /// 'type' plus per-task fields). No new tracking needed: this is
   /// purely an aggregation over data already being written.
-  Future<Map<String, _TypeStat>> _load() async {
-    final byType = <String, _TypeStat>{};
+  Future<List<_ChildSkillInsight>> _load() async {
+    final insights = <_ChildSkillInsight>[];
 
     for (final child in widget.myChildren) {
       final childId = child['id'] as String?;
       if (childId == null) continue;
 
-      final progressSnap = await FirebaseFirestore.instance
-          .collection('students')
-          .doc(childId)
-          .collection('progress')
-          .get();
+      final byCategory = <String, _TypeStat>{};
 
-      for (final doc in progressSnap.docs) {
-        final taskAnswers = doc.data()['taskAnswers'] as Map<String, dynamic>?;
+      // Full lifetime history, not just the current group's — walks every
+      // group this child has ever been in (see
+      // Database.getAllProgressEver), so a child's skill insights don't
+      // reset to nothing just because they switched groups.
+      final allProgress = await Database().getAllProgressEver(childId);
+
+      for (final data in allProgress) {
+        final taskAnswers = data['taskAnswers'] as Map<String, dynamic>?;
         if (taskAnswers == null) continue;
 
         for (final answer in taskAnswers.values) {
@@ -785,46 +847,69 @@ class _TaskInsightsSectionState extends State<_TaskInsightsSection> {
           final accuracy = (answer['accuracy'] as num?)?.toDouble();
           if (type == null || accuracy == null) continue;
 
-          final stat = byType.putIfAbsent(type, () => _TypeStat());
+          final stat = byCategory.putIfAbsent(taskCategoryFor(type), () => _TypeStat());
           stat.total += accuracy;
           stat.count += 1;
         }
       }
+
+      // Need at least 2 distinct categories with real attempts before a
+      // "strongest/needs practice" comparison means anything for this
+      // child — otherwise skip them rather than show a misleading
+      // single-datapoint insight.
+      if (byCategory.length < 2) continue;
+
+      final ranked = byCategory.entries.toList()
+        ..sort((a, b) => b.value.average.compareTo(a.value.average));
+      final weakest = ranked.last;
+
+      insights.add(_ChildSkillInsight(
+        child: child,
+        strongest: ranked.first,
+        needsPractice: weakest.value.average < _kNeedsPracticeThreshold ? weakest : null,
+      ));
     }
 
-    return byType;
+    return insights;
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, _TypeStat>>(
+    context.watch<LocaleProvider>();
+    return FutureBuilder<List<_ChildSkillInsight>>(
       future: _future,
       builder: (context, snapshot) {
-        final byType = snapshot.data ?? const <String, _TypeStat>{};
-        // Need a handful of distinct types with real attempts before a
-        // "strongest/weakest" comparison means anything.
-        if (byType.length < 2) return const SizedBox.shrink();
-
-        final ranked = byType.entries.toList()
-          ..sort((a, b) => b.value.average.compareTo(a.value.average));
-        final strongest = ranked.take(2).toList();
-        final weakest = ranked.reversed.take(2).toList();
+        final insights = snapshot.data ?? const <_ChildSkillInsight>[];
+        if (insights.isEmpty) return const SizedBox.shrink();
 
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Skill Insights',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('parent.parent_home_screen.skillInsights'.tr(),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: _typeStatColumn('Strongest', strongest, AppColors.success)),
-                  const SizedBox(width: 12),
-                  Expanded(child: _typeStatColumn('Needs Practice', weakest, AppColors.danger)),
-                ],
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.05),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    for (int i = 0; i < insights.length; i++) ...[
+                      if (i > 0) Divider(height: 1, color: Colors.grey.shade100),
+                      _childInsightRow(insights[i]),
+                    ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -833,35 +918,78 @@ class _TaskInsightsSectionState extends State<_TaskInsightsSection> {
     );
   }
 
-  Widget _typeStatColumn(String heading, List<MapEntry<String, _TypeStat>> entries, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.05),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
+  Widget _childInsightRow(_ChildSkillInsight insight) {
+    final childName = insight.child['names'] as String? ??
+        'parent.parent_home_screen.studentFallback'.tr();
+    final avatarPath = insight.child['avatar'] as String? ?? kAvatarFallbackAsset;
+    final needsPractice = insight.needsPractice;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(heading,
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
-          const SizedBox(height: 8),
-          ...entries.map((e) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  '${taskTypeOptionFor(e.key).label} · ${e.value.average.round()}%',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: AppColors.primarySoft(0.15),
+            child: ClipOval(
+              child: AvatarImage(
+                avatar: avatarPath,
+                fit: BoxFit.cover,
+                size: 32,
+                fallbackBuilder: (context) => Text(
+                  childName[0].toUpperCase(),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(childName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 3),
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                        text: 'parent.parent_home_screen.strongestPrefix'.tr(),
+                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    TextSpan(
+                      text: '${taskGroupLabel(insight.strongest.key)} (${insight.strongest.value.average.round()}%)',
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success),
+                    ),
+                  ]),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-              )),
+                const SizedBox(height: 2),
+                needsPractice == null
+                    ? Text('parent.parent_home_screen.noPracticeNeeded'.tr(),
+                        style: const TextStyle(fontSize: 12, color: AppColors.success))
+                    : Text.rich(
+                        TextSpan(children: [
+                          TextSpan(
+                              text: 'parent.parent_home_screen.needsPracticePrefix'.tr(),
+                              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          TextSpan(
+                            text: '${taskGroupLabel(needsPractice.key)} (${needsPractice.value.average.round()}%)',
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.danger),
+                          ),
+                        ]),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+              ],
+            ),
+          ),
         ],
       ),
     );

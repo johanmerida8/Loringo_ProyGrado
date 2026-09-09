@@ -1,10 +1,16 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
+import 'package:loringo_app/models/league_tier.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/activity_play_screen.dart';
 import 'package:loringo_app/screens/initials/quiz_play_screen.dart';
+import 'package:loringo_app/screens/student/widgets/league_ascension_dialog.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // CHANGE LOG (lesson quiz removal):
@@ -38,16 +44,42 @@ import 'package:loringo_app/theme/app_theme.dart';
 //   unlock logic, quiz logic, and the prerequisite chain itself are
 //   untouched.
 
+// ── Raw-fetch result shapes for _loadAssignedContent's parallel fetch
+// phase (see that method's doc comment) — just bundles a snapshot with
+// its lesson/unit doc so the later sequential compute phase never has to
+// await anything, only read from these.
+class _LessonFetchResult {
+  final QueryDocumentSnapshot<Map<String, dynamic>> lessonDoc;
+  final QuerySnapshot<Map<String, dynamic>> activitiesSnap;
+  final QuerySnapshot<Map<String, dynamic>> lessonQuizSnap;
+  _LessonFetchResult(this.lessonDoc, this.activitiesSnap, this.lessonQuizSnap);
+}
+
+class _UnitFetchResult {
+  final QueryDocumentSnapshot<Map<String, dynamic>> unitDoc;
+  final QuerySnapshot<Map<String, dynamic>> unitQuizzesSnap;
+  final List<_LessonFetchResult> lessons;
+  _UnitFetchResult(this.unitDoc, this.unitQuizzesSnap, this.lessons);
+}
+
 class StudentActivitiesTab extends StatefulWidget {
   final String studentId;
   final String studentName;
   final String? studentAvatar;
+
+  /// true when hosted inside StudentMainScreen's bottom-nav/drawer chrome
+  /// (the normal case). false is the distraction-free "Full Screen" mode
+  /// (see _buildHeader's button) — pushed as its own bare route with no
+  /// nav bar, drawer, or header, same pattern as TeacherActivityScreen's
+  /// embedded flag in group_navigation_screen.dart.
+  final bool embedded;
 
   const StudentActivitiesTab({
     super.key,
     required this.studentId,
     required this.studentName,
     this.studentAvatar,
+    this.embedded = true,
   });
 
   @override
@@ -56,16 +88,41 @@ class StudentActivitiesTab extends StatefulWidget {
 
 class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
   String? groupId;
-  String? groupName;
-  String? _avatar;
+
+  // Archived groups keep every student's existing xp/progress/reports
+  // fully intact (nothing here touches stored data) — this only stops
+  // rendering the actionable content list, so no new work can be started
+  // in a group the teacher has retired. Refetched whenever groupId
+  // changes (see _listenToStudentDoc), and re-checked on every load, so
+  // un-archiving is picked up immediately without any extra action.
+  bool _isGroupArchived = false;
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _studentSub;
   Future<List<Map<String, dynamic>>>? _assignedContentFuture;
 
+  // The last successfully-loaded list, kept around so a refresh (e.g.
+  // returning from an activity) can keep showing it while the new fetch
+  // is in flight, instead of blanking to a full-screen spinner and
+  // re-triggering every Lottie mascot animation on screen — see
+  // _startLoad/build's FutureBuilder for how this is used.
+  List<Map<String, dynamic>>? _lastLoadedActivities;
+
+  // Persistent per-item keys (survive rebuilds since they're keyed by
+  // stable activity/quiz id, not list index) so _scrollToCurrentItem can
+  // find each bubble's on-screen position via Scrollable.ensureVisible.
+  final Map<String, GlobalKey> _itemKeys = {};
+
+  // Guards against re-triggering the auto-scroll on every unrelated
+  // rebuild — FutureBuilder's builder re-runs whenever this widget
+  // rebuilds, not just when _assignedContentFuture actually changes, so
+  // without this a rebuild mid-manual-scroll would yank the student back.
+  // Only a genuinely new future (fresh load / _refreshContent after
+  // completing something) should trigger another auto-scroll.
+  Future<List<Map<String, dynamic>>>? _scrolledForFuture;
+
   @override
   void initState() {
     super.initState();
-    _avatar = widget.studentAvatar;
     _listenToStudentDoc();
   }
 
@@ -85,29 +142,32 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
 
       final studentData = studentDoc.data();
       final fetchedGroupId = studentData?['groupId'] as String?;
-      final fetchedAvatar = studentData?['avatar'] as String?;
 
       final isFirstLoad = _assignedContentFuture == null;
       final groupChanged = fetchedGroupId != groupId;
 
-      String? fetchedGroupName = groupName;
-      if (fetchedGroupId != null && groupChanged) {
-        final groupDoc = await FirebaseFirestore.instance
-            .collection('teacherGroups')
-            .doc(fetchedGroupId)
-            .get();
-        if (groupDoc.exists) {
-          fetchedGroupName = groupDoc.data()?['name'] ?? 'Unknown Group';
+      // Only re-check archived status when the group actually changes (or
+      // on first load) — this listener otherwise fires on every student
+      // doc write (e.g. xp increments), and re-fetching the group doc on
+      // each of those would be wasted reads.
+      bool archived = _isGroupArchived;
+      if (isFirstLoad || groupChanged) {
+        archived = false;
+        if (fetchedGroupId != null) {
+          final groupDoc = await FirebaseFirestore.instance
+              .collection('teacherGroups')
+              .doc(fetchedGroupId)
+              .get();
+          archived = groupDoc.data()?['archived'] == true;
         }
       }
 
       if (!mounted) return;
       setState(() {
         groupId = fetchedGroupId;
-        groupName = fetchedGroupName;
-        if (fetchedAvatar != null) _avatar = fetchedAvatar;
+        _isGroupArchived = archived;
         if (isFirstLoad || groupChanged) {
-          _assignedContentFuture = _loadAssignedContent();
+          _startLoad();
         }
       });
     }, onError: (e) => debugPrint('Error listening to student doc: $e'));
@@ -126,36 +186,149 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
   /// current time, so no separate polling/timer is needed for that case.
   void _refreshContent() {
     if (!mounted) return;
-    setState(() {
-      _assignedContentFuture = _loadAssignedContent();
+    setState(_startLoad);
+  }
+
+  /// Kicks off a fresh load and, once it resolves, updates
+  /// _lastLoadedActivities — done via .then() rather than inside
+  /// FutureBuilder's builder (which runs during build and can't call
+  /// setState) so build() can keep rendering the previous list until the
+  /// new one is actually ready, instead of flashing to a blank spinner
+  /// on every refresh. Must be called from inside a setState(){} block
+  /// (both call sites above do this) since it reassigns
+  /// _assignedContentFuture.
+  void _startLoad() {
+    final future = _loadAssignedContent();
+    _assignedContentFuture = future;
+    future.then((data) {
+      if (!mounted || !identical(_assignedContentFuture, future)) return;
+      setState(() => _lastLoadedActivities = data);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
+    context.watch<LocaleProvider>();
+    final content = SafeArea(
       child: Column(
         children: [
-          _buildHeader(),
+          if (widget.embedded) _buildHeader(),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: FutureBuilder<List<Map<String, dynamic>>>(
+              child: _isGroupArchived
+                  ? _buildArchivedGroupState()
+                  : FutureBuilder<List<Map<String, dynamic>>>(
                 future: _assignedContentFuture,
                 builder: (context, snapshot) {
+                  final bool isWaiting =
+                      snapshot.connectionState == ConnectionState.waiting;
+
+                  // True first load: nothing to show yet at all, not even
+                  // a stale list — the only case that should show the
+                  // full-screen spinner.
                   if (_assignedContentFuture == null ||
-                      snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.primary,
+                      (isWaiting && _lastLoadedActivities == null)) {
+                    return const AppLoadingIndicator();
+                  }
+
+                  // A refresh (returning from an activity, group change,
+                  // a newly-crossed schedule date) while content is
+                  // already on screen: keep showing it instead of
+                  // flashing to blank and re-triggering every mascot
+                  // animation — only swap once the new data actually
+                  // lands (see _startLoad).
+                  final List<Map<String, dynamic>> activities =
+                      (isWaiting ? _lastLoadedActivities : snapshot.data) ??
+                          const [];
+
+                  if (activities.isEmpty) return _buildEmptyState();
+
+                  // Only re-trigger the auto-scroll once this load has
+                  // actually finished (not while still showing stale
+                  // data during a background refresh) and only for a
+                  // genuinely new future — FutureBuilder's builder also
+                  // re-runs on unrelated rebuilds, and re-scrolling then
+                  // would yank the student away from wherever they'd
+                  // manually scrolled to.
+                  if (!isWaiting &&
+                      !identical(_scrolledForFuture, _assignedContentFuture)) {
+                    _scrolledForFuture = _assignedContentFuture;
+                    WidgetsBinding.instance.addPostFrameCallback(
+                        (_) => _scrollToCurrentItem(activities));
+                  }
+
+                  return Stack(children: [
+                    _buildActivityList(activities),
+                    if (isWaiting)
+                      const Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: LinearProgressIndicator(
+                          color: AppColors.primary,
+                          minHeight: 3,
+                        ),
                       ),
-                    );
-                  }
-                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return _buildEmptyState();
-                  }
-                  return _buildActivityList(snapshot.data!);
+                  ]);
                 },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (widget.embedded) return content;
+    return Scaffold(backgroundColor: AppColors.scaffoldBackground, body: content);
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      child: Row(
+        children: [
+          const Text("Loringo",
+              style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary)),
+          const Spacer(),
+          // Distraction-free mode — pushes this same tab as its own bare
+          // route (embedded: false), outside StudentMainScreen's bottom
+          // nav/drawer. Mirrors the teacher's "Full Screen" pill in
+          // group_navigation_screen.dart.
+          Material(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadii.pill),
+            elevation: 2,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => StudentActivitiesTab(
+                    studentId: widget.studentId,
+                    studentName: widget.studentName,
+                    studentAvatar: widget.studentAvatar,
+                    embedded: false,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.fullscreen_rounded,
+                      color: AppColors.primary, size: 20),
+                  const SizedBox(width: 4),
+                  Text('student.student_activities_screen.fullScreen'.tr(),
+                      style: const TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      )),
+                ]),
               ),
             ),
           ),
@@ -164,83 +337,87 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
     );
   }
 
-  Widget _buildHeader() {
-    return Column(
-      children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Row(
-            children: [
-              Text("Loringo",
-                  style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary)),
-            ],
-          ),
+  /// The next thing the student should do: the first item (in the
+  /// content's natural order) that's unlocked and not yet completed.
+  /// Falls back to the last completed item if everything unlocked is
+  /// already done, then to the very first item as a last resort.
+  Map<String, dynamic>? _findCurrentItem(List<Map<String, dynamic>> activities) {
+    for (final item in activities) {
+      if ((item['isUnlocked'] ?? false) && !(item['isCompleted'] ?? false)) {
+        return item;
+      }
+    }
+    for (final item in activities.reversed) {
+      if (item['isCompleted'] ?? false) return item;
+    }
+    return activities.isNotEmpty ? activities.first : null;
+  }
+
+  String _itemKeyId(Map<String, dynamic> item) => item['type'] == 'quiz'
+      ? 'quiz_${item['quizId']}'
+      : 'activity_${item['activityId']}';
+
+  /// Scrolls so the "up next" bubble is centered on screen, instead of
+  /// leaving the view wherever SingleChildScrollView's reverse:true
+  /// happens to land by default (the end of the whole path — i.e. the
+  /// latest-created activity, regardless of whether the student has
+  /// reached it yet).
+  void _scrollToCurrentItem(List<Map<String, dynamic>> activities) {
+    final target = _findCurrentItem(activities);
+    if (target == null) return;
+    final ctx = _itemKeys[_itemKeyId(target)]?.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.5,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  Widget _buildArchivedGroupState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.archive_rounded, size: 100, color: AppColors.muted),
+            const SizedBox(height: 24),
+            Text('student.student_activities_screen.groupArchivedTitle'.tr(),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary)),
+            const SizedBox(height: 12),
+            Text('student.student_activities_screen.groupArchivedSubtitle'.tr(),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16, color: AppColors.textSecondary)),
+          ],
         ),
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: AppRadii.lgAll,
-            boxShadow: AppShadows.card,
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 30,
-                backgroundColor: AppColors.primary,
-                backgroundImage:
-                    _avatar != null ? AssetImage(_avatar!) : null,
-                child: _avatar == null
-                    ? const Icon(Icons.person,
-                        color: AppColors.onPrimary, size: 30)
-                    : null,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Text('Hello, ${widget.studentName}!',
-                        style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary)),
-                    const SizedBox(height: 8),
-                    Text(groupName ?? 'Loading...',
-                        style: const TextStyle(
-                            fontSize: 16, color: AppColors.textSecondary)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
   Widget _buildEmptyState() {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(32.0),
+        padding: const EdgeInsets.all(32.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.assignment_rounded, size: 100, color: AppColors.primary),
-            SizedBox(height: 24),
-            Text('No Activities Available',
-                style: TextStyle(
+            const Icon(Icons.assignment_rounded, size: 100, color: AppColors.primary),
+            const SizedBox(height: 24),
+            Text('common.noActivitiesAvailable'.tr(),
+                style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                     color: AppColors.primary)),
-            SizedBox(height: 12),
-            Text('Contact your teacher to add learning activities',
+            const SizedBox(height: 12),
+            Text('common.contactTeacher'.tr(),
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: AppColors.textSecondary)),
+                style: const TextStyle(fontSize: 16, color: AppColors.textSecondary)),
           ],
         ),
       ),
@@ -291,7 +468,11 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
       final bool isOverdue = item['isOverdue'] ?? false;
       final bool isTurnInClosed = item['isClosed'] ?? false;
 
-      activityWidgets.add(Padding(
+      final itemKey = _itemKeys.putIfAbsent(_itemKeyId(item), () => GlobalKey());
+
+      activityWidgets.add(KeyedSubtree(
+        key: itemKey,
+        child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 28),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -360,7 +541,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                           ] else if (isQuiz) ...[
                             const SizedBox(height: 4),
                             Text(
-                              isLessonQuiz ? 'Lesson\nQuiz' : 'Unit\nTest',
+                              isLessonQuiz
+                                  ? 'student.student_activities_screen.lessonQuizBadge'.tr()
+                                  : 'student.student_activities_screen.unitTestBadge'.tr(),
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                   color: Colors.white,
@@ -396,7 +579,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                   SizedBox(
                     width: 140,
                     child: Text(
-                      'Completed',
+                      'student.student_activities_screen.completedBadge'.tr(),
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
@@ -411,9 +594,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                       color: AppColors.danger.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: const Text(
-                      'Overdue',
-                      style: TextStyle(
+                    child: Text(
+                      'student.student_activities_screen.overdueBadge'.tr(),
+                      style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: AppColors.danger,
@@ -426,7 +609,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                   SizedBox(
                     width: 140,
                     child: Text(
-                      'Closed — no longer accepted',
+                      'student.student_activities_screen.closedNoLongerAccepted'.tr(),
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
@@ -436,7 +619,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             ),
           ],
         ),
-      ));
+      )));
 
       if (count > 0 && progress == midPoint) {
         activityWidgets.add(Center(
@@ -453,7 +636,49 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
     );
   }
 
-  void _navigateToActivity(Map<String, dynamic> item, bool isQuiz) {
+  /// This student's current league tier, derived from seasonXp (see
+  /// models/league_tier.dart) — one-time read, not a stream, since it's
+  /// only used to diff before/after an activity in _navigateToActivity.
+  Future<Map<String, dynamic>?> _fetchCurrentTier() async {
+    if (groupId == null) return null;
+    final doc = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .doc(groupId)
+        .collection('students')
+        .doc(widget.studentId)
+        .get();
+    if (!doc.exists) return null;
+    final seasonXp = ((doc.data()?['seasonXp'] as num?) ?? 0).toInt();
+    return tierForXp(seasonXp);
+  }
+
+  /// Shows the celebration pop-up (league_ascension_dialog.dart) if
+  /// `newTier` ranks higher than `previousTier` in kLeagueTiers — a
+  /// strictly-higher index, not just a different key, so a same-tier
+  /// re-completion or (once resetLeagueSeasons.ts runs) a season reset
+  /// never triggers it.
+  void _maybeCelebrateAscension(
+    Map<String, dynamic>? previousTier,
+    Map<String, dynamic>? newTier,
+  ) {
+    if (previousTier == null || newTier == null || !mounted) return;
+    final prevIndex =
+        kLeagueTiers.indexWhere((t) => t['key'] == previousTier['key']);
+    final newIndex =
+        kLeagueTiers.indexWhere((t) => t['key'] == newTier['key']);
+    if (newIndex <= prevIndex) return;
+
+    showLeagueAscensionDialog(
+      context,
+      leagueName: tierLabel(newTier['key'] as String),
+      leagueImage: newTier['image'] as String?,
+      leagueColor: newTier['color'] as Color,
+    );
+  }
+
+  void _navigateToActivity(Map<String, dynamic> item, bool isQuiz) async {
+    final previousTier = await _fetchCurrentTier();
+
     if (isQuiz) {
       Navigator.push(
         context,
@@ -461,13 +686,19 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
           builder: (_) => QuizPlayScreen(
             contentId: item['contentId'],
             unitId: item['unitId'],
+            lessonId: item['quizScope'] == 'lesson'
+                ? item['lessonId'] as String?
+                : null,
             quizId: item['quizId'],
             quizTitle: item['title'],
             studentId: widget.studentId,
             studentName: widget.studentName,
           ),
         ),
-      ).then((_) => _refreshContent());
+      ).then((_) async {
+        _refreshContent();
+        _maybeCelebrateAscension(previousTier, await _fetchCurrentTier());
+      });
     } else {
       Navigator.push(
         context,
@@ -485,7 +716,10 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             isPreview: false,
           ),
         ),
-      ).then((_) => _refreshContent());
+      ).then((_) async {
+        _refreshContent();
+        _maybeCelebrateAscension(previousTier, await _fetchCurrentTier());
+      });
     }
   }
 
@@ -511,6 +745,8 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
 
       try {
         final progressSnapshot = await FirebaseFirestore.instance
+            .collection('teacherGroups')
+            .doc(groupId)
             .collection('students')
             .doc(widget.studentId)
             .collection('progress')
@@ -551,88 +787,98 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             .orderBy('order')
             .get();
 
+        // ── PHASE 1: fetch every unit's + lesson's raw data in parallel ──
+        // None of these reads depend on unlock state, only on
+        // contentId/unitId/lessonId identifiers already known from
+        // unitsSnap — so every unit's (unitQuizzes, lessons) pair, and
+        // every lesson's (activities, lessonQuiz) pair, fire concurrently
+        // instead of one Firestore round trip at a time. This is also
+        // what removes the old duplicate activities read (previously
+        // fetched once for a unit-level tally and again to build items —
+        // now fetched exactly once and reused for both).
+        //
+        // PHASE 2 below still walks units/lessons in original order —
+        // unlock state is inherently sequential (unit 2 depends on unit
+        // 1's outcome) — but by then everything it needs is already in
+        // memory, so that loop never awaits.
+        final unitsData = await Future.wait(unitsSnap.docs.map((unitDoc) async {
+          final unitId = unitDoc.id;
+
+          final unitLevel = await Future.wait<QuerySnapshot<Map<String, dynamic>>>([
+            // Unit Quizzes live in their own nested collection now
+            // (content/{contentId}/units/{unitId}/quizzes) — separate from
+            // Lesson Quizzes (nested one level deeper, under each lesson),
+            // so no scope filter is needed to tell them apart anymore.
+            FirebaseFirestore.instance
+                .collection('content')
+                .doc(contentId)
+                .collection('units')
+                .doc(unitId)
+                .collection('quizzes')
+                .get(),
+            FirebaseFirestore.instance
+                .collection('content')
+                .doc(contentId)
+                .collection('units')
+                .doc(unitId)
+                .collection('lessons')
+                .orderBy('order')
+                .get(),
+          ]);
+          final unitQuizzesSnap = unitLevel[0];
+          final lessonsSnap = unitLevel[1];
+
+          final lessons = await Future.wait(lessonsSnap.docs.map((lessonDoc) async {
+            final lessonId = lessonDoc.id;
+            final lessonLevel = await Future.wait<QuerySnapshot<Map<String, dynamic>>>([
+              FirebaseFirestore.instance
+                  .collection('content')
+                  .doc(contentId)
+                  .collection('units')
+                  .doc(unitId)
+                  .collection('lessons')
+                  .doc(lessonId)
+                  .collection('activities')
+                  .orderBy('order')
+                  .get(),
+              // ── LESSON QUIZ ──
+              FirebaseFirestore.instance
+                  .collection('content')
+                  .doc(contentId)
+                  .collection('units')
+                  .doc(unitId)
+                  .collection('lessons')
+                  .doc(lessonId)
+                  .collection('quizzes')
+                  .limit(1)
+                  .get(),
+            ]);
+            return _LessonFetchResult(lessonDoc, lessonLevel[0], lessonLevel[1]);
+          }));
+
+          return _UnitFetchResult(unitDoc, unitQuizzesSnap, lessons);
+        }));
+
+        // ── PHASE 2: sequential unlock computation over prefetched data ──
         List<String> previousUnitIds = [];
         Map<String, bool> unitCompletedMap = {};
 
-        for (final unitDoc in unitsSnap.docs) {
-          final unitId = unitDoc.id;
+        for (final unit in unitsData) {
+          final unitId = unit.unitDoc.id;
 
-          bool unitCompleted = false;
           bool hasUnitQuiz = false;
           bool unitQuizCompleted = false;
-
-          // UPDATED: 'scope' filter added back. The 'quizzes' collection
-          // now holds both scope: 'unit' and scope: 'lesson' docs (Lesson
-          // Quiz was reintroduced as a lighter-weight, non-blocking
-          // sibling of Unit Quiz — same form, different scope field).
-          // Without this filter, a Lesson Quiz would be counted here as
-          // if it were the Unit's gating quiz.
-          final unitQuizzesSnap = await FirebaseFirestore.instance
-              .collection('quizzes')
-              .where('contentId', isEqualTo: contentId)
-              .where('unitId', isEqualTo: unitId)
-              .where('scope', isEqualTo: 'unit')
-              .get();
-
-          if (unitQuizzesSnap.docs.isNotEmpty) {
+          if (unit.unitQuizzesSnap.docs.isNotEmpty) {
             hasUnitQuiz = true;
-            for (final qDoc in unitQuizzesSnap.docs) {
-              final quizId = qDoc.id;
-              if (completedQuizzes.containsKey(quizId)) {
+            for (final qDoc in unit.unitQuizzesSnap.docs) {
+              if (completedQuizzes.containsKey(qDoc.id)) {
                 unitQuizCompleted = true;
                 break;
               }
             }
           }
 
-          final lessonsSnap = await FirebaseFirestore.instance
-              .collection('content')
-              .doc(contentId)
-              .collection('units')
-              .doc(unitId)
-              .collection('lessons')
-              .orderBy('order')
-              .get();
-
-          List<String> unitActivityIds = [];
-          int unitActivitiesCompleted = 0;
-
-          for (final lessonDoc in lessonsSnap.docs) {
-            final lessonId = lessonDoc.id;
-
-            final activitiesSnap = await FirebaseFirestore.instance
-                .collection('content')
-                .doc(contentId)
-                .collection('units')
-                .doc(unitId)
-                .collection('lessons')
-                .doc(lessonId)
-                .collection('activities')
-                .orderBy('order')
-                .get();
-
-            for (final actDoc in activitiesSnap.docs) {
-              final activityId = actDoc.id;
-              unitActivityIds.add(activityId);
-              if (completedActivities.containsKey(activityId)) {
-                unitActivitiesCompleted++;
-              }
-            }
-          }
-
-          bool allActivitiesCompleted = unitActivityIds.isNotEmpty &&
-              unitActivitiesCompleted == unitActivityIds.length;
-
-          if (hasUnitQuiz) {
-            unitCompleted = allActivitiesCompleted && unitQuizCompleted;
-          } else {
-            unitCompleted = allActivitiesCompleted;
-          }
-
-          unitCompletedMap[unitId] = unitCompleted;
-
           bool isUnitUnlocked = true;
-
           if (previousUnitIds.isNotEmpty) {
             bool allPreviousCompleted = true;
             for (final prevUnitId in previousUnitIds) {
@@ -643,6 +889,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             }
             isUnitUnlocked = allPreviousCompleted;
           }
+
+          List<String> unitActivityIds = [];
+          int unitActivitiesCompleted = 0;
 
           // NEW: lesson-level chaining within this unit. Same pattern as
           // previousUnitIds/unitCompletedMap above, one level down —
@@ -655,26 +904,15 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
           List<String> previousLessonIds = [];
           Map<String, bool> lessonCompletedMap = {};
 
-          for (final lessonDoc in lessonsSnap.docs) {
-            final lessonId = lessonDoc.id;
-            final lessonData = lessonDoc.data();
-
-            final activitiesSnap = await FirebaseFirestore.instance
-                .collection('content')
-                .doc(contentId)
-                .collection('units')
-                .doc(unitId)
-                .collection('lessons')
-                .doc(lessonId)
-                .collection('activities')
-                .orderBy('order')
-                .get();
+          for (final lesson in unit.lessons) {
+            final lessonId = lesson.lessonDoc.id;
+            final lessonData = lesson.lessonDoc.data();
+            final activitiesSnap = lesson.activitiesSnap;
 
             // per-lesson completion tracking, separate from the
             // unit-wide unitActivityIds/unitActivitiesCompleted counters
-            // above (those gate the Unit Quiz; these gate both this
-            // lesson's own unlock-for-next-lesson check and its Lesson
-            // Quiz below).
+            // (those gate the Unit Quiz; these gate both this lesson's
+            // own unlock-for-next-lesson check and its Lesson Quiz below).
             int lessonActivitiesTotal = activitiesSnap.docs.length;
             int lessonActivitiesCompleted = 0;
 
@@ -699,9 +937,13 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             for (final actDoc in activitiesSnap.docs) {
               final actData = actDoc.data();
               final activityId = actDoc.id;
+              unitActivityIds.add(activityId);
               final requiredActivityId = actData['requiredActivityId'];
               final isCompleted = completedActivities.containsKey(activityId);
-              if (isCompleted) lessonActivitiesCompleted++;
+              if (isCompleted) {
+                lessonActivitiesCompleted++;
+                unitActivitiesCompleted++;
+              }
               final stars = isCompleted
                   ? (completedActivities[activityId]['stars'] ?? 0)
                   : 0;
@@ -747,9 +989,11 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 'contentId': contentId,
                 'unitId': unitId,
                 'lessonId': lessonId,
-                'lessonTitle': lessonData['title'] ?? 'Untitled Lesson',
+                'lessonTitle': lessonData['title'] ??
+                    'student.student_activities_screen.untitledLesson'.tr(),
                 'activityId': activityId,
-                'title': actData['title'] ?? 'Untitled Activity',
+                'title': actData['title'] ??
+                    'student.student_activities_screen.untitledActivity'.tr(),
                 'order': actData['order'] ?? 0,
                 'difficulty': actData['difficulty'] ?? 'medium',
                 'xpBase': actData['xpBase'] ?? 100,
@@ -771,16 +1015,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             lessonCompletedMap[lessonId] = thisLessonCompleted;
             previousLessonIds.add(lessonId);
 
-            // ── LESSON QUIZ (reintroduced) ──
-            final lessonQuizSnap = await FirebaseFirestore.instance
-                .collection('quizzes')
-                .where('contentId', isEqualTo: contentId)
-                .where('unitId', isEqualTo: unitId)
-                .where('scope', isEqualTo: 'lesson')
-                .where('lessonId', isEqualTo: lessonId)
-                .limit(1)
-                .get();
-
+            final lessonQuizSnap = lesson.lessonQuizSnap;
             if (lessonQuizSnap.docs.isNotEmpty) {
               final lqDoc = lessonQuizSnap.docs.first;
               final lqData = lqDoc.data();
@@ -806,8 +1041,10 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                 'unitId': unitId,
                 'lessonId': lessonId,
                 'quizId': lqQuizId,
-                'title': lqData['title'] ?? 'Lesson Quiz',
-                'description': lqData['description'] ?? 'Optional check-in for this lesson',
+                'title': lqData['title'] ??
+                    'student.student_activities_screen.lessonQuizFallback'.tr(),
+                'description': lqData['description'] ??
+                    'student.student_activities_screen.optionalCheckIn'.tr(),
                 'isUnlocked': lessonActivitiesReady,
                 'isCompleted': lqCompleted,
                 'isClosedAfterAttempts': false,
@@ -816,18 +1053,15 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             }
           }
 
-          // ── UNIT QUIZZES ──
-          // Filtered to scope: 'unit' — see the block above for why the
-          // filter is necessary now that both scopes share this
-          // collection.
-          final unitQuizSnapshots = await FirebaseFirestore.instance
-              .collection('quizzes')
-              .where('contentId', isEqualTo: contentId)
-              .where('unitId', isEqualTo: unitId)
-              .where('scope', isEqualTo: 'unit')
-              .get();
+          bool allActivitiesCompleted = unitActivityIds.isNotEmpty &&
+              unitActivitiesCompleted == unitActivityIds.length;
+          bool unitCompleted = hasUnitQuiz
+              ? (allActivitiesCompleted && unitQuizCompleted)
+              : allActivitiesCompleted;
+          unitCompletedMap[unitId] = unitCompleted;
 
-          for (final qDoc in unitQuizSnapshots.docs) {
+          // ── UNIT QUIZZES ──
+          for (final qDoc in unit.unitQuizzesSnap.docs) {
             final qData = qDoc.data();
             final quizId = qDoc.id;
 
@@ -858,8 +1092,10 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
               'unitId': unitId,
               'lessonId': '',
               'quizId': quizId,
-              'title': qData['title'] ?? 'Unit Quiz',
-              'description': qData['description'] ?? 'Complete to unlock next unit',
+              'title': qData['title'] ??
+                  'student.student_activities_screen.unitQuizFallback'.tr(),
+              'description': qData['description'] ??
+                  'student.student_activities_screen.completeToUnlock'.tr(),
               'isUnlocked': isQuizUnlocked,
               'isCompleted': isCompleted,
               'isClosedAfterAttempts': quizClosed,

@@ -3,11 +3,19 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 
 class OTPService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseFunctions _functions = FirebaseFunctions.instance;
+  final FirebaseFirestore _firestore = firestoreInstance;
+  // Lazy (not a field initializer) so constructing OTPService in a test
+  // that only exercises the Firestore-backed rate-limit methods
+  // (canResendOTP/canRequestOTP) never touches FirebaseFunctions.instance
+  // at all — Cloud Functions have no swappable indirection (out of scope
+  // for this suite) and would otherwise throw "no Firebase App" the
+  // moment an OTPService is constructed, even when unused.
+  FirebaseFunctions get _functions => FirebaseFunctions.instance;
 
   // Rate limiting configuration
   static const int RESEND_COOLDOWN_SECONDS = 30;
@@ -26,6 +34,9 @@ class OTPService {
 
       final emailExists = await _checkEmailInFirestore(email);
       if (!emailExists) {
+        // Stable, deliberately untranslated sentinel — matched by content
+        // in ResetPasswordScreen._sendCode's catch block, which shows its
+        // own translated replacement message instead of this raw text.
         throw Exception('Email is not registered');
       }
 
@@ -37,7 +48,7 @@ class OTPService {
         debugPrint('OTP sent successfully to $email');
         return true;
       } else {
-        throw Exception('Failed to send OTP');
+        throw Exception('initials.otp_service.failedToSendOtp'.tr());
       }
     } on FirebaseFunctionsException catch (e) {
       debugPrint('sendOtpEmail failed: ${e.code} - ${e.message}');
@@ -92,17 +103,18 @@ class OTPService {
           final remaining = RESEND_COOLDOWN_SECONDS - diffSeconds;
           return {
             'canSend': false,
-            'message': 'Please wait $remaining seconds before resending the code',
+            'message': 'initials.otp_service.waitBeforeResend'
+                .tr(namedArgs: {'seconds': '$remaining'}),
             'reason': 'resend_cooldown',
             'remainingSeconds': remaining,
           };
         }
       }
 
-      return {'canSend': true, 'message': 'You can resend the code'};
+      return {'canSend': true, 'message': 'initials.otp_service.canResendCode'.tr()};
     } catch (e) {
       debugPrint('Error checking resend cooldown: $e');
-      return {'canSend': true, 'message': 'You can resend the code'};
+      return {'canSend': true, 'message': 'initials.otp_service.canResendCode'.tr()};
     }
   }
 
@@ -135,7 +147,7 @@ class OTPService {
       });
 
       if (result.data['success'] != true) {
-        throw Exception('Failed to reset password');
+        throw Exception('initials.otp_service.failedToResetPassword'.tr());
       }
 
       debugPrint('Password reset successfully for $email');
@@ -144,7 +156,8 @@ class OTPService {
       throw Exception(_mapResetPasswordError(e));
     } catch (e) {
       debugPrint('Error resetting password: $e');
-      throw Exception('Failed to reset password: $e');
+      throw Exception(
+          'initials.otp_service.failedToResetPasswordWithError'.tr(namedArgs: {'error': '$e'}));
     }
   }
 
@@ -155,30 +168,30 @@ class OTPService {
   String _mapFunctionError(FirebaseFunctionsException e) {
     switch (e.code) {
       case 'not-found':
-        return 'No verification code was found for this email.';
+        return 'initials.otp_service.noCodeFound'.tr();
       case 'deadline-exceeded':
-        return 'This code has expired. Request a new one.';
+        return 'initials.otp_service.codeExpired'.tr();
       case 'resource-exhausted':
-        return 'Too many attempts. Please request a new code.';
+        return 'initials.otp_service.tooManyAttempts'.tr();
       case 'failed-precondition':
-        return 'This code has already been used.';
+        return 'initials.otp_service.codeAlreadyUsed'.tr();
       case 'invalid-argument':
-        return 'Invalid or expired code.';
+        return 'initials.otp_service.invalidOrExpiredCode'.tr();
       default:
-        return 'Something went wrong. Please try again.';
+        return 'initials.otp_service.somethingWentWrong'.tr();
     }
   }
 
   String _mapResetPasswordError(FirebaseFunctionsException e) {
     switch (e.code) {
       case 'failed-precondition':
-        return 'Please verify your code again before resetting your password.';
+        return 'initials.otp_service.verifyCodeAgain'.tr();
       case 'not-found':
-        return 'User not found. Please verify your email.';
+        return 'initials.otp_service.userNotFoundVerifyEmail'.tr();
       case 'invalid-argument':
-        return e.message ?? 'Invalid request.';
+        return e.message ?? 'initials.otp_service.invalidRequest'.tr();
       default:
-        return 'Something went wrong. Please try again.';
+        return 'initials.otp_service.somethingWentWrong'.tr();
     }
   }
 
@@ -255,7 +268,8 @@ class OTPService {
           final remaining = RESET_COOLDOWN_MINUTES - diffMinutes;
           return {
             'canSend': false,
-            'message': 'Please wait $remaining minutes before requesting another code',
+            'message': 'initials.otp_service.waitBeforeAnotherCode'
+                .tr(namedArgs: {'minutes': '$remaining'}),
             'reason': 'cooldown',
             'remainingMinutes': remaining,
             'attemptsToday': await _getTodayAttemptsCount(normalizedEmail),
@@ -269,7 +283,8 @@ class OTPService {
       if (todayAttempts >= MAX_DAILY_RESETS) {
         return {
           'canSend': false,
-          'message': 'You have reached the daily limit of $MAX_DAILY_RESETS attempts. Please try again tomorrow.',
+          'message': 'initials.otp_service.dailyLimitReached'
+              .tr(namedArgs: {'max': '$MAX_DAILY_RESETS'}),
           'reason': 'daily_limit',
           'attemptsToday': todayAttempts,
           'maxDaily': MAX_DAILY_RESETS,
@@ -278,7 +293,7 @@ class OTPService {
 
       return {
         'canSend': true,
-        'message': 'You can request a code',
+        'message': 'initials.otp_service.canRequestCode'.tr(),
         'attemptsToday': todayAttempts,
         'remainingAttempts': MAX_DAILY_RESETS - todayAttempts,
         'cooldownMinutes': RESET_COOLDOWN_MINUTES,
@@ -288,7 +303,7 @@ class OTPService {
       debugPrint('Error checking rate limiting: $e');
       return {
         'canSend': true,
-        'message': 'You can request a code',
+        'message': 'initials.otp_service.canRequestCode'.tr(),
         'warning': 'Error checking limits: $e',
       };
     }

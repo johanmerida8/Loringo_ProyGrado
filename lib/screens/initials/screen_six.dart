@@ -1,8 +1,10 @@
 // screen_six.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/screens/initials/widget/task_result_sheet.dart';
@@ -114,18 +116,6 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
 
   Future<void> _fetchTask() async {
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null) {
-        try {
-          final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-          if (userDoc.exists) {
-            _userLang = (userDoc.data()?['language'] as String?) ?? 'Spanish';
-          }
-        } catch (e) {
-          debugPrint('Error fetching user language: $e');
-        }
-      }
-
       final doc = await FirebaseFirestore.instance
           .collection(widget.collectionName)
           .doc(widget.contentId)
@@ -141,7 +131,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
 
       if (!doc.exists) {
         setState(() {
-          _errorMessage = 'Task not found';
+          _errorMessage = 'initials.screen_six.taskNotFound'.tr();
           _isLoading = false;
         });
         return;
@@ -181,7 +171,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
 
       if (rawPairs.isEmpty) {
         setState(() {
-          _errorMessage = 'No pairs found in this task';
+          _errorMessage = 'initials.screen_six.noPairsInTask'.tr();
           _isLoading = false;
         });
         return;
@@ -201,7 +191,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
 
       if (validPairs.isEmpty) {
         setState(() {
-          _errorMessage = 'No valid pairs found';
+          _errorMessage = 'initials.screen_six.noValidPairsFound'.tr();
           _isLoading = false;
         });
         return;
@@ -218,14 +208,13 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         _errorMessage = null;
       });
 
-      TaskTtsService.prefetch(validPairs.map((p) => p.english).toList());
-
       debugPrint('ScreenSix loaded ${validPairs.length} pairs');
     } catch (e, stackTrace) {
       debugPrint('ScreenSix ERROR: $e');
       debugPrint('StackTrace: $stackTrace');
       setState(() {
-        _errorMessage = 'Error loading task: $e';
+        _errorMessage = 'initials.screen_six.errorLoadingTask'
+            .tr(namedArgs: {'error': '$e'});
         _isLoading = false;
       });
     }
@@ -317,7 +306,10 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         });
       }
     } else {
-      TaskFeedback.fire(false);
+      // Match uses its own wrong-tap chime instead of the shared fail-2
+      // sound every other task type gets via TaskFeedback.fire(false).
+      HapticFeedback.heavyImpact();
+      FeedbackSoundService.instance.playAsset('assets/sound/wrong-tap.mp3');
       _shakeCtrl.forward(from: 0);
       setState(() {
         _wrongLeftId = leftId;
@@ -484,6 +476,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (_isLoading) {
       return const Scaffold(
         body: Center(
@@ -511,7 +504,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _green,
                 ),
-                child: const Text('Go Back', style: TextStyle(color: Colors.white)),
+                child: Text('initials.screen_six.goBack'.tr(), style: const TextStyle(color: Colors.white)),
               ),
             ],
           ),
@@ -527,13 +520,13 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
             children: [
               const Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange),
               const SizedBox(height: 16),
-              const Text(
-                'No pairs found',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Text(
+                'initials.screen_six.noPairsFound'.tr(),
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               Text(
-                'This task has no matching pairs configured',
+                'initials.screen_six.noPairsConfigured'.tr(),
                 style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
               const SizedBox(height: 24),
@@ -542,7 +535,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _green,
                 ),
-                child: const Text('Go Back', style: TextStyle(color: Colors.white)),
+                child: Text('initials.screen_six.goBack'.tr(), style: const TextStyle(color: Colors.white)),
               ),
             ],
           ),
@@ -597,7 +590,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Match the pairs',
+                          'initials.screen_six.matchThePairs'.tr(),
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
                         ),
                         Container(
@@ -625,7 +618,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                           child: Row(mainAxisSize: MainAxisSize.min, children: [
                             const Icon(Icons.flag, size: 14, color: _green),
                             const SizedBox(width: 4),
-                            Text('English', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                            Text('initials.screen_six.englishLabel'.tr(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
                           ]),
                         ),
                       ),
@@ -636,7 +629,7 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
                               ? Row(mainAxisSize: MainAxisSize.min, children: [
                                   Icon(Icons.image_outlined, size: 14, color: Colors.purple.shade400),
                                   const SizedBox(width: 4),
-                                  Text('Image', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
+                                  Text('initials.screen_six.imageLabel'.tr(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.8)),
                                 ])
                               : Row(mainAxisSize: MainAxisSize.min, children: [
                                   Icon(Icons.flag, size: 14, color: Colors.orange),

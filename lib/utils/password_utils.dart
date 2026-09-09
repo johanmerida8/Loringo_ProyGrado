@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -86,5 +87,47 @@ class PasswordUtils {
       missing.add('At least 1 special character (!@#\$%^&*...)');
     }
     return missing;
+  }
+}
+
+/// Maps a [PasswordUtils.getPasswordStrength] result to its translated
+/// display label. Kept separate from that method (rather than wrapping
+/// its return value in `.tr()` directly) since its raw English value is
+/// asserted verbatim in test/utils/password_utils_test.dart, which
+/// doesn't initialize easy_localization — translating in place would
+/// break those tests. Call this at the UI layer instead.
+String passwordStrengthLabel(String strength) {
+  switch (strength) {
+    case 'Very Weak':
+      return 'initials.password_utils.strengthVeryWeak'.tr();
+    case 'Weak':
+      return 'initials.password_utils.strengthWeak'.tr();
+    case 'Fair':
+      return 'initials.password_utils.strengthFair'.tr();
+    case 'Strong':
+      return 'initials.password_utils.strengthStrong'.tr();
+    case 'Very Strong':
+      return 'initials.password_utils.strengthVeryStrong'.tr();
+    default:
+      return strength;
+  }
+}
+
+/// Maps a single [PasswordUtils.getPasswordRequirements] entry to its
+/// translated display text — same reasoning as [passwordStrengthLabel].
+String passwordRequirementLabel(String requirement) {
+  switch (requirement) {
+    case 'At least 8 characters':
+      return 'initials.password_utils.reqMinLength'.tr();
+    case 'At least 1 uppercase letter (A-Z)':
+      return 'initials.password_utils.reqUppercase'.tr();
+    case 'At least 1 lowercase letter (a-z)':
+      return 'initials.password_utils.reqLowercase'.tr();
+    case 'At least 1 number (0-9)':
+      return 'initials.password_utils.reqNumber'.tr();
+    case 'At least 1 special character (!@#\$%^&*...)':
+      return 'initials.password_utils.reqSpecial'.tr();
+    default:
+      return requirement;
   }
 }

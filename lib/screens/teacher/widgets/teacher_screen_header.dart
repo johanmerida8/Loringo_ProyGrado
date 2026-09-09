@@ -33,6 +33,7 @@ class TeacherScreenHeader extends StatelessWidget {
     this.subtitle,
     this.color = AppColors.primary,
     this.onBack,
+    this.trailing,
   });
 
   /// Main heading, e.g. the unit/lesson/activity title.
@@ -49,6 +50,12 @@ class TeacherScreenHeader extends StatelessWidget {
 
   /// Defaults to Navigator.pop when not supplied.
   final VoidCallback? onBack;
+
+  /// Optional widget shown at the end of the header row, e.g. a bookmark
+  /// button on the content-hierarchy list screens. Kept generic (plain
+  /// Widget) for the same reason HierarchyListCard.trailingChip is generic
+  /// — a dumb primitive shared across every screen that uses this header.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +104,7 @@ class TeacherScreenHeader extends StatelessWidget {
                 ],
               ),
             ),
+            ?trailing,
           ],
         ),
       ),

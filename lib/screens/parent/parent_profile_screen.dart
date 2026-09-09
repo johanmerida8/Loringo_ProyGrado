@@ -1,9 +1,14 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/edit_text_dialog.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/initials/reset_in_app_screen.dart';
+import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class ParentProfileScreen extends StatefulWidget {
@@ -26,10 +31,32 @@ class ParentProfileScreen extends StatefulWidget {
   State<ParentProfileScreen> createState() => _ParentProfileScreenState();
 }
 
-class _ParentProfileScreenState extends State<ParentProfileScreen> {
+class _ParentProfileScreenState extends State<ParentProfileScreen>
+    with WidgetsBindingObserver {
+  late String _displayName = widget.parentName;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-checks the live OS permission state when the app resumes — e.g.
+    // after the user manually flips notifications on/off from device
+    // Settings (reached via the "permanently denied" flow) and comes back.
+    // Without this, the toggle stays stale until something else happens to
+    // trigger a rebuild, since nothing else re-queries the OS on return.
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<NotificationProvider>().refresh();
+    }
   }
 
   void _navigateToSecurity() {
@@ -50,18 +77,18 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
           children: [
             Icon(Icons.logout, color: AppColors.danger, size: 28),
             const SizedBox(width: AppSpacing.sm),
-            const Text(
-              'Log Out',
-              style: TextStyle(
+            Text(
+              'common.logout'.tr(),
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
             ),
           ],
         ),
-        content: const Text(
-          'Are you sure you want to log out?',
-          style: TextStyle(fontSize: 16),
+        content: Text(
+          'common.logoutMsg'.tr(),
+          style: const TextStyle(fontSize: 16),
         ),
         actions: [
           TextButton(
@@ -69,7 +96,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
             style: TextButton.styleFrom(
               foregroundColor: AppColors.textSecondary,
             ),
-            child: const Text('Cancel'),
+            child: Text('common.cancel'.tr()),
           ),
           ElevatedButton(
             onPressed: () {
@@ -84,7 +111,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
               ),
               elevation: 0,
             ),
-            child: const Text('Log Out'),
+            child: Text('common.logout'.tr()),
           ),
         ],
       ),
@@ -93,6 +120,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: const Color(0xFFEFF6EE),
       body: SafeArea(
@@ -125,7 +153,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
             ),
           ),
           const SizedBox(width: 16),
-          const Text('My Profile', style: AppText.h1),
+          Text('common.myProfile'.tr(), style: AppText.h1),
         ],
       ),
     );
@@ -142,15 +170,15 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
           CircleAvatar(
             radius: 44,
             backgroundColor: Colors.white.withOpacity(0.25),
-            child: Text(widget.parentName.isNotEmpty ? widget.parentName[0].toUpperCase() : 'P', style: const TextStyle(color: Colors.white, fontSize: 38, fontWeight: FontWeight.bold)),
+            child: Text(_displayName.isNotEmpty ? _displayName[0].toUpperCase() : 'P', style: const TextStyle(color: Colors.white, fontSize: 38, fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 16),
-          Text(widget.parentName.isNotEmpty ? widget.parentName : 'Parent', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+          Text(_displayName.isNotEmpty ? _displayName : 'common.parent'.tr(), style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
-            child: const Text('Parent', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+            child: Text('common.parent'.tr(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -161,19 +189,23 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-      child: Column(
-        children: [
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
           _buildMenuItem(
             icon: Icons.person_outline_rounded,
-            title: 'Personal Data',
-            subtitle: 'View and manage your information',
+            title: 'common.personalData'.tr(),
+            subtitle: 'common.personalDataSubtitleParent'.tr(),
             onTap: () => _navigateToPersonalData(),
           ),
           _buildDivider(),
           _buildMenuItem(
             icon: Icons.security_rounded,
-            title: 'Security',
-            subtitle: 'Password & biometric settings',
+            title: 'common.security'.tr(),
+            subtitle: 'common.securitySubtitleParent'.tr(),
             onTap: _navigateToSecurity,
           ),
           _buildDivider(),
@@ -182,8 +214,8 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
             builder: (context, notificationProvider, child) {
               return _buildMenuItem(
                 icon: Icons.notifications_active_rounded,
-                title: 'Notifications',
-                subtitle: "Get notified about your child's progress",
+                title: 'common.notifications'.tr(),
+                subtitle: 'common.notificationSubtitleParent'.tr(),
                 trailing: notificationProvider.isLoading
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                     : Switch(
@@ -217,12 +249,13 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
           _buildDivider(),
           _buildMenuItem(
             icon: Icons.logout_rounded,
-            title: 'Log Out',
-            subtitle: 'Sign out from your account',
+            title: 'common.logout'.tr(),
+            subtitle: 'common.signOut'.tr(),
             isDestructive: true,
             onTap: _showLogoutConfirmation,
           ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -263,41 +296,64 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: const Color(0xFFEFF6EE),
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: AppColors.primarySoft(0.1), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.primary, size: 18)),
+        builder: (context) {
+          context.watch<LocaleProvider>();
+          return StatefulBuilder(
+            builder: (context, setLocalState) {
+              _personalDataRefresh = setLocalState;
+              return Scaffold(
+                backgroundColor: const Color(0xFFEFF6EE),
+                body: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          GestureDetector(
+                            onTap: () => Navigator.pop(context),
+                            child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: AppColors.primarySoft(0.1), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.primary, size: 18)),
+                          ),
+                          const SizedBox(width: 16),
+                          Text('common.personalData'.tr(), style: AppText.h1),
+                        ]),
+                        const SizedBox(height: 24),
+                        _buildInfoCard(),
+                      ],
                     ),
-                    const SizedBox(width: 16),
-                    const Text('Personal Data', style: AppText.h1),
-                  ]),
-                  const SizedBox(height: 24),
-                  _buildInfoCard(),
-                ],
-              ),
-            ),
-          ),
-        ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
-    );
+    ).then((_) => _personalDataRefresh = null);
   }
+
+  /// Forces the currently-pushed personal-data route to rebuild instantly
+  /// when the name is edited — that route lives outside this widget's own
+  /// subtree (it's a sibling under the Navigator), so setState() here alone
+  /// doesn't reach it.
+  void Function(void Function())? _personalDataRefresh;
 
   Widget _buildInfoCard() {
     return Container(
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
       child: Column(
         children: [
-          _buildInfoRow(icon: Icons.badge_outlined, label: 'Display Name', value: widget.parentName.isNotEmpty ? widget.parentName : 'Not set'),
+          _buildInfoRow(
+              icon: Icons.badge_outlined,
+              label: 'common.displayName'.tr(),
+              value: _displayName.isNotEmpty ? _displayName : 'parent.parent_profile_screen.notSet'.tr(),
+              trailing: widget.parentId == null
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 18, color: AppColors.primary),
+                      onPressed: _editName,
+                    )),
           const Divider(height: 1, indent: 40),
-          _buildInfoRow(icon: Icons.email_outlined, label: 'Email Address', value: widget.parentEmail),
+          _buildInfoRow(icon: Icons.email_outlined, label: 'common.emailAddress'.tr(), value: widget.parentEmail),
           const Divider(height: 1, indent: 40),
           _buildDeleteAccountRow(),
         ],
@@ -305,7 +361,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
     );
   }
 
-  Widget _buildInfoRow({required IconData icon, required String label, required String value}) {
+  Widget _buildInfoRow({required IconData icon, required String label, required String value, Widget? trailing}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -319,9 +375,31 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
               Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             ]),
           ),
+          if (trailing != null) trailing,
         ],
       ),
     );
+  }
+
+  Future<void> _editName() async {
+    final parentId = widget.parentId;
+    if (parentId == null) return;
+
+    final newName = await showEditTextDialog(
+      context,
+      title: 'common.displayName'.tr(),
+      initialValue: _displayName,
+      onSave: (value) => Database().updateUser(uid: parentId, name: value),
+    );
+
+    if (newName != null && mounted) {
+      _displayName = newName;
+      _personalDataRefresh?.call(() {});
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('common.displayNameUpdate'.tr())),
+      );
+    }
   }
 
   Widget _buildDeleteAccountRow() {
@@ -331,8 +409,8 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
         children: [
           Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.delete_outline, color: Colors.red, size: 22)),
           const SizedBox(width: 16),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Delete Account', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)), Text('Permanently remove account and all data', style: TextStyle(fontSize: 12, color: Colors.grey.shade600))])),
-          TextButton(onPressed: widget.onDeleteAccount, style: TextButton.styleFrom(foregroundColor: Colors.red), child: const Text('Delete', style: TextStyle(fontWeight: FontWeight.bold))),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('common.deleteAccount'.tr(), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)), Text('common.deletePermAcc'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey.shade600))])),
+          TextButton(onPressed: widget.onDeleteAccount, style: TextButton.styleFrom(foregroundColor: Colors.red), child: Text('common.delete'.tr(), style: const TextStyle(fontWeight: FontWeight.bold))),
         ],
       ),
     );
@@ -346,12 +424,15 @@ class _SecurityScreen extends StatelessWidget {
   void _navigateToChangePassword(BuildContext context) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ResetInAppScreen()),
+      MaterialPageRoute(
+          builder: (_) => ResetInAppScreen(
+              header: ParentScreenHeader(title: 'common.changePassword'.tr()))),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: const Color(0xFFEFF6EE),
       body: SafeArea(
@@ -373,41 +454,46 @@ class _SecurityScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 16),
-                const Text('Security', style: AppText.h1),
+                Text('common.security'.tr(), style: AppText.h1),
               ]),
               const SizedBox(height: 16),
               // Change Password Card
               Container(
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Text('Password', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppColors.primarySoft(0.1),
-                          borderRadius: BorderRadius.circular(12),
+                child: Material(
+                  type: MaterialType.transparency,
+                  borderRadius: BorderRadius.circular(20),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Text('common.password'.tr(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColors.primarySoft(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.lock_reset_outlined, color: AppColors.primary, size: 22),
                         ),
-                        child: const Icon(Icons.lock_reset_outlined, color: AppColors.primary, size: 22),
+                        title: Text(
+                          'common.changePassword'.tr(),
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          'parent.parent_profile_screen.updatePassword'.tr(),
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+                        onTap: () => _navigateToChangePassword(context),
                       ),
-                      title: const Text(
-                        'Change Password',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: const Text(
-                        'Update your password',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
-                      onTap: () => _navigateToChangePassword(context),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
@@ -418,34 +504,39 @@ class _SecurityScreen extends StatelessWidget {
                   
                   return Container(
                     decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                          child: Text('Biometric Authentication', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                        ),
-                        const Divider(height: 1),
-                        Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: biometricProvider.isLoading
-                              ? const Center(child: CircularProgressIndicator())
-                              : biometricProvider.isSupported
-                                  ? SwitchListTile(
-                                      contentPadding: EdgeInsets.zero,
-                                      title: Text(biometricProvider.biometricTypeName, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                      subtitle: const Text('Use biometrics to sign in quickly'),
-                                      value: biometricProvider.isEnabled,
-                                      activeColor: AppColors.primary,
-                                      onChanged: (value) => biometricProvider.toggle(context, userId),
-                                    )
-                                  : const Row(children: [
-                                      Icon(Icons.fingerprint_outlined, color: Colors.grey),
-                                      SizedBox(width: 16),
-                                      Expanded(child: Text('Biometrics not available on this device', style: TextStyle(color: Colors.grey))),
-                                    ]),
-                        ),
-                      ],
+                    child: Material(
+                      type: MaterialType.transparency,
+                      borderRadius: BorderRadius.circular(20),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            child: Text('common.biometricAuth'.tr(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                          ),
+                          const Divider(height: 1),
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: biometricProvider.isLoading
+                                ? const Center(child: CircularProgressIndicator())
+                                : biometricProvider.isSupported
+                                    ? SwitchListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        title: Text(biometricProvider.biometricTypeName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        subtitle: Text('common.biometricSignIn'.tr()),
+                                        value: biometricProvider.isEnabled,
+                                        activeColor: AppColors.primary,
+                                        onChanged: (value) => biometricProvider.toggle(context, userId),
+                                      )
+                                    : Row(children: [
+                                        const Icon(Icons.fingerprint_outlined, color: Colors.grey),
+                                        const SizedBox(width: 16),
+                                        Expanded(child: Text('common.biometricsNotAvailable'.tr(), style: const TextStyle(color: Colors.grey))),
+                                      ]),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },

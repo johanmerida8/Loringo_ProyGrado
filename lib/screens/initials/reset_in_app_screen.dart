@@ -1,9 +1,18 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
+/// [header] replaces the old solid-color AppBar — each role passes in its
+/// own screen-header widget (TeacherScreenHeader / ParentScreenHeader /
+/// AdminScreenHeader) so this screen stays role-agnostic while still
+/// matching whichever role's screen it was pushed from.
 class ResetInAppScreen extends StatefulWidget {
-  const ResetInAppScreen({super.key});
+  final Widget header;
+
+  const ResetInAppScreen({super.key, required this.header});
 
   @override
   State<ResetInAppScreen> createState() => _ResetInAppScreenState();
@@ -36,7 +45,7 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null) {
-        throw Exception('No user logged in');
+        throw Exception('initials.reset_in_app_screen.noUserLoggedIn'.tr());
       }
 
       // Re-authenticate user with current password
@@ -52,7 +61,7 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Password changed successfully!'),
+            content: Text('initials.reset_in_app_screen.passwordChangedSuccess'.tr()),
             backgroundColor: AppColors.success,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -69,20 +78,20 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
         Navigator.pop(context, true);
       }
     } on FirebaseAuthException catch (e) {
-      String errorMessage = 'Failed to change password';
-      
+      String errorMessage = 'initials.reset_in_app_screen.failedChangePassword'.tr();
+
       switch (e.code) {
         case 'wrong-password':
-          errorMessage = 'Current password is incorrect';
+          errorMessage = 'initials.reset_in_app_screen.wrongCurrentPassword'.tr();
           break;
         case 'weak-password':
-          errorMessage = 'New password is too weak. Use at least 6 characters';
+          errorMessage = 'initials.reset_in_app_screen.weakPassword'.tr();
           break;
         case 'requires-recent-login':
-          errorMessage = 'Please log in again before changing password';
+          errorMessage = 'initials.reset_in_app_screen.requiresRecentLogin'.tr();
           break;
         default:
-          errorMessage = e.message ?? 'Failed to change password';
+          errorMessage = e.message ?? 'initials.reset_in_app_screen.failedChangePassword'.tr();
       }
       
       if (mounted) {
@@ -101,7 +110,7 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
             backgroundColor: AppColors.danger,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -119,47 +128,40 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.onPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Change Password',
-          style: TextStyle(
-            color: AppColors.onPrimary,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-      body: SingleChildScrollView(
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: AppSpacing.md),
-                  _buildHeader(),
-                  const SizedBox(height: AppSpacing.xl),
-                  _buildCurrentPasswordField(),
-                  const SizedBox(height: AppSpacing.md),
-                  _buildNewPasswordField(),
-                  const SizedBox(height: AppSpacing.md),
-                  _buildConfirmPasswordField(),
-                  const SizedBox(height: AppSpacing.xl),
-                  _buildChangePasswordButton(),
-                ],
+      body: Column(
+        children: [
+          widget.header,
+          Expanded(
+            child: SingleChildScrollView(
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildHeader(),
+                        const SizedBox(height: AppSpacing.xl),
+                        _buildCurrentPasswordField(),
+                        const SizedBox(height: AppSpacing.md),
+                        _buildNewPasswordField(),
+                        const SizedBox(height: AppSpacing.md),
+                        _buildConfirmPasswordField(),
+                        const SizedBox(height: AppSpacing.xl),
+                        _buildChangePasswordButton(),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -181,7 +183,7 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
         ),
         const SizedBox(height: AppSpacing.md),
         Text(
-          'Change Your Password',
+          'initials.reset_in_app_screen.changePasswordHeading'.tr(),
           style: AppText.h1.copyWith(
             fontSize: 20,
             fontWeight: FontWeight.bold,
@@ -189,7 +191,7 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          'Enter your current password and choose a new one',
+          'initials.reset_in_app_screen.changePasswordSubtitle'.tr(),
           textAlign: TextAlign.center,
           style: AppText.caption.copyWith(
             color: AppColors.textSecondary,
@@ -204,8 +206,8 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       controller: _currentPasswordController,
       obscureText: _obscureCurrentPassword,
       decoration: InputDecoration(
-        labelText: 'Current Password',
-        hintText: 'Enter your current password',
+        labelText: 'initials.reset_in_app_screen.currentPasswordLabel'.tr(),
+        hintText: 'initials.reset_in_app_screen.currentPasswordHint'.tr(),
         prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primary),
         suffixIcon: IconButton(
           icon: Icon(
@@ -234,7 +236,7 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       ),
       validator: (value) {
         if (value == null || value.isEmpty) {
-          return 'Please enter your current password';
+          return 'initials.reset_in_app_screen.currentPasswordValidation'.tr();
         }
         return null;
       },
@@ -246,8 +248,8 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       controller: _newPasswordController,
       obscureText: _obscureNewPassword,
       decoration: InputDecoration(
-        labelText: 'New Password',
-        hintText: 'Enter your new password',
+        labelText: 'initials.reset_in_app_screen.newPasswordLabel'.tr(),
+        hintText: 'initials.reset_in_app_screen.newPasswordHint'.tr(),
         prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primary),
         suffixIcon: IconButton(
           icon: Icon(
@@ -276,10 +278,10 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       ),
       validator: (value) {
         if (value == null || value.isEmpty) {
-          return 'Please enter a new password';
+          return 'initials.reset_in_app_screen.newPasswordValidation'.tr();
         }
         if (value.length < 6) {
-          return 'Password must be at least 6 characters';
+          return 'initials.reset_in_app_screen.newPasswordLengthValidation'.tr();
         }
         return null;
       },
@@ -291,8 +293,8 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       controller: _confirmPasswordController,
       obscureText: _obscureConfirmPassword,
       decoration: InputDecoration(
-        labelText: 'Confirm New Password',
-        hintText: 'Confirm your new password',
+        labelText: 'initials.reset_in_app_screen.confirmNewPasswordLabel'.tr(),
+        hintText: 'initials.reset_in_app_screen.confirmNewPasswordHint'.tr(),
         prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primary),
         suffixIcon: IconButton(
           icon: Icon(
@@ -321,10 +323,10 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
       ),
       validator: (value) {
         if (value == null || value.isEmpty) {
-          return 'Please confirm your new password';
+          return 'initials.reset_in_app_screen.confirmPasswordValidation'.tr();
         }
         if (value != _newPasswordController.text) {
-          return 'Passwords do not match';
+          return 'common.passwordMatch'.tr();
         }
         return null;
       },
@@ -352,9 +354,9 @@ class _ResetInAppScreenState extends State<ResetInAppScreen> {
                 color: AppColors.onPrimary,
               ),
             )
-          : const Text(
-              'Change Password',
-              style: TextStyle(
+          : Text(
+              'common.changePassword'.tr(),
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
               ),

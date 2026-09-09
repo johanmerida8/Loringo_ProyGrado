@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/components/image_dialog.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -54,7 +57,7 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
   String get typeId => 'odd_one_out';
 
   @override
-  String get displayName => 'Odd One Out';
+  String get displayName => 'teacher.odd_one_out_task.displayName'.tr();
 
   @override
   void loadData(Map<String, dynamic> data) {
@@ -85,16 +88,16 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
   @override
   String? validate() {
     if (categoryController.text.trim().isEmpty) {
-      return 'Enter the category the 3 matching items belong to';
+      return 'teacher.odd_one_out_task.categoryRequiredError'.tr();
     }
     for (int i = 0; i < _optionCount; i++) {
       final hasImage = pickedImages[i] != null || imageControllers[i].text.trim().isNotEmpty;
       if (labelControllers[i].text.trim().isEmpty || !hasImage) {
-        return 'Option ${i + 1} must have a label and an image';
+        return 'teacher.odd_one_out_task.optionMissingLabelOrImage'.tr(namedArgs: {'number': '${i + 1}'});
       }
     }
     if (oddIndex < 0 || oddIndex >= _optionCount) {
-      return 'Mark which option is the odd one out';
+      return 'teacher.odd_one_out_task.markOddOneOutError'.tr();
     }
     return null;
   }
@@ -119,24 +122,25 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final c = widget.groupColor;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHeader(c),
         const SizedBox(height: AppSpacing.md),
-        const Text('Category (the 3 that match)',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        Text('teacher.odd_one_out_task.categoryLabel'.tr(),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         const SizedBox(height: AppSpacing.xs),
         TextFormField(
           controller: categoryController,
-          decoration: _inputDecoration(c, 'e.g. "Animals"'),
+          decoration: _inputDecoration(c, 'teacher.odd_one_out_task.categoryHint'.tr()),
           onChanged: (_) => widget.onChanged(),
-          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+          validator: (v) => v?.trim().isEmpty ?? true ? 'teacher.odd_one_out_task.requiredError'.tr() : null,
         ),
         const SizedBox(height: AppSpacing.md),
-        const Text('4 options — mark the odd one out',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        Text('teacher.odd_one_out_task.optionsSectionLabel'.tr(),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         const SizedBox(height: AppSpacing.sm),
         ...List.generate(_optionCount, (index) => _buildOptionCard(index, c)),
       ],
@@ -156,7 +160,7 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              '3 options share a category, 1 doesn\'t belong. The student taps the one that\'s different.',
+              'teacher.odd_one_out_task.infoBanner'.tr(),
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -183,7 +187,7 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
         children: [
           Row(
             children: [
-              Text('Option ${index + 1}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              Text('teacher.odd_one_out_task.optionLabel'.tr(namedArgs: {'number': '${index + 1}'}), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
               const Spacer(),
               GestureDetector(
                 onTap: () => _setOdd(index),
@@ -195,7 +199,7 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
                       size: 20,
                     ),
                     const SizedBox(width: 4),
-                    const Text('Odd one out', style: TextStyle(fontSize: 13)),
+                    Text('teacher.odd_one_out_task.oddOneOutLabel'.tr(), style: const TextStyle(fontSize: 13)),
                   ],
                 ),
               ),
@@ -204,9 +208,9 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
           const SizedBox(height: AppSpacing.sm),
           TextFormField(
             controller: labelControllers[index],
-            decoration: _inputDecoration(c, 'e.g. "Cat"'),
+            decoration: _inputDecoration(c, 'teacher.odd_one_out_task.labelHint'.tr()),
             onChanged: (_) => widget.onChanged(),
-            validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+            validator: (v) => v?.isEmpty ?? true ? 'teacher.odd_one_out_task.requiredError'.tr() : null,
           ),
           const SizedBox(height: AppSpacing.sm),
           _buildImagePicker(index, c),
@@ -238,7 +242,7 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
                       errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 40),
                     ),
                   )
-                : Center(child: Text('No image', style: TextStyle(color: Colors.grey[500]))),
+                : Center(child: Text('teacher.odd_one_out_task.noImagePlaceholder'.tr(), style: TextStyle(color: Colors.grey[500]))),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
@@ -257,7 +261,7 @@ class _OddOneOutTaskState extends State<OddOneOutTask>
             }
           },
           icon: const Icon(Icons.image, size: 18),
-          label: const Text('Select'),
+          label: Text('teacher.odd_one_out_task.selectButton'.tr()),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey[200],
             foregroundColor: Colors.black87,

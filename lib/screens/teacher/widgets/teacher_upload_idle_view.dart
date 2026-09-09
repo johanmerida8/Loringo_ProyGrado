@@ -1,4 +1,8 @@
+import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // ── Idle view ─────────────────────────────────────────────────────────────────
@@ -19,7 +23,9 @@ class TeacherIdleView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(
@@ -58,8 +64,8 @@ class TeacherIdleView extends StatelessWidget {
                 const SizedBox(height: 24),
                 Text(
                     hasFiles
-                        ? 'Ready to Upload'
-                        : 'Select PNG or SVG images',
+                        ? 'teacher.teacher_upload_idle_view.readyToUpload'.tr()
+                        : 'teacher.teacher_upload_idle_view.selectImages'.tr(),
                     style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -95,10 +101,16 @@ class TeacherIdleView extends StatelessWidget {
                     const SizedBox(width: AppSpacing.xs + 2),
                     Text(
                       selectedCount == 0
-                          ? 'No images selected'
+                          ? 'teacher.teacher_upload_idle_view.noImagesSelected'.tr()
                           : isRecommended
-                              ? '$selectedCount selected · Ready!'
-                              : '$selectedCount selected · ${minRecommended - selectedCount} more recommended',
+                              ? 'teacher.teacher_upload_idle_view.selectedReady'
+                                  .tr(namedArgs: {'count': '$selectedCount'})
+                              : 'teacher.teacher_upload_idle_view.selectedMoreRecommended'
+                                  .tr(namedArgs: {
+                                  'count': '$selectedCount',
+                                  'remaining':
+                                      '${minRecommended - selectedCount}',
+                                }),
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -109,18 +121,32 @@ class TeacherIdleView extends StatelessWidget {
                   ]),
                 ),
                 const SizedBox(height: AppSpacing.xs + 2),
-                Text('Recommended: $minRecommended+ images per category',
+                Text(
+                    'teacher.teacher_upload_idle_view.recommendedCount'
+                        .tr(namedArgs: {'min': '$minRecommended'}),
                     style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey[500],
                         fontStyle: FontStyle.italic)),
+                if (!hasFiles && kIsWeb) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.mouse_rounded, size: 14, color: Colors.grey[400]),
+                    const SizedBox(width: AppSpacing.xs),
+                    Text('teacher.teacher_upload_idle_view.dragDropHint'.tr(),
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[500],
+                            fontWeight: FontWeight.w500)),
+                  ]),
+                ],
                 if (hasFiles) ...[
                   const SizedBox(height: 28),
                   Row(children: [
                     Expanded(child: OutlinedButton.icon(
                       onPressed: onPreview,
                       icon: const Icon(Icons.preview_rounded, size: 18),
-                      label: const Text('Preview', style: TextStyle(fontWeight: FontWeight.w600)),
+                      label: Text('teacher.teacher_upload_idle_view.preview'.tr(), style: const TextStyle(fontWeight: FontWeight.w600)),
                       style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.orange,
                           side: const BorderSide(color: Colors.orange, width: 1.5),
@@ -131,7 +157,7 @@ class TeacherIdleView extends StatelessWidget {
                     Expanded(child: OutlinedButton.icon(
                       onPressed: onClear,
                       icon: const Icon(Icons.clear_rounded, size: 18),
-                      label: const Text('Clear', style: TextStyle(fontWeight: FontWeight.w600)),
+                      label: Text('teacher.teacher_upload_idle_view.clear'.tr(), style: const TextStyle(fontWeight: FontWeight.w600)),
                       style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.danger,
                           side: const BorderSide(color: AppColors.danger, width: 1.5),
@@ -141,7 +167,7 @@ class TeacherIdleView extends StatelessWidget {
                   ]),
                 ] else ...[
                   const SizedBox(height: AppSpacing.md),
-                  Text('Only PNG and SVG files are accepted',
+                  Text('teacher.teacher_upload_idle_view.onlyPngSvg'.tr(),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           fontSize: 12, color: Colors.grey[400])),
@@ -150,4 +176,5 @@ class TeacherIdleView extends StatelessWidget {
               ]),
         ),
       );
+  }
 }

@@ -1,12 +1,18 @@
 // teacher_profile_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/edit_text_dialog.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/initials/reset_in_app_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/services/auth/identity_confirmation.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class TeacherProfileScreen extends StatefulWidget {
@@ -37,7 +43,7 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed && mounted) {
       context.read<NotificationProvider>().refresh();
     }
   }
@@ -90,13 +96,13 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppRadii.lg)),
-        title: const Text('Log Out'),
-        content: const Text('Are you sure you want to log out?'),
+        title: Text('common.logout'.tr()),
+        content: Text('common.logoutMsg'.tr()),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppColors.muted))),
+              child: Text('common.cancel'.tr(),
+                  style: const TextStyle(color: AppColors.muted))),
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
@@ -109,21 +115,22 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
               }
             },
             style: TextButton.styleFrom(foregroundColor: AppColors.warning),
-            child: const Text('Log Out',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            child: Text('common.logout'.tr(),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
     );
   }
 
-  void _navigateToPersonalData() {
-    Navigator.push(
+  Future<void> _navigateToPersonalData() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => _PersonalDataScreen(name: _name, email: _email),
       ),
     );
+    _loadUser();
   }
 
   void _navigateToSecurity() {
@@ -137,6 +144,7 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final biometricProvider = context.watch<BiometricProvider>();
     final notificationProvider = context.watch<NotificationProvider>();
 
@@ -153,69 +161,77 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
                     const SizedBox(height: AppSpacing.md),
                     _ProfileHeader(
                         name: _name,
-                        role: 'Teacher',
+                        role: 'common.teacher'.tr(),
                         icon: Icons.school_rounded),
                     const SizedBox(height: AppSpacing.md),
                     _MenuCard(
-                      items: [
-                        _MenuItem(
-                          icon: Icons.person_outline_rounded,
-                          title: 'Personal Data',
-                          subtitle: 'View and manage your information',
-                          onTap: _navigateToPersonalData,
+                      children: [
+                        _MenuTile(
+                          item: _MenuItem(
+                            icon: Icons.person_outline_rounded,
+                            title: 'common.personalData'.tr(),
+                            subtitle: 'teacher.teacher_profile_screen.viewManageInfo'.tr(),
+                            onTap: _navigateToPersonalData,
+                          ),
                         ),
-                        _MenuItem(
-                          icon: Icons.security_rounded,
-                          title: 'Security',
-                          subtitle: 'Biometric & password settings',
-                          onTap: _navigateToSecurity,
+                        _MenuTile(
+                          item: _MenuItem(
+                            icon: Icons.security_rounded,
+                            title: 'common.security'.tr(),
+                            subtitle: 'teacher.teacher_profile_screen.biometricPasswordSettings'.tr(),
+                            onTap: _navigateToSecurity,
+                          ),
                         ),
-                        _MenuItem(
-                          icon: Icons.notifications_active_rounded,
-                          title: 'Notifications',
-                          subtitle: "Get notified about class activity",
-                          trailing: notificationProvider.isLoading
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: AppColors.primary))
-                              : Switch(
-                                  value: notificationProvider.isEnabled,
-                                  onChanged: (value) async {
-                                    if (value) {
-                                      await notificationProvider
-                                          .enableNotifications(context);
-                                    } else {
-                                      await notificationProvider
-                                          .disableNotifications(context);
-                                    }
-                                    if (mounted) {
-                                      setState(() {});
-                                    }
-                                  },
-                                  activeColor: AppColors.primary,
-                                ),
-                          onTap: () async {
-                            if (notificationProvider.isEnabled) {
-                              await notificationProvider
-                                  .disableNotifications(context);
-                            } else {
-                              await notificationProvider
-                                  .enableNotifications(context);
-                            }
-                            if (mounted) {
-                              setState(() {});
-                            }
-                          },
+                        _MenuTile(
+                          item: _MenuItem(
+                            icon: Icons.notifications_active_rounded,
+                            title: 'common.notifications'.tr(),
+                            subtitle: 'teacher.teacher_profile_screen.notifSubtitle'.tr(),
+                            trailing: notificationProvider.isLoading
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.primary))
+                                : Switch(
+                                    value: notificationProvider.isEnabled,
+                                    onChanged: (value) async {
+                                      if (value) {
+                                        await notificationProvider
+                                            .enableNotifications(context);
+                                      } else {
+                                        await notificationProvider
+                                            .disableNotifications(context);
+                                      }
+                                      if (mounted) {
+                                        setState(() {});
+                                      }
+                                    },
+                                    activeColor: AppColors.primary,
+                                  ),
+                            onTap: () async {
+                              if (notificationProvider.isEnabled) {
+                                await notificationProvider
+                                    .disableNotifications(context);
+                              } else {
+                                await notificationProvider
+                                    .enableNotifications(context);
+                              }
+                              if (mounted) {
+                                setState(() {});
+                              }
+                            },
+                          ),
                         ),
-                        _MenuItem(
-                          icon: Icons.logout_rounded,
-                          title: 'Log Out',
-                          subtitle: 'Sign out from your account',
-                          onTap: _showLogoutConfirmation,
-                          isDestructive: true,
+                        _MenuTile(
+                          item: _MenuItem(
+                            icon: Icons.logout_rounded,
+                            title: 'common.logout'.tr(),
+                            subtitle: 'common.signOut'.tr(),
+                            onTap: _showLogoutConfirmation,
+                            isDestructive: true,
+                          ),
                         ),
                       ],
                     ),
@@ -244,7 +260,7 @@ class _TeacherProfileScreenState extends State<TeacherProfileScreen>
           ),
         ),
         const SizedBox(width: AppSpacing.md),
-        const Text('My Profile', style: AppText.h1),
+        Text('common.myProfile'.tr(), style: AppText.h1),
       ]),
     );
   }
@@ -313,8 +329,8 @@ class _ProfileHeader extends StatelessWidget {
 
 // Menu Card Widget
 class _MenuCard extends StatelessWidget {
-  final List<_MenuItem> items;
-  const _MenuCard({required this.items});
+  final List<Widget> children;
+  const _MenuCard({required this.children});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -330,14 +346,19 @@ class _MenuCard extends StatelessWidget {
             ),
           ],
         ),
-        child: Column(
-          children: List.generate(items.length, (i) {
-            final isLast = i == items.length - 1;
-            return Column(children: [
-              _MenuTile(item: items[i]),
-              if (!isLast) const Divider(height: 1, indent: 56, endIndent: 16),
-            ]);
-          }),
+        child: Material(
+          type: MaterialType.transparency,
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: List.generate(children.length, (i) {
+              final isLast = i == children.length - 1;
+              return Column(children: [
+                children[i],
+                if (!isLast) const Divider(height: 1, indent: 56, endIndent: 16),
+              ]);
+            }),
+          ),
         ),
       );
 }
@@ -392,39 +413,193 @@ class _MenuTile extends StatelessWidget {
 }
 
 // Personal Data Screen
-class _PersonalDataScreen extends StatelessWidget {
+class _PersonalDataScreen extends StatefulWidget {
   final String name;
   final String email;
   const _PersonalDataScreen({required this.name, required this.email});
 
   @override
+  State<_PersonalDataScreen> createState() => _PersonalDataScreenState();
+}
+
+class _PersonalDataScreenState extends State<_PersonalDataScreen> {
+  late String _name = widget.name;
+
+  @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: const Color(0xFFEFF6EE),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _buildHeader(context, 'Personal Data'),
+            _buildHeader(context, 'common.personalData'.tr()),
             const SizedBox(height: AppSpacing.lg),
             _SectionCard(
-              title: 'Account Information',
+              title: 'common.accountInfo'.tr(),
               children: [
                 _InfoRow(
                     icon: Icons.badge_outlined,
-                    label: 'Display Name',
-                    value: name.isNotEmpty ? name : 'Not set'),
+                    label: 'common.displayName'.tr(),
+                    value: _name.isNotEmpty
+                        ? _name
+                        : 'teacher.teacher_profile_screen.notSet'.tr(),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.edit_outlined,
+                          size: 18, color: AppColors.primary),
+                      onPressed: _editName,
+                    )),
                 const Divider(height: 1, indent: 40),
                 _InfoRow(
                     icon: Icons.email_outlined,
-                    label: 'Email Address',
-                    value: email),
+                    label: 'common.emailAddress'.tr(),
+                    value: widget.email),
+                const Divider(height: 1, indent: 40),
+                _buildDeleteAccountRow(),
               ],
             ),
           ]),
         ),
       ),
     );
+  }
+
+  Widget _buildDeleteAccountRow() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.delete_outline, color: Colors.red, size: 22),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('common.deleteAccount'.tr(),
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+                Text('common.deletePermAcc'.tr(),
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: _deleteAccount,
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text('common.delete'.tr(),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Deletes the teacher's account. Blocked while any of their groups is
+  /// still active (not archived) — a teacher must archive every group
+  /// first, since deleting cascades the group itself and every student's
+  /// progress/reports under it (see Database.deleteTeacherOwnedData),
+  /// unlike a parent's cascade which only ever touches their own
+  /// children. Student profiles themselves are never deleted here — only
+  /// their history under this teacher's groups.
+  Future<void> _deleteAccount() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final groupsSnap = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .where('teacherId', isEqualTo: uid)
+        .get();
+    final hasActiveGroup =
+        groupsSnap.docs.any((doc) => doc.data()['archived'] != true);
+    if (hasActiveGroup) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadii.lg)),
+            title: Text(
+                'teacher.teacher_profile_screen.activeGroupsBlockTitle'.tr()),
+            content: Text(
+                'teacher.teacher_profile_screen.activeGroupsBlockMsg'.tr()),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('common.ok'.tr()),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('common.deleteAccount'.tr()),
+        content: Text('teacher.teacher_profile_screen.deleteAccMsg'.tr()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('common.cancel'.tr()),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('common.delete'.tr(),
+                style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    // Confirm a genuinely fresh sign-in BEFORE touching any data — see
+    // the matching comment in parent_navigation_screen.dart::_deleteAccount.
+    if (!mounted) return;
+    final reauthenticated = await reauthenticateWithPassword(context);
+    if (!reauthenticated || !mounted) return;
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      await Database().deleteTeacherOwnedData(uid);
+      await FirebaseFirestore.instance.collection('users').doc(uid).delete();
+      await user.delete();
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthGate()),
+          (route) => false,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.code == 'requires-recent-login'
+                  ? 'common.requiresRecentLogin'.tr()
+                  : 'common.errorWithMessage'.tr(namedArgs: {'error': e.message ?? e.code})),
+              backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
+              backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Widget _buildHeader(BuildContext context, String title) {
@@ -445,6 +620,25 @@ class _PersonalDataScreen extends StatelessWidget {
       Text(title, style: AppText.h1),
     ]);
   }
+
+  Future<void> _editName() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final newName = await showEditTextDialog(
+      context,
+      title: 'common.displayName'.tr(),
+      initialValue: _name,
+      onSave: (value) => Database().updateUser(uid: uid, name: value),
+    );
+
+    if (newName != null && mounted) {
+      setState(() => _name = newName);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('common.displayNameUpdate'.tr())),
+      );
+    }
+  }
 }
 
 // Security Screen
@@ -453,6 +647,7 @@ class _SecurityScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final biometricProvider = context.watch<BiometricProvider>();
     final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -464,11 +659,11 @@ class _SecurityScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildHeader(context, 'Security'),
+              _buildHeader(context, 'common.security'.tr()),
               const SizedBox(height: AppSpacing.md),
               // Password Section
               _SectionCard(
-                title: 'Password',
+                title: 'common.password'.tr(),
                 children: [
                   ListTile(
                     leading: Container(
@@ -480,24 +675,26 @@ class _SecurityScreen extends StatelessWidget {
                       child: const Icon(Icons.lock_reset_outlined,
                           color: AppColors.primary, size: 22),
                     ),
-                    title: const Text('Change Password',
-                        style: TextStyle(
+                    title: Text('common.changePassword'.tr(),
+                        style: const TextStyle(
                             fontSize: 15, fontWeight: FontWeight.w600)),
-                    subtitle: const Text('Update your password',
-                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    subtitle: Text('teacher.teacher_profile_screen.updateYourPassword'.tr(),
+                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
                     trailing: const Icon(Icons.chevron_right_rounded,
                         color: Colors.grey),
                     onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => const ResetInAppScreen())),
+                            builder: (_) => ResetInAppScreen(
+                                header: TeacherScreenHeader(
+                                    title: 'common.changePassword'.tr())))),
                   ),
                 ],
               ),
               const SizedBox(height: AppSpacing.lg),
               // Biometric Section
               _SectionCard(
-                title: 'Biometric Authentication',
+                title: 'common.biometricAuth'.tr(),
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(AppSpacing.md),
@@ -512,23 +709,22 @@ class _SecurityScreen extends StatelessWidget {
                                     style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 15)),
-                                subtitle: const Text(
-                                    'Use biometrics to sign in quickly'),
+                                subtitle: Text('common.biometricSignIn'.tr()),
                                 value: biometricProvider.isEnabled,
                                 activeColor: AppColors.primary,
                                 onChanged: (value) =>
                                     biometricProvider.toggle(context, userId),
                               )
-                            : const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 16),
+                            : Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
                                 child: Row(children: [
-                                  Icon(Icons.fingerprint_outlined,
+                                  const Icon(Icons.fingerprint_outlined,
                                       size: 24, color: Colors.grey),
-                                  SizedBox(width: 16),
+                                  const SizedBox(width: 16),
                                   Expanded(
                                     child: Text(
-                                      'Biometrics not available on this device',
-                                      style: TextStyle(
+                                      'common.biometricsNotAvailable'.tr(),
+                                      style: const TextStyle(
                                           fontSize: 14, color: Colors.grey),
                                     ),
                                   ),
@@ -584,19 +780,24 @@ class _SectionCard extends StatelessWidget {
             ),
           ],
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
-            child: Text(title,
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary)),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ...children,
-        ]),
+        child: Material(
+          type: MaterialType.transparency,
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+          clipBehavior: Clip.antiAlias,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+              child: Text(title,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary)),
+            ),
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            ...children,
+          ]),
+        ),
       );
 }
 
@@ -605,8 +806,12 @@ class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
+  final Widget? trailing;
   const _InfoRow(
-      {required this.icon, required this.label, required this.value});
+      {required this.icon,
+      required this.label,
+      required this.value,
+      this.trailing});
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -632,6 +837,7 @@ class _InfoRow extends StatelessWidget {
                           color: Colors.black87)),
                 ]),
           ),
+          if (trailing != null) trailing!,
         ]),
       );
 }

@@ -1,0 +1,61 @@
+This policy explains what information Loringo collects, how it is used, and what control you have over it — whether you use the app as a parent/guardian, teacher, or administrator, or you create a profile for a child in your care.
+
+WHAT INFORMATION WE COLLECT
+
+About your own account (parent/guardian, teacher, or administrator):
+- Your full name and email address, used to create and sign in to your account.
+- Your role within the app (parent, teacher, or administrator).
+
+About a child, entered only by their parent/guardian:
+- The child's name.
+- An illustrated, pre-made avatar (not a real photograph).
+- The child's academic progress: completed activities and quizzes, scores, attempts, answers, and teacher feedback.
+- A private access code that the child uses to open the app, instead of an email and password.
+
+Children do not create their own account. A parent or guardian creates the child's profile, and the child then uses that profile by entering their access code.
+
+We do not collect from a child: date of birth, government ID, home address, precise location, phone number, or persistent recordings of their voice.
+
+HOW WE USE THIS INFORMATION
+
+We use this information only to run the app: to identify a child within their class, to show their progress to their teacher and parent, and to power in-app rewards like experience points and leagues. We do not use it for advertising, and we do not sell it.
+
+CHILDREN'S INFORMATION
+
+A child's profile is created and managed entirely by their parent or guardian — a child never signs up on their own or enters their own personal details. Every activity a child does, and any image shown to them in an activity, is reviewed before it becomes available, to help keep inappropriate content away from children.
+
+VOICE RECOGNITION
+
+Some pronunciation activities use speech recognition to check whether a child said a word correctly. Loringo keeps only the result needed for the activity (for example, whether the word was recognized). We do not intentionally keep a recording of a child's voice.
+
+INFORMATION SHARING
+
+We do not sell information or share it for advertising. The people who can see a child's information are limited to that child's parent/guardian and their teacher. Push notifications about a child's progress go to the parent or teacher — never to the child.
+
+ACCESS CODES
+
+A child's access code is kept private and protected — it is never shown in a form that can simply be read off by someone browsing the app's data. Before a parent can view their child's access code, they must first confirm their identity (for example, with a fingerprint, face recognition, or their account password).
+
+PARENT/GUARDIAN CONTROLS
+
+As a parent or guardian, you can at any time: view your child's progress, look up your child's access code (after confirming your identity), remove a group your child has joined, and delete your child's profile or your own account.
+
+ACCOUNT AND PROFILE DELETION
+
+- Deleting a student's profile: permanently deletes that child's profile, access code, group membership, and learning progress. Your own account, your other children, and the teacher's group are not affected.
+
+- Deleting your parent account: permanently deletes your account and every child profile registered under it, including each child's access code, group membership, and learning progress. Teachers' groups and other students are not affected.
+
+- Removing a student from a group: the student's profile is not deleted. They simply leave that group and can join a new one at any time. A record that they were once in the group is kept, but the learning progress they earned in it is deleted.
+
+- Deleting a teacher account: permanently deletes the teacher's account and everything they created — lessons, activities, quizzes/evaluations, uploaded images, and their groups. Student profiles are never deleted; students keep their profile and can join another group.
+
+- Archiving a group: does not delete anything. It only freezes the group — its students, their progress, and its history stay exactly as they are.
+
+CONSENT
+
+By creating an account, you accept this policy for your own information. By creating a profile for a child in your care, you additionally confirm that you are that child's parent or legal guardian, and you authorize the collection and use of that child's information as described in this policy, solely to provide them the app's educational features.
+
+CHANGES TO THIS POLICY
+
+If this policy changes in an important way, we will ask you to review and accept the updated version the next time it applies to you.

@@ -1,5 +1,8 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/otp_screen.dart';
 import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -46,10 +49,11 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         String msg = canRequest['message'] as String;
         if (canRequest['reason'] == 'cooldown') {
           final remaining = canRequest['remainingMinutes'];
-          msg = 'Please wait $remaining minutes before requesting a code';
+          msg = 'initials.reset_password_screen.waitBeforeCode'
+              .tr(namedArgs: {'minutes': '$remaining'});
         } else if (canRequest['reason'] == 'daily_limit') {
-          msg =
-              'Daily limit of ${canRequest['maxDaily']} attempts reached. Try tomorrow';
+          msg = 'initials.reset_password_screen.dailyLimitReached'
+              .tr(namedArgs: {'max': '${canRequest['maxDaily']}'});
         }
         _snack(msg, color: AppColors.warning);
         return;
@@ -57,13 +61,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
       if (canRequest['remainingAttempts'] != null) {
         _snack(
-          'You have ${canRequest['remainingAttempts']} attempts left today',
+          'initials.reset_password_screen.attemptsLeftToday'
+              .tr(namedArgs: {'count': '${canRequest['remainingAttempts']}'}),
           color: AppColors.info,
         );
       }
 
       await _otpService.sendOTPToEmail(email);
-      _snack('Verification code sent to $email', color: AppColors.success);
+      _snack(
+          'initials.reset_password_screen.codeSentTo'.tr(namedArgs: {'email': email}),
+          color: AppColors.success);
 
       if (mounted) {
         Navigator.pushReplacement(
@@ -72,9 +79,13 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         );
       }
     } catch (e) {
+      // 'Email is not registered' is thrown as a stable, untranslated
+      // sentinel from OTPService.sendOTPToEmail — matched here by content,
+      // not shown directly (see the comment there for why it stays
+      // English regardless of locale).
       String errMsg = e.toString().replaceFirst('Exception: ', '');
       if (errMsg.contains('Email is not registered')) {
-        errMsg = 'This email is not registered';
+        errMsg = 'initials.reset_password_screen.emailNotRegistered'.tr();
       }
       _snack(errMsg);
     } finally {
@@ -84,6 +95,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return AuthLayout(
       mobileHeroFraction: 0.40,
       onBack: () => Navigator.pop(context),
@@ -93,8 +105,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         height: 145,
         fit: BoxFit.contain,
       ),
-      title: 'Reset Password',
-      subtitle: 'We\'ll send a code to your email',
+      title: 'common.resetPassword'.tr(),
+      subtitle: 'initials.reset_password_screen.subtitle'.tr(),
       form: Form(
         key: _formKey,
         child: Column(
@@ -105,16 +117,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
               keyboardType: TextInputType.emailAddress,
               decoration: AppInput.decoration(
                 accent: AppColors.primary,
-                hint: 'Email address',
+                hint: 'initials.reset_password_screen.emailHint'.tr(),
                 icon: Icons.email_outlined,
               ),
               autovalidateMode: AutovalidateMode.onUserInteraction,
               validator: (v) {
                 if (v == null || v.trim().isEmpty) {
-                  return 'Email is required';
+                  return 'common.emailValidation1'.tr();
                 }
                 if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(v.trim())) {
-                  return 'Enter a valid email';
+                  return 'common.emailValidation2'.tr();
                 }
                 return null;
               },
@@ -140,7 +152,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                         color: Colors.white,
                       ),
                     )
-                  : const Text('Send Code', style: AppText.button),
+                  : Text('initials.reset_password_screen.sendCode'.tr(),
+                      style: AppText.button),
             ),
           ],
         ),
@@ -166,9 +179,9 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
             children: [
               Icon(Icons.arrow_back_rounded, color: AppColors.primary, size: 20),
               const SizedBox(width: AppSpacing.sm),
-              const Text(
-                'Back to Login',
-                style: TextStyle(
+              Text(
+                'initials.reset_password_screen.backToLogin'.tr(),
+                style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
                   color: AppColors.primary,

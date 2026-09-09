@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 // import 'task_type_interface.dart';
@@ -40,10 +43,10 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
   String get typeId => 'arrange';
   
   @override
-  String get displayName => 'Sentence Arrange';
-  
+  String get displayName => 'teacher.arrange_task.displayName'.tr();
+
   @override
-  String get defaultQuestion => 'Arrange the words to form a sentence';
+  String get defaultQuestion => 'teacher.arrange_task.defaultQuestion'.tr();
 
   @override
   void loadData(Map<String, dynamic> data) {
@@ -67,7 +70,7 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
   @override
   String? validate() {
     final words = _getWords();
-    if (words.length < 3) return 'Sentence must have at least 3 words';
+    if (words.length < 3) return 'teacher.arrange_task.minWordsError'.tr();
     return null;
   }
 
@@ -84,6 +87,7 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -106,7 +110,7 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
-                  'Write a sentence. Students will arrange shuffled words in the correct order.',
+                  'teacher.arrange_task.infoBanner'.tr(),
                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
               ),
@@ -128,14 +132,14 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
                 children: [
                   Icon(Icons.text_fields, size: 18, color: c),
                   const SizedBox(width: AppSpacing.sm),
-                  const Text('Sentence', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text('teacher.arrange_task.sentenceLabel'.tr(), style: const TextStyle(fontWeight: FontWeight.bold)),
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: sentenceController,
                 decoration: InputDecoration(
-                  hintText: 'e.g., "The sky is blue today"',
+                  hintText: 'teacher.arrange_task.sentenceHint'.tr(),
                   border: const OutlineInputBorder(),
                   filled: true,
                   fillColor: Colors.grey[50],
@@ -143,9 +147,9 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
                 maxLines: 2,
                 onChanged: (_) => widget.onChanged(),
                 validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'Required';
+                  if (v == null || v.trim().isEmpty) return 'teacher.arrange_task.requiredError'.tr();
                   if (v.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length < 3) {
-                    return 'At least 3 words';
+                    return 'teacher.arrange_task.atLeastThreeWordsError'.tr();
                   }
                   return null;
                 },
@@ -155,7 +159,7 @@ class _ArrangeTaskState extends State<ArrangeTask> with TaskTypeEditorMixin impl
         ),
         if (words.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
-          Text('Tile preview (shown shuffled):', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          Text('teacher.arrange_task.tilePreviewLabel'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: AppSpacing.sm,

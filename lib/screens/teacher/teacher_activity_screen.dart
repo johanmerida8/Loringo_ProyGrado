@@ -149,19 +149,22 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
 
         // Unit-scoped quizzes (one per unit, shown after that unit's
         // lessons). Lesson-scoped quizzes are loaded separately
-        // per-lesson below, alongside that lesson's activities.
-        final unitQuizzesMap = <String, List<QueryDocumentSnapshot>>{};
-        final unitQuizzesSnap = await FirebaseFirestore.instance
-            .collection('quizzes')
-            .where('contentId', isEqualTo: contentId)
-            .where('scope', isEqualTo: 'unit')
-            .get();
-
-        for (final quizDoc in unitQuizzesSnap.docs) {
-          final quizData = quizDoc.data() as Map<String, dynamic>;
-          final unitId = quizData['unitId'] as String;
-          unitQuizzesMap.putIfAbsent(unitId, () => []).add(quizDoc);
-        }
+        // per-lesson below, alongside that lesson's activities. One read
+        // per unit (nested under content/units/{unitId}/quizzes now) —
+        // same batching shape as perUnitResults just below.
+        final unitQuizSnaps = await Future.wait(
+          unitDocs.map((ud) => FirebaseFirestore.instance
+              .collection('content')
+              .doc(contentId)
+              .collection('units')
+              .doc(ud.id)
+              .collection('quizzes')
+              .get()),
+        );
+        final unitQuizzesMap = <String, List<QueryDocumentSnapshot>>{
+          for (int i = 0; i < unitDocs.length; i++)
+            unitDocs[i].id: unitQuizSnaps[i].docs,
+        };
 
         final perUnitResults = await Future.wait(
           unitDocs.map((ud) => FirebaseFirestore.instance
@@ -211,11 +214,13 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
           // doesn't add serial round-trips per lesson.
           final perLessonQuizResults = await Future.wait(
             lessonDocs.map((ld) => FirebaseFirestore.instance
+                .collection('content')
+                .doc(contentId)
+                .collection('units')
+                .doc(unitId)
+                .collection('lessons')
+                .doc(ld.id)
                 .collection('quizzes')
-                .where('contentId', isEqualTo: contentId)
-                .where('unitId', isEqualTo: unitId)
-                .where('scope', isEqualTo: 'lesson')
-                .where('lessonId', isEqualTo: ld.id)
                 .limit(1)
                 .get()),
           );
@@ -464,14 +469,14 @@ class _TeacherActivityScreenState extends State<TeacherActivityScreen> {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              // QuizPlayScreen reads scope from the quiz doc itself and
-              // handles both scope: 'unit' and scope: 'lesson'
-              // correctly — no branching needed here on which screen to
-              // navigate to.
+              // QuizPlayScreen resolves the quiz doc from contentId/unitId
+              // and lessonId (null ⇒ unit quiz) — no branching needed here
+              // on which screen to navigate to.
               Navigator.push(context, MaterialPageRoute(
                 builder: (_) => QuizPlayScreen(
                   contentId: item['contentId'],
                   unitId: item['unitId'],
+                  lessonId: isLessonQuiz ? item['lessonId'] as String? : null,
                   quizId: item['quizId'],
                   quizTitle: item['title'],
                   isPreview: true,

@@ -1,5 +1,8 @@
 // lib/screens/teacher/widgets/task_type_option.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class TaskTypeOption {
@@ -60,6 +63,56 @@ TaskTypeOption taskTypeOptionFor(String id) {
   return TaskTypeOption(id, id, Icons.help_outline);
 }
 
+/// Which kTaskTypeGroups skill category a task type belongs to (e.g.
+/// 'match' -> 'Vocabulary'). Used by parent_home_screen.dart's Skill
+/// Insights section to aggregate at the category level -- a parent
+/// doesn't author tasks, so "Image Select" means nothing to them, but
+/// "Vocabulary" does.
+String taskCategoryFor(String id) {
+  for (final entry in kTaskTypeGroups.entries) {
+    if (entry.value.any((option) => option.id == id)) return entry.key;
+  }
+  return 'Other';
+}
+
+// ── Display-label lookups ─────────────────────────────────────────────────
+// kTaskTypeGroups above stays untranslated on purpose: its String keys and
+// TaskTypeOption.id/.label values are consumed as identifiers elsewhere
+// (e.g. taskCategoryFor's return value drives parent_home_screen.dart's
+// Skill Insights aggregation), so changing them here would ripple into
+// files outside this widget's scope. These maps translate ONLY what this
+// file actually renders on screen, keyed off the same stable ids/names.
+const Map<String, String> _kTaskTypeLabelKeys = {
+  'image_select': 'taskImageSelect',
+  'image_select_reverse': 'taskImageSelectReverse',
+  'match': 'taskMatch',
+  'sound_match': 'taskSoundMatch',
+  'odd_one_out': 'taskOddOneOut',
+  'fill_blank': 'taskFillBlank',
+  'arrange': 'taskArrange',
+  'sentence_builder': 'taskSentenceBuilder',
+  'reading': 'taskReading',
+  'repeat_after_me': 'taskRepeatAfterMe',
+  'listen_and_speak': 'taskListenAndSpeak',
+  'complete_the_chat': 'taskCompleteTheChat',
+};
+
+const Map<String, String> _kTaskGroupLabelKeys = {
+  'Vocabulary': 'groupVocabulary',
+  'Grammar': 'groupGrammar',
+  'Reading': 'groupReading',
+  'Speaking & Listening': 'groupSpeakingListening',
+  'Conversation': 'groupConversation',
+};
+
+String taskTypeLabel(TaskTypeOption option) =>
+    'teacher.task_type_option.${_kTaskTypeLabelKeys[option.id] ?? option.id}'
+        .tr();
+
+String taskGroupLabel(String groupName) =>
+    'teacher.task_type_option.${_kTaskGroupLabelKeys[groupName] ?? groupName}'
+        .tr();
+
 /// Tappable field that opens a grouped bottom sheet for choosing a task type,
 /// instead of a single flat 10-item dropdown.
 class TaskTypePickerField extends StatelessWidget {
@@ -76,6 +129,7 @@ class TaskTypePickerField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final selected = taskTypeOptionFor(selectedId);
     return InkWell(
       borderRadius: AppRadii.mdAll,
@@ -85,7 +139,7 @@ class TaskTypePickerField extends StatelessWidget {
         child: Row(children: [
           Icon(selected.icon, color: color, size: 0), // keeps baseline height consistent
           Expanded(
-            child: Text(selected.label, style: AppText.body.copyWith(fontWeight: FontWeight.w600)),
+            child: Text(taskTypeLabel(selected), style: AppText.body.copyWith(fontWeight: FontWeight.w600)),
           ),
           const Icon(Icons.unfold_more, color: AppColors.muted, size: 20),
         ]),
@@ -111,6 +165,7 @@ class _TaskTypeSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return DraggableScrollableSheet(
       initialChildSize: 0.75,
       minChildSize: 0.5,
@@ -128,9 +183,9 @@ class _TaskTypeSheet extends StatelessWidget {
               width: 36, height: 4,
               decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(2)),
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
-              child: Row(children: [Text('Choose a Task Type', style: AppText.cardTitle)]),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
+              child: Row(children: [Text('teacher.task_type_option.chooseTaskType'.tr(), style: AppText.cardTitle)]),
             ),
             Expanded(
               child: ListView(
@@ -154,7 +209,7 @@ class _TaskTypeSheet extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: AppSpacing.md, bottom: AppSpacing.xs),
-          child: Text(groupName.toUpperCase(),
+          child: Text(taskGroupLabel(groupName).toUpperCase(),
               style: AppText.fieldLabel.copyWith(color: AppColors.textSecondary)),
         ),
         ...options.map((option) {
@@ -169,7 +224,7 @@ class _TaskTypeSheet extends StatelessWidget {
             child: ListTile(
               shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
               leading: Icon(option.icon, color: isSelected ? color : AppColors.muted),
-              title: Text(option.label, style: TextStyle(
+              title: Text(taskTypeLabel(option), style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: isSelected ? color : AppColors.textPrimary,
               )),

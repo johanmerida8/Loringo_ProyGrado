@@ -1,8 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/activity_review_screen.dart';
 import 'package:loringo_app/screens/teacher/lesson_quiz_review_screen.dart';
 import 'package:loringo_app/screens/teacher/unit_quiz_review_screen.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
+import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class StudentDetailedProgressScreen extends StatefulWidget {
@@ -25,10 +30,12 @@ class StudentDetailedProgressScreen extends StatefulWidget {
   });
 
   @override
-  State<StudentDetailedProgressScreen> createState() => _StudentDetailedProgressScreenState();
+  State<StudentDetailedProgressScreen> createState() =>
+      _StudentDetailedProgressScreenState();
 }
 
-class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressScreen>
+class _StudentDetailedProgressScreenState
+    extends State<StudentDetailedProgressScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
@@ -46,49 +53,54 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('${widget.studentName} – Progress'),
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: 'teacher.student_detail_progress_screen.studentProgressTitle'
+                .tr(namedArgs: {'name': widget.studentName}),
             // Deja explícito qué alcance se está viendo, para que el
             // profesor no confunda "todo" con "solo esta unidad".
-            Text(
-              widget.unitId != null
-                  ? (widget.unitTitle ?? 'Filtered unit')
-                  : 'All Units',
-              style: const TextStyle(fontSize: 12, color: Colors.white70),
-            ),
-          ],
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Activities', icon: Icon(Icons.assignment)),
-            Tab(text: 'Quizzes', icon: Icon(Icons.quiz)),
-          ],
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _ActivitiesTab(
-            studentId: widget.studentId,
-            studentName: widget.studentName,
-            unitId: widget.unitId,
+            subtitle: widget.unitId != null
+                ? (widget.unitTitle ??
+                    'teacher.student_detail_progress_screen.filteredUnit'.tr())
+                : 'teacher.student_detail_progress_screen.allUnits'.tr(),
           ),
-          _QuizzesTab(
-            studentId: widget.studentId,
-            studentName: widget.studentName,
-            unitId: widget.unitId,
+          TabBar(
+            controller: _tabController,
+            tabs: [
+              Tab(
+                  text: 'teacher.student_detail_progress_screen.activities'
+                      .tr(),
+                  icon: const Icon(Icons.assignment)),
+              Tab(
+                  text: 'teacher.student_detail_progress_screen.quizzes'.tr(),
+                  icon: const Icon(Icons.quiz)),
+            ],
+            indicatorColor: AppColors.primary,
+            labelColor: AppColors.primary,
+            unselectedLabelColor: Colors.grey,
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _ActivitiesTab(
+                  studentId: widget.studentId,
+                  studentName: widget.studentName,
+                  groupId: widget.groupId,
+                  unitId: widget.unitId,
+                ),
+                _QuizzesTab(
+                  studentId: widget.studentId,
+                  studentName: widget.studentName,
+                  groupId: widget.groupId,
+                  unitId: widget.unitId,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -102,11 +114,13 @@ class _StudentDetailedProgressScreenState extends State<StudentDetailedProgressS
 class _ActivitiesTab extends StatefulWidget {
   final String studentId;
   final String studentName;
+  final String groupId;
   final String? unitId;
 
   const _ActivitiesTab({
     required this.studentId,
     required this.studentName,
+    required this.groupId,
     required this.unitId,
   });
 
@@ -130,7 +144,11 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
     );
   }
 
-  Future<String> _getActivityTitle(String activityId, String contentId, String unitId) async {
+  Future<String> _getActivityTitle(
+    String activityId,
+    String contentId,
+    String unitId,
+  ) async {
     final key = '$contentId|$unitId|$activityId';
     if (_activityTitleCache.containsKey(key)) {
       return _activityTitleCache[key]!;
@@ -180,6 +198,7 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
         builder: (_) => ActivityReviewScreen(
           studentId: widget.studentId,
           studentName: widget.studentName,
+          groupId: widget.groupId,
           activityId: activityId,
           activityTitle: title,
         ),
@@ -189,8 +208,11 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('progress')
@@ -220,8 +242,10 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
           return Center(
             child: Text(
               widget.unitId != null
-                  ? 'No activities completed yet in this unit'
-                  : 'No activities completed yet',
+                  ? 'teacher.student_detail_progress_screen.noActivitiesInUnit'
+                      .tr()
+                  : 'teacher.student_detail_progress_screen.noActivitiesYet'
+                      .tr(),
             ),
           );
         }
@@ -239,14 +263,17 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
             if (storedStars != null) {
               starCount = storedStars;
             } else {
-              if (bestScore >= 90) starCount = 3;
-              else if (bestScore >= 70) starCount = 2;
-              else starCount = 1;
+              if (bestScore >= 90)
+                starCount = 3;
+              else if (bestScore >= 70)
+                starCount = 2;
+              else
+                starCount = 1;
             }
             final completedAt = data['lastCompletedAt'] as Timestamp?;
             final dateStr = completedAt != null
                 ? _formatDate(completedAt.toDate())
-                : 'Unknown date';
+                : 'teacher.student_detail_progress_screen.unknownDate'.tr();
             // Whether this attempt has per-task detail available for
             // review — activities completed before this feature existed
             // simply won't have a taskAnswers map, and the Review button
@@ -277,9 +304,13 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
                               _buildStars(starCount),
                             ],
                           ),
-                          subtitle: Text('Completed: $dateStr'),
-                          trailing: Text('$bestScore%',
-                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(
+                              'teacher.student_detail_progress_screen.completedOn'
+                                  .tr(namedArgs: {'date': dateStr})),
+                          trailing: Text(
+                            '$bestScore%',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -287,11 +318,16 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
                             width: double.infinity,
                             child: OutlinedButton.icon(
                               onPressed: () => _openReview(activityId, title),
-                              icon: const Icon(Icons.rate_review_outlined, size: 18),
-                              label: const Text('Review'),
+                              icon: const Icon(
+                                Icons.rate_review_outlined,
+                                size: 18,
+                              ),
+                              label: Text('teacher.student_detail_progress_screen.review'.tr()),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.primary,
-                                side: const BorderSide(color: AppColors.primary),
+                                side: const BorderSide(
+                                  color: AppColors.primary,
+                                ),
                               ),
                             ),
                           ),
@@ -315,11 +351,13 @@ class _ActivitiesTabState extends State<_ActivitiesTab> {
 class _QuizzesTab extends StatefulWidget {
   final String studentId;
   final String studentName;
+  final String groupId;
   final String? unitId;
 
   const _QuizzesTab({
     required this.studentId,
     required this.studentName,
+    required this.groupId,
     required this.unitId,
   });
 
@@ -330,41 +368,95 @@ class _QuizzesTab extends StatefulWidget {
 class _QuizzesTabState extends State<_QuizzesTab> {
   final Map<String, Map<String, dynamic>> _quizCache = {};
 
-  Future<Map<String, dynamic>> _getQuizInfo(String quizId) async {
+  /// Resolves a quiz doc from its progress doc's contentId/unitId/lessonId.
+  /// [lessonId] comes straight off the progress doc when present (every
+  /// quiz completed after this migration carries it). For a LEGACY progress
+  /// doc saved before this migration (lessonId absent, quiz could be either
+  /// scope), falls back to trying the unit-quiz path first, then scanning
+  /// the unit's lessons for a matching quiz doc -- then self-heals by
+  /// writing the discovered lessonId back onto that progress doc so this
+  /// scan never has to run again for it.
+  Future<Map<String, dynamic>> _getQuizInfo(
+    String quizId,
+    String contentId,
+    String unitId,
+    String? lessonId,
+  ) async {
     if (_quizCache.containsKey(quizId)) {
       return _quizCache[quizId]!;
     }
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('quizzes')
-          .doc(quizId)
-          .get();
+      final db = Database();
+      String? resolvedLessonId = lessonId;
+      DocumentSnapshot doc;
+      if (lessonId != null) {
+        doc = await db.getQuiz(contentId, unitId, quizId, lessonId: lessonId);
+      } else {
+        doc = await db.getQuiz(contentId, unitId, quizId);
+        if (!doc.exists) {
+          final lessonsSnap = await db
+              .personalizedLessons(contentId, unitId)
+              .get();
+          for (final lessonDoc in lessonsSnap.docs) {
+            final candidate = await db.getQuiz(
+              contentId,
+              unitId,
+              quizId,
+              lessonId: lessonDoc.id,
+            );
+            if (candidate.exists) {
+              doc = candidate;
+              resolvedLessonId = lessonDoc.id;
+              await FirebaseFirestore.instance
+                  .collection('teacherGroups')
+                  .doc(widget.groupId)
+                  .collection('students')
+                  .doc(widget.studentId)
+                  .collection('progress')
+                  .doc(quizId)
+                  .update({'lessonId': lessonDoc.id});
+              break;
+            }
+          }
+        }
+      }
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
         final info = {
-          'title': data['title'] as String? ?? 'Unknown Quiz',
-          'type': data['type'] as String? ?? 'lesson',
-          // 'scope' is the current field name written by createQuiz (see
-          // database.dart) — 'type' above is kept for any pre-migration
-          // documents that might still carry it. Prefer 'scope' when
-          // present so newly-created quizzes route correctly regardless
-          // of which legacy key older docs used.
-          'scope': data['scope'] as String? ?? data['type'] as String? ?? 'lesson',
+          'title': data['title'] as String? ??
+              'teacher.student_detail_progress_screen.unknownQuiz'.tr(),
+          'scope': resolvedLessonId != null ? 'lesson' : 'unit',
+          'lessonId': resolvedLessonId,
         };
         _quizCache[quizId] = info;
         return info;
       } else {
-        _quizCache[quizId] = {'title': 'Deleted Quiz', 'type': 'unknown', 'scope': 'unknown'};
+        _quizCache[quizId] = {
+          'title': 'teacher.student_detail_progress_screen.deletedQuiz'.tr(),
+          'scope': 'unknown',
+          'lessonId': null,
+        };
         return _quizCache[quizId]!;
       }
     } catch (e) {
       debugPrint('Error loading quiz info for $quizId: $e');
-      _quizCache[quizId] = {'title': 'Error loading', 'type': 'unknown', 'scope': 'unknown'};
+      _quizCache[quizId] = {
+        'title': 'teacher.student_detail_progress_screen.errorLoadingQuiz'.tr(),
+        'scope': 'unknown',
+        'lessonId': null,
+      };
       return _quizCache[quizId]!;
     }
   }
 
-  void _openReview(String quizId, String quizTitle, bool isUnitQuiz, String contentId, String unitId) {
+  void _openReview(
+    String quizId,
+    String quizTitle,
+    bool isUnitQuiz,
+    String contentId,
+    String unitId,
+    String? lessonId,
+  ) {
     if (isUnitQuiz) {
       // Unit Quiz keeps its existing review + parent-report flow,
       // unchanged — this screen only adds the Lesson Quiz branch below.
@@ -379,6 +471,7 @@ class _QuizzesTabState extends State<_QuizzesTab> {
           builder: (_) => UnitQuizReviewScreen(
             studentId: widget.studentId,
             studentName: widget.studentName,
+            groupId: widget.groupId,
             quizId: quizId,
             quizTitle: quizTitle,
             unitId: unitId,
@@ -393,6 +486,10 @@ class _QuizzesTabState extends State<_QuizzesTab> {
           builder: (_) => LessonQuizReviewScreen(
             studentId: widget.studentId,
             studentName: widget.studentName,
+            groupId: widget.groupId,
+            contentId: contentId,
+            unitId: unitId,
+            lessonId: lessonId!,
             quizId: quizId,
             quizTitle: quizTitle,
           ),
@@ -403,8 +500,11 @@ class _QuizzesTabState extends State<_QuizzesTab> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
           .collection('students')
           .doc(widget.studentId)
           .collection('progress')
@@ -435,8 +535,10 @@ class _QuizzesTabState extends State<_QuizzesTab> {
           return Center(
             child: Text(
               widget.unitId != null
-                  ? 'No quizzes taken yet in this unit'
-                  : 'No quizzes taken yet',
+                  ? 'teacher.student_detail_progress_screen.noQuizzesInUnit'
+                      .tr()
+                  : 'teacher.student_detail_progress_screen.noQuizzesYet'
+                      .tr(),
             ),
           );
         }
@@ -449,23 +551,28 @@ class _QuizzesTabState extends State<_QuizzesTab> {
             final quizId = validDocs[index].id;
             final contentId = data['contentId'] as String? ?? '';
             final unitId = data['unitId'] as String? ?? '';
+            final progressLessonId = data['lessonId'] as String?;
             final score = data['correctAnswers'] as int? ?? 0;
             final total = data['totalQuestions'] as int? ?? 0;
             final stars = data['stars'] as int? ?? 0;
             final completedAt = data['lastCompletedAt'] as Timestamp?;
             final dateStr = completedAt != null
                 ? _formatDate(completedAt.toDate())
-                : 'Unknown date';
+                : 'teacher.student_detail_progress_screen.unknownDate'.tr();
             final percentage = total == 0 ? 0 : (score / total * 100).round();
 
             return FutureBuilder<Map<String, dynamic>>(
-              future: _getQuizInfo(quizId),
+              future: _getQuizInfo(quizId, contentId, unitId, progressLessonId),
               builder: (context, infoSnapshot) {
                 if (infoSnapshot.connectionState == ConnectionState.waiting) {
-                  return const Card(
+                  return Card(
                     child: ListTile(
-                      leading: SizedBox(width: 40, height: 40, child: CircularProgressIndicator()),
-                      title: Text('Loading...'),
+                      leading: const SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: CircularProgressIndicator(),
+                      ),
+                      title: Text('teacher.student_detail_progress_screen.loading'.tr()),
                     ),
                   );
                 }
@@ -473,7 +580,7 @@ class _QuizzesTabState extends State<_QuizzesTab> {
                   return Card(
                     child: ListTile(
                       leading: const Icon(Icons.error, color: Colors.red),
-                      title: Text('Error loading quiz'),
+                      title: Text('teacher.student_detail_progress_screen.errorLoadingQuiz'.tr()),
                       subtitle: Text(quizId),
                     ),
                   );
@@ -493,11 +600,20 @@ class _QuizzesTabState extends State<_QuizzesTab> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Center(
-                            child: Text(_getStarString(stars), style: const TextStyle(fontSize: 16)),
+                            child: Text(
+                              _getStarString(stars),
+                              style: const TextStyle(fontSize: 16),
+                            ),
                           ),
                         ),
                         title: Text(info['title']),
-                        subtitle: Text('$score/$total correct • $dateStr'),
+                        subtitle: Text(
+                            'teacher.student_detail_progress_screen.scoreCorrectDate'
+                                .tr(namedArgs: {
+                          'score': '$score',
+                          'total': '$total',
+                          'date': dateStr,
+                        })),
                         trailing: Text('$percentage%'),
                       ),
                       // ── Review button ──────────────────────────────
@@ -514,12 +630,25 @@ class _QuizzesTabState extends State<_QuizzesTab> {
                         child: SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
-                            onPressed: () => _openReview(quizId, info['title'], isUnitQuiz, contentId, unitId),
+                            onPressed: () => _openReview(
+                              quizId,
+                              info['title'],
+                              isUnitQuiz,
+                              contentId,
+                              unitId,
+                              info['lessonId'] as String?,
+                            ),
                             icon: const Icon(Icons.visibility, size: 18),
-                            label: const Text('Review Answers'),
+                            label: Text('teacher.student_detail_progress_screen.reviewAnswers'.tr()),
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: isUnitQuiz ? AppColors.primary : AppColors.info,
-                              side: BorderSide(color: isUnitQuiz ? AppColors.primary : AppColors.info),
+                              foregroundColor: isUnitQuiz
+                                  ? AppColors.primary
+                                  : AppColors.info,
+                              side: BorderSide(
+                                color: isUnitQuiz
+                                    ? AppColors.primary
+                                    : AppColors.info,
+                              ),
                             ),
                           ),
                         ),
@@ -537,10 +666,14 @@ class _QuizzesTabState extends State<_QuizzesTab> {
 
   String _getStarString(int stars) {
     switch (stars) {
-      case 3: return '⭐⭐⭐';
-      case 2: return '⭐⭐';
-      case 1: return '⭐';
-      default: return '☆';
+      case 3:
+        return '⭐⭐⭐';
+      case 2:
+        return '⭐⭐';
+      case 1:
+        return '⭐';
+      default:
+        return '☆';
     }
   }
 }

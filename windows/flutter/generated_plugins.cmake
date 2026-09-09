@@ -3,15 +3,14 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  audioplayers_windows
   cloud_firestore
+  desktop_drop
   firebase_auth
   firebase_core
   flutter_tts
   local_auth_windows
   permission_handler_windows
   printing
-  record_windows
   speech_to_text_windows
 )
 

@@ -1,6 +1,7 @@
 // task_type_editor.dart
 
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 abstract class TaskTypeEditor {
   String get typeId;
@@ -42,7 +43,9 @@ class TaskEditorController {
   }
 
   String? validate() {
-    if (_currentEditor == null) return 'Editor not initialized';
+    if (_currentEditor == null) {
+      return 'teacher.task_type_editor.editorNotInitialized'.tr();
+    }
     return _currentEditor!.validate();
   }
 

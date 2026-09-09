@@ -9,7 +9,9 @@ import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
 import 'package:loringo_app/screens/student/student_main_screen.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
 import 'package:loringo_app/services/auth/student_auth_service.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/services/notifications/one_signal_service.dart';
+import 'package:loringo_app/widget/secured_screen.dart';
 
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
@@ -76,7 +78,7 @@ class _FirebaseAuthGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: authInstance.authStateChanges(),
       builder: (context, authSnapshot) {
         if (authSnapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -91,7 +93,7 @@ class _FirebaseAuthGate extends StatelessWidget {
         final uid = authSnapshot.data!.uid;
         
         return FutureBuilder<DocumentSnapshot>(
-          future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+          future: firestoreInstance.collection('users').doc(uid).get(),
           key: ValueKey(uid),
           builder: (context, userSnapshot) {
             if (userSnapshot.connectionState == ConnectionState.waiting) {
@@ -126,12 +128,15 @@ class _FirebaseAuthGate extends StatelessWidget {
             }
 
             switch (role) {
-              case 'admin':
+              case 'image_manager':
                 return AdminNavigationScreen();
               case 'teacher':
                 return TeacherHomeScreen();
               case 'parent':
-                return _ParentRouter(parentId: uid);
+                return _ParentRouter(
+                  parentId: uid,
+                  hasSkippedChildSetup: userData['hasSkippedChildSetup'] == true,
+                );
               default:
                 return _buildErrorScreen(context, 'Invalid user role: $role');
             }
@@ -164,7 +169,7 @@ class _FirebaseAuthGate extends StatelessWidget {
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () async {
-                await FirebaseAuth.instance.signOut();
+                await authInstance.signOut();
                 if (context.mounted) {
                   Navigator.of(context).pushReplacement(
                     MaterialPageRoute(builder: (_) => const AuthGate()),
@@ -183,8 +188,12 @@ class _FirebaseAuthGate extends StatelessWidget {
 // Parent router - checks if parent has children
 class _ParentRouter extends StatefulWidget {
   final String parentId;
+  final bool hasSkippedChildSetup;
 
-  const _ParentRouter({required this.parentId});
+  const _ParentRouter({
+    required this.parentId,
+    this.hasSkippedChildSetup = false,
+  });
 
   @override
   State<_ParentRouter> createState() => _ParentRouterState();
@@ -206,7 +215,7 @@ class _ParentRouterState extends State<_ParentRouter> with AutomaticKeepAliveCli
 
   Future<void> _checkChildren() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
+      final snapshot = await firestoreInstance
           .collection('students')
           .where('parentId', isEqualTo: widget.parentId)
           .limit(1)
@@ -268,10 +277,23 @@ class _ParentRouterState extends State<_ParentRouter> with AutomaticKeepAliveCli
       );
     }
 
-    if (_hasChildren == false) {
-      return const ParentRegisterChildScreen();
+    // A parent with zero children is forced through registration once —
+    // wrapped in SecuredScreen (same as ParentNavigationScreen below)
+    // since this screen sits at the root of the Navigator here (rendered
+    // directly by AuthGate, not pushed), so there's nothing beneath it to
+    // pop back to. Without SecuredScreen intercepting it, the system back
+    // gesture/button had nowhere safe to go and crashed instead of
+    // showing the normal exit/logout confirmation every other root
+    // screen already has. "Skip for now" (inside
+    // ParentRegisterChildScreen) persists hasSkippedChildSetup so this
+    // never forces the screen on them again — they can always register a
+    // child later from the empty-state "Add Child" button.
+    if (_hasChildren == false && !widget.hasSkippedChildSetup) {
+      return const SecuredScreen(
+        child: ParentRegisterChildScreen(isInitialSetup: true),
+      );
     }
-    
+
     return const ParentNavigationScreen();
   }
 }

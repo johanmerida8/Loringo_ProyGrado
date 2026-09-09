@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/task_types/task_type_editor.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:translator/translator.dart';
@@ -110,8 +113,9 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
       debugPrint('Translation error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Translation failed. You can add words manually.'),
+          SnackBar(
+            content: Text(
+                'teacher.sentence_builder_task.translationFailedManual'.tr()),
           ),
         );
       }
@@ -157,7 +161,9 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
       debugPrint('Translation error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Translation failed.')),
+          SnackBar(
+              content: Text(
+                  'teacher.sentence_builder_task.translationFailed'.tr())),
         );
       }
     } finally {
@@ -170,7 +176,7 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
   String get typeId => 'sentence_builder';
 
   @override
-  String get displayName => 'Sentence Builder';
+  String get displayName => 'teacher.sentence_builder_task.displayName'.tr();
 
   @override
   void loadData(Map<String, dynamic> data) {
@@ -227,36 +233,41 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
     final isEsToEn = _direction == 'es_to_en';
 
     if (spanishSentenceController.text.trim().isEmpty) {
-      return isEsToEn ? 'Spanish sentence is required' : 'English sentence is required';
+      return isEsToEn
+          ? 'teacher.sentence_builder_task.spanishSentenceRequired'.tr()
+          : 'teacher.sentence_builder_task.englishSentenceRequired'.tr();
     }
 
     final correctWords =
         correctWordControllers.map((c) => c.text.trim()).toList();
     if (correctWords.length < 2) {
-      return 'Add at least 2 words to the correct answer';
+      return 'teacher.sentence_builder_task.minTwoCorrectWords'.tr();
     }
 
     for (int i = 0; i < correctWordControllers.length; i++) {
       if (correctWordControllers[i].text.trim().isEmpty) {
-        return 'Correct answer word ${i + 1} is empty';
+        return 'teacher.sentence_builder_task.correctWordEmpty'
+            .tr(namedArgs: {'number': '${i + 1}'});
       }
     }
 
     final distractors =
         distractorControllers.map((c) => c.text.trim()).toList();
     if (distractors.length < 1) {
-      return 'Add at least 1 distractor word';
+      return 'teacher.sentence_builder_task.minOneDistractor'.tr();
     }
 
     for (int i = 0; i < distractorControllers.length; i++) {
       if (distractorControllers[i].text.trim().isEmpty) {
-        return 'Distractor ${i + 1} is empty';
+        return 'teacher.sentence_builder_task.distractorEmpty'
+            .tr(namedArgs: {'number': '${i + 1}'});
       }
     }
 
     for (var distractor in distractors) {
       if (correctWords.contains(distractor) && distractor.isNotEmpty) {
-        return 'Distractor "$distractor" is already in the correct answer';
+        return 'teacher.sentence_builder_task.distractorDuplicate'
+            .tr(namedArgs: {'word': distractor});
       }
     }
 
@@ -280,6 +291,7 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return _buildEditor();
   }
 
@@ -370,8 +382,10 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
               Expanded(
                 child: Text(
                   isEsToEn
-                      ? 'Students see a Spanish sentence and build the English translation by tapping words in the correct order.'
-                      : 'Students see an English sentence and build the Spanish translation by tapping words in the correct order.',
+                      ? 'teacher.sentence_builder_task.headerDescriptionEsToEn'
+                          .tr()
+                      : 'teacher.sentence_builder_task.headerDescriptionEnToEs'
+                          .tr(),
                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
               ),
@@ -389,7 +403,8 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
             children: [
               Expanded(
                 child: _buildDirectionOption(
-                  label: 'ES → EN',
+                  label: 'teacher.sentence_builder_task.directionEsToEnLabel'
+                      .tr(),
                   isSelected: isEsToEn,
                   color: c,
                   onTap: () => _setDirection('es_to_en'),
@@ -397,7 +412,8 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
               ),
               Expanded(
                 child: _buildDirectionOption(
-                  label: 'EN → ES',
+                  label: 'teacher.sentence_builder_task.directionEnToEsLabel'
+                      .tr(),
                   isSelected: !isEsToEn,
                   color: c,
                   onTap: () => _setDirection('en_to_es'),
@@ -450,7 +466,9 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
         Row(
           children: [
             Text(
-              isEsToEn ? 'Spanish Sentence' : 'English Sentence',
+              isEsToEn
+                  ? 'teacher.sentence_builder_task.spanishSentenceLabel'.tr()
+                  : 'teacher.sentence_builder_task.englishSentenceLabel'.tr(),
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
             ),
             if (_isTranslating) ...[
@@ -468,19 +486,23 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
           controller: spanishSentenceController,
           focusNode: _sentenceFocusNode,
           decoration: InputDecoration(
-            hintText: isEsToEn ? 'e.g. "¿Cómo estás?"' : 'e.g. "How are you?"',
+            hintText: isEsToEn
+                ? 'teacher.sentence_builder_task.spanishSentenceHint'.tr()
+                : 'teacher.sentence_builder_task.englishSentenceHint'.tr(),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
             filled: true,
             fillColor: Colors.white,
             suffixIcon: IconButton(
               icon: Icon(Icons.auto_awesome, color: c, size: 20),
-              tooltip: 'Re-translate',
+              tooltip: 'teacher.sentence_builder_task.retranslateTooltip'.tr(),
               onPressed: _isTranslating ? null : _forceRetranslate,
             ),
           ),
           maxLines: 2,
           onChanged: (_) => widget.onChanged(),
-          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+          validator: (v) => v?.trim().isEmpty ?? true
+              ? 'teacher.sentence_builder_task.required'.tr()
+              : null,
         ),
       ],
     );
@@ -501,7 +523,11 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                 Icon(_expandedAnswerBuilder ? Icons.expand_less : Icons.expand_more, color: c),
                 const SizedBox(width: AppSpacing.sm),
                 Text(
-                  isEsToEn ? 'Correct English Answer' : 'Correct Spanish Answer',
+                  isEsToEn
+                      ? 'teacher.sentence_builder_task.correctAnswerHeaderEn'
+                          .tr()
+                      : 'teacher.sentence_builder_task.correctAnswerHeaderEs'
+                          .tr(),
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: AppSpacing.sm),
@@ -512,7 +538,8 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    '${correctWordControllers.length} words',
+                    'teacher.sentence_builder_task.wordsCount'
+                        .plural(correctWordControllers.length),
                     style: TextStyle(fontSize: 11, color: c),
                   ),
                 ),
@@ -543,7 +570,7 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
-                          'Drag to reorder words. Students must tap words in this exact order.',
+                          'teacher.sentence_builder_task.dragReorderHint'.tr(),
                           style: TextStyle(fontSize: 12, color: Colors.blue.shade700),
                         ),
                       ),
@@ -568,8 +595,9 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                       borderRadius: BorderRadius.circular(AppRadii.sm),
                       border: Border.all(color: Colors.grey.shade300),
                     ),
-                    child: const Center(
-                      child: Text('Add words below to build the correct answer'),
+                    child: Center(
+                      child: Text(
+                          'teacher.sentence_builder_task.addWordsPrompt'.tr()),
                     ),
                   ),
                 const SizedBox(height: AppSpacing.md),
@@ -579,7 +607,9 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                       child: OutlinedButton.icon(
                         onPressed: _addCorrectWord,
                         icon: Icon(Icons.add, color: c),
-                        label: Text('Add Word', style: TextStyle(color: c)),
+                        label: Text(
+                            'teacher.sentence_builder_task.addWordLabel'.tr(),
+                            style: TextStyle(color: c)),
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(color: c.withOpacity(0.5)),
                         ),
@@ -679,9 +709,9 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
               children: [
                 Icon(_expandedWordBank ? Icons.expand_less : Icons.expand_more, color: c),
                 const SizedBox(width: AppSpacing.sm),
-                const Text(
-                  'Distractors (Extra Words)',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Text(
+                  'teacher.sentence_builder_task.distractorsHeader'.tr(),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 Container(
@@ -691,7 +721,8 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    '${distractorControllers.length} words',
+                    'teacher.sentence_builder_task.wordsCount'
+                        .plural(distractorControllers.length),
                     style: const TextStyle(fontSize: 11, color: Colors.orange),
                   ),
                 ),
@@ -722,7 +753,8 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
-                          'Distractors are extra words that DO NOT belong in the correct answer.',
+                          'teacher.sentence_builder_task.distractorsWarning'
+                              .tr(),
                           style: TextStyle(fontSize: 12, color: Colors.orange.shade700),
                         ),
                       ),
@@ -741,7 +773,10 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
                       child: OutlinedButton.icon(
                         onPressed: _addDistractor,
                         icon: const Icon(Icons.add, color: Colors.orange),
-                        label: const Text('Add Distractor', style: TextStyle(color: Colors.orange)),
+                        label: Text(
+                            'teacher.sentence_builder_task.addDistractorLabel'
+                                .tr(),
+                            style: const TextStyle(color: Colors.orange)),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: Colors.orange),
                         ),
@@ -777,10 +812,10 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
               color: Colors.orange,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Text(
-              '✗ Distractor',
+            child: Text(
+              'teacher.sentence_builder_task.distractorBadge'.tr(),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
@@ -788,14 +823,16 @@ class _SentenceBuilderTaskState extends State<SentenceBuilderTask>
             child: TextFormField(
               controller: controller,
               decoration: InputDecoration(
-                hintText: 'e.g. "blue"',
+                hintText: 'teacher.sentence_builder_task.distractorHint'.tr(),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadii.sm)),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 filled: true,
                 fillColor: Colors.white,
               ),
               onChanged: (_) => widget.onChanged(),
-              validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+              validator: (v) => v?.trim().isEmpty ?? true
+                  ? 'teacher.sentence_builder_task.required'.tr()
+                  : null,
             ),
           ),
           IconButton(

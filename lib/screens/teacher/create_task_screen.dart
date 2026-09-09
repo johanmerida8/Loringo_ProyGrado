@@ -1,7 +1,11 @@
 // create_task_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/teacher/task_types/listen_and_speak_task.dart';
 import 'package:loringo_app/screens/teacher/task_types/repeat_after_me_task.dart';
+import 'package:loringo_app/screens/teacher/widgets/continue_bookmark_button.dart';
 import 'package:loringo_app/screens/teacher/widgets/create_form_banner.dart';
 import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
 import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
@@ -276,7 +280,7 @@ class _CreatePersonalizedTaskScreenState
     }
 
     if (_isEditing && !widget.batchMode && !_hasChanges) {
-      _showSnackBar('No changes made', AppColors.info);
+      _showSnackBar('common.noChangesMade'.tr(), AppColors.info);
       return;
     }
 
@@ -330,7 +334,10 @@ class _CreatePersonalizedTaskScreenState
           order: orderValue,
           data: collectedData,
         );
-        _showSnackBar('Task updated successfully!', AppColors.success);
+        _showSnackBar(
+          'teacher.create_task_screen.taskUpdatedSuccessfully'.tr(),
+          AppColors.success,
+        );
       } else {
         await db.createPersonalizedTask(
           groupId: widget.groupId,
@@ -345,12 +352,18 @@ class _CreatePersonalizedTaskScreenState
           order: orderValue,
           data: collectedData,
         );
-        _showSnackBar('Task created successfully!', AppColors.success);
+        _showSnackBar(
+          'teacher.create_task_screen.taskCreatedSuccessfully'.tr(),
+          AppColors.success,
+        );
       }
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      _showSnackBar('Error: $e', AppColors.danger);
+      _showSnackBar(
+        'common.errorWithMessage'.tr(namedArgs: {'error': '$e'}),
+        AppColors.danger,
+      );
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -467,6 +480,7 @@ class _CreatePersonalizedTaskScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     // If the snapshot hasn't been captured yet on this build (e.g. the
     // child editor just registered itself for the first time), try again
     // post-frame. Harmless if already captured — _captureSnapshot() is a
@@ -484,9 +498,27 @@ class _CreatePersonalizedTaskScreenState
         children: [
           TeacherScreenHeader(
             title: widget.batchMode
-                ? 'Define Task'
-                : (_isEditing ? 'Edit Task' : 'Create Task'),
+                ? 'teacher.create_task_screen.defineTask'.tr()
+                : (_isEditing
+                    ? 'teacher.create_task_screen.editTask'.tr()
+                    : 'teacher.create_task_screen.createTask'.tr()),
             color: _c,
+            // Omitted in batch mode -- the parent activity may not even be
+            // saved to Firestore yet in that flow (see create_activity_
+            // screen.dart's _draftActivityId), so there's nothing stable
+            // to resume into yet.
+            trailing: widget.batchMode
+                ? null
+                : ContinueBookmarkButton(
+                    level: 'task', contentId: widget.contentId, unitId: widget.unitId,
+                    lessonId: widget.lessonId, activityId: widget.activityId,
+                    getFormData: () => {
+                      'type': selectedType,
+                      'title': titleController.text.trim(),
+                      'question': questionController.text.trim(),
+                      'data': currentController.collectData(),
+                    },
+                  ),
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -502,7 +534,7 @@ class _CreatePersonalizedTaskScreenState
                     // the teacher's selection on the generator dialog for
                     // this slot.
                     if (!lockType) ...[
-                      const CreateFormLabel('Task Type'),
+                      CreateFormLabel('teacher.create_task_screen.taskType'.tr()),
                       const SizedBox(height: AppSpacing.sm),
                       TaskTypePickerField(
                         selectedId: selectedType,
@@ -527,29 +559,30 @@ class _CreatePersonalizedTaskScreenState
                     // of their own, and reusing hint/content text there was
                     // producing duplicate or "Untitled" entries in the task
                     // list.
-                    const CreateFormLabel('Task Title'),
+                    CreateFormLabel('teacher.create_task_screen.taskTitle'.tr()),
                     const SizedBox(height: AppSpacing.xs),
                     CreateFormField(
                       controller: titleController,
                       color: _c,
-                      hint: 'Enter a short name for this task…',
+                      hint: 'teacher.create_task_screen.taskTitleHint'.tr(),
                       maxLines: 1,
-                      validator: (v) =>
-                          (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'teacher.create_task_screen.required'.tr()
+                          : null,
                     ),
                     const SizedBox(height: AppSpacing.md),
 
                     if (_hasQuestionField()) ...[
-                      const CreateFormLabel('Question'),
+                      CreateFormLabel('teacher.create_task_screen.question'.tr()),
                       const SizedBox(height: AppSpacing.xs),
                       CreateFormField(
                         controller: questionController,
                         color: _c,
-                        hint: 'Enter the word or question...',
+                        hint: 'teacher.create_task_screen.questionHint'.tr(),
                         maxLines: 3,
                         validator: (v) =>
                             _hasQuestionField() && (v?.isEmpty ?? true)
-                                ? 'Required'
+                                ? 'teacher.create_task_screen.required'.tr()
                                 : null,
                       ),
                       const SizedBox(height: AppSpacing.md),
@@ -574,8 +607,10 @@ class _CreatePersonalizedTaskScreenState
                     CreateFormSubmitButton(
                       color: _c,
                       label: widget.batchMode
-                          ? 'SAVE TASK'
-                          : (_isEditing ? 'UPDATE' : 'CREATE'),
+                          ? 'teacher.create_task_screen.saveTaskCap'.tr()
+                          : (_isEditing
+                              ? 'teacher.create_task_screen.updateCap'.tr()
+                              : 'teacher.create_task_screen.createCap'.tr()),
                       isLoading: isLoading || !_orderResolved,
                       onPressed: _submit,
                     ),

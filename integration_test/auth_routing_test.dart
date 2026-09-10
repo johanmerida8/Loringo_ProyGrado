@@ -107,8 +107,8 @@ void main() {
       final fields = find.byType(TextField);
       await tester.enterText(fields.at(0), 'Carla Parent');
       await tester.enterText(fields.at(1), 'carla@loringo.app');
-      await tester.enterText(fields.at(2), 'TestQA#2024');
-      await tester.enterText(fields.at(3), 'TestQA#2024');
+      await tester.enterText(fields.at(2), qaFixturePassword);
+      await tester.enterText(fields.at(3), qaFixturePassword);
       await tester.tap(find.text('Parent'));
       await tester.pump();
       await tester.tap(find.widgetWithText(ElevatedButton, 'Create Account'));
@@ -145,12 +145,12 @@ void main() {
       // needs the real RegisterScreen + Database.createUser chain.
       await pumpIntegrationApp(tester, _entryPoint(RegisterScreen(onTap: () {})));
       await _fillAndSubmitRegisterForm(tester,
-          name: 'Admin', email: 'admin1@loringo.app', password: 'TestQA#2024');
+          name: 'Admin', email: 'admin1@loringo.app', password: qaFixturePassword);
       final firstAdminUid = firebase.auth.currentUser!.uid;
 
       await pumpIntegrationApp(tester, _entryPoint(RegisterScreen(onTap: () {})));
       await _fillAndSubmitRegisterForm(tester,
-          name: 'Administrador', email: 'admin2@loringo.app', password: 'TestQA#2024');
+          name: 'Administrador', email: 'admin2@loringo.app', password: qaFixturePassword);
 
       // ASSERT - the second attempt was blocked pre-Auth-creation (the
       // still-signed-in user is unchanged, no second Auth account got

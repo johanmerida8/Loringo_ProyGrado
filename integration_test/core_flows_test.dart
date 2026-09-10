@@ -78,8 +78,8 @@ void main() {
       final fields = find.byType(TextField);
       await tester.enterText(fields.at(0), 'Maria Parent');
       await tester.enterText(fields.at(1), 'maria@loringo.app');
-      await tester.enterText(fields.at(2), 'TestQA#2024');
-      await tester.enterText(fields.at(3), 'TestQA#2024');
+      await tester.enterText(fields.at(2), qaFixturePassword);
+      await tester.enterText(fields.at(3), qaFixturePassword);
       await tester.tap(find.text('Parent'));
       await tester.pump();
       final createAccountButton = find.widgetWithText(ElevatedButton, 'Create Account');

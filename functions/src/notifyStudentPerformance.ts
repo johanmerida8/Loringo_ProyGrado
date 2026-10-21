@@ -1,10 +1,13 @@
 // functions/src/notifyStudentPerformance.ts
 //
-// Notifies the owning teacher, with ONE short push PER completion (not a
-// bundled digest — that was tried first and reads as an unreadable wall of
-// text once more than a couple of things complete in a day), when a student
-// first completes an activity or quiz. Two exports, both funneling into the
-// same reportCompletion helper below:
+// Processes each student's first completion of an activity or quiz and
+// notifies the owning teacher only for meaningful events: a short "Needs
+// support" push when the score is below the support band, and a one-time
+// "Unit completed" milestone when that completion finishes the whole unit.
+// Successful individual completions are NOT pushed (a "Nice work!" per
+// activity/quiz turned into spam) -- they're still fully recorded on the
+// progress doc. Two exports, both funneling into the same reportCompletion
+// helper below:
 //
 //   - notifyStudentPerformanceRealtime — Firestore onDocumentWritten trigger
 //     on teacherGroups/{groupId}/students/{studentId}/progress/{progressId}.
@@ -48,6 +51,7 @@ import { onDocumentWritten } from "firebase-functions/firestore";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp, DocumentData, DocumentReference } from "firebase-admin/firestore";
+import { isUnitDone } from "./unitCompletion";
 
 const ONESIGNAL_APP_ID = defineSecret("ONESIGNAL_APP_ID");
 const ONESIGNAL_REST_API_KEY = defineSecret("ONESIGNAL_REST_API_KEY");
@@ -163,18 +167,130 @@ async function resolveTitle(
 }
 
 /**
- * Reports one student's completion to their teacher: resolves the teacher,
- * sends the push + writes the in-app notifications doc, and stamps
- * performanceNotifiedAt on the progress doc so neither the realtime trigger
- * nor the daily safety-net scan reports it again. Shared by both exports
- * below -- this is the one place the actual "who gets notified and what it
- * says" logic lives, so it can't drift between the two call sites.
+ * Whether the student has completed every activity in the unit (all
+ * lessons) plus, if the unit has any Unit Quiz, at least one of them.
+ * Same rule the client uses for unit unlocking (database.dart's
+ * getChildActivityStatusList / student_activities_screen.dart) -- Lesson
+ * Quizzes don't count toward unit completion there either.
+ * @param {FirebaseFirestore.Firestore} db Firestore instance.
+ * @param {string} groupId The teacher group's document id.
+ * @param {string} studentId The student's document id.
+ * @param {string} contentId The content ID.
+ * @param {string} unitId The unit ID.
+ * @return {Promise<boolean>} true if the whole unit is completed.
+ */
+async function isUnitCompleted(
+  db: FirebaseFirestore.Firestore,
+  groupId: string,
+  studentId: string,
+  contentId: string,
+  unitId: string
+): Promise<boolean> {
+  const unitRef = db
+    .collection("content").doc(contentId)
+    .collection("units").doc(unitId);
+
+  const [progressSnap, unitQuizzesSnap, lessonsSnap] = await Promise.all([
+    db.collection("teacherGroups").doc(groupId)
+      .collection("students").doc(studentId)
+      .collection("progress").where("isCompleted", "==", true).get(),
+    unitRef.collection("quizzes").get(),
+    unitRef.collection("lessons").get(),
+  ]);
+
+  const completedIds = new Set(progressSnap.docs.map((d) => d.id));
+  const activitySnaps = await Promise.all(
+    lessonsSnap.docs.map((l) => l.ref.collection("activities").get())
+  );
+  const activityIds = activitySnaps.flatMap((s) => s.docs.map((a) => a.id));
+
+  // The rule itself lives in unitCompletion.ts so it can be unit-tested.
+  return isUnitDone(
+    completedIds,
+    activityIds,
+    unitQuizzesSnap.docs.map((q) => q.id)
+  );
+}
+
+/**
+ * Sends the one-time "Unit completed" milestone to the teacher if this
+ * completion finished the unit. Dedup is a marker doc created with
+ * create() (fails with ALREADY_EXISTS if it's already there), so the same
+ * unit can never be announced twice -- not on quiz retries, not if both
+ * the realtime trigger and the daily scan process it, and not if the
+ * teacher later adds an activity and the student completes that too.
+ * @param {FirebaseFirestore.Firestore} db Firestore instance.
+ * @param {string} groupId The teacher group's document id.
+ * @param {string} studentId The student's document id.
+ * @param {string} studentName The student's display name.
+ * @param {string} teacherId The teacher's Firebase Auth uid.
+ * @param {string} contentId The content ID.
+ * @param {string} unitId The unit ID.
+ * @return {Promise<boolean>} true if the milestone was sent.
+ */
+async function notifyUnitCompletedIfDone(
+  db: FirebaseFirestore.Firestore,
+  groupId: string,
+  studentId: string,
+  studentName: string,
+  teacherId: string,
+  contentId: string,
+  unitId: string
+): Promise<boolean> {
+  if (!(await isUnitCompleted(db, groupId, studentId, contentId, unitId))) {
+    return false;
+  }
+
+  const markerRef = db
+    .collection("teacherGroups").doc(groupId)
+    .collection("students").doc(studentId)
+    .collection("unitMilestones").doc(unitId);
+  try {
+    await markerRef.create({ contentId, notifiedAt: Timestamp.now() });
+  } catch (e) {
+    // 6 = ALREADY_EXISTS -- this unit was already announced.
+    if ((e as { code?: number }).code === 6) return false;
+    throw e;
+  }
+
+  const unitDoc = await db
+    .collection("content").doc(contentId)
+    .collection("units").doc(unitId).get();
+  const unitTitle = (unitDoc.data()?.title as string | undefined) ?? "a unit";
+
+  const pushTitle = "Unit completed";
+  const body = `${studentName} completed ${unitTitle}.`;
+
+  await Promise.all([
+    pushToTeacher(teacherId, pushTitle, body),
+    db.collection("notifications").add({
+      userId: teacherId,
+      type: "unit_completed",
+      title: pushTitle,
+      message: body,
+      isRead: false,
+      createdAt: Timestamp.now(),
+    }),
+  ]);
+  return true;
+}
+
+/**
+ * Processes one student's first completion for their teacher: sends a
+ * "Needs support" push only when the score is below the support band
+ * (successful completions are no longer pushed individually -- that was
+ * too noisy), sends the one-time "Unit completed" milestone when this
+ * completion finished the unit, and always stamps performanceNotifiedAt
+ * on the progress doc so neither the realtime trigger nor the daily
+ * safety-net scan processes it again. Shared by both exports below --
+ * this is the one place the actual "who gets notified and what it says"
+ * logic lives, so it can't drift between the two call sites.
  * @param {FirebaseFirestore.Firestore} db Firestore instance.
  * @param {string} studentId The student's document id.
  * @param {string} groupId The teacher group's document id.
  * @param {DocumentReference} progressRef Reference to the progress doc.
  * @param {DocumentData} data The progress doc's field data.
- * @return {Promise<boolean>} true if a notification was actually sent.
+ * @return {Promise<boolean>} true if any notification was actually sent.
  */
 async function reportCompletion(
   db: FirebaseFirestore.Firestore,
@@ -207,28 +323,39 @@ async function reportCompletion(
   const teacherId = groupDoc.data()?.teacherId as string | undefined;
   if (!teacherId) return false;
 
-  const title = await resolveTitle(db, type, progressRef.id, contentId, unitId, lessonId);
+  let sent = false;
 
-  // One short push per completion — "Luca did well in Classroom Objects
-  // Quiz" — instead of one bundled, multi-item digest body per teacher.
-  const didWell = stars >= 2;
-  const pushTitle = didWell ? "Nice work!" : "Needs support";
-  const body = `${studentName} ${didWell ? "did well in" : "needs support with"} ${title}`;
+  // Only struggling results get an individual push — "Luca needs support
+  // with Classroom Objects Quiz". Successful ones are still fully recorded
+  // on the progress doc, just not pushed.
+  if (stars < 2) {
+    const title = await resolveTitle(db, type, progressRef.id, contentId, unitId, lessonId);
+    const pushTitle = "Needs support";
+    const body = `${studentName} needs support with ${title}`;
 
-  await Promise.all([
-    pushToTeacher(teacherId, pushTitle, body),
-    db.collection("notifications").add({
-      userId: teacherId,
-      type: "student_performance",
-      title: pushTitle,
-      message: body,
-      isRead: false,
-      createdAt: Timestamp.now(),
-    }),
-    progressRef.set({ performanceNotifiedAt: Timestamp.now() }, { merge: true }),
-  ]);
+    await Promise.all([
+      pushToTeacher(teacherId, pushTitle, body),
+      db.collection("notifications").add({
+        userId: teacherId,
+        type: "student_performance",
+        title: pushTitle,
+        message: body,
+        isRead: false,
+        createdAt: Timestamp.now(),
+      }),
+    ]);
+    sent = true;
+  }
 
-  return true;
+  if (await notifyUnitCompletedIfDone(
+    db, groupId, studentId, studentName, teacherId, contentId, unitId
+  )) {
+    sent = true;
+  }
+
+  await progressRef.set({ performanceNotifiedAt: Timestamp.now() }, { merge: true });
+
+  return sent;
 }
 
 // ── Realtime: fires the instant a student first completes something ──────

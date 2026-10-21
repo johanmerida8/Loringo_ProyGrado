@@ -1,5 +1,25 @@
 {
   "common": {
+    "noInternet": "Sin conexión a internet",
+    "backOnline": "Conexión restablecida",
+    "moderationTitle": "Moderación automática",
+    "moderationOnStatus": "Activada: las imágenes se analizan con Google Vision antes de subirse",
+    "moderationOffStatus": "Desactivada: sin análisis de Google Vision, solo validaciones básicas",
+    "moderationDisableTitle": "¿Desactivar la moderación automática?",
+    "moderationDisableBody": "Las imágenes se subirán sin pasar por Google Vision; solo se aplicarán las validaciones básicas (formato, tamaño y nombre del archivo). Úsalo solo con imágenes que ya sabes que son apropiadas para niños.",
+    "moderationDisableConfirm": "Desactivar",
+    "noTeacherFeedbackYet": "El profesor aún no dejó retroalimentación.",
+    "unitReportNotSentYet": "El profesor aún no envió el reporte de esta unidad.",
+    "feedbackTags": {
+      "getting_started": "Empezando",
+      "learning": "Aprendiendo",
+      "good_progress": "Buen progreso",
+      "great_work": "¡Muy bien!",
+      "excellent": "¡Excelente!"
+    },
+    "feedbackTagOrComment": "Elige una etiqueta o escribe un comentario",
+    "commentOptional": "Comentario (opcional)",
+    "quickRating": "Calificación rápida",
     "captcha": "Por favor completa el captcha",
     "emailValidation1": "El correo electrónico es obligatorio",
     "emailValidation2": "Por favor ingresa un correo electrónico válido",
@@ -128,6 +148,7 @@
     "shareCodeToChild": "Comparte este código con tu hijo/a para iniciar sesión:",
     "codeCopied": "Código copiado",
     "copyCode": "Copiar Código",
+    "tapToCopy": "Toca para copiar",
     "addChild": "Agregar Niño/a",
     "joinGroup": "Unirse a Grupo",
     "accessCode": "Código de Acceso",
@@ -149,7 +170,7 @@
     "value": "Valor",
     "activitiesCompleted": "Actividades completadas",
     "completionRate": "Tasa de finalización",
-    "quizDetails": "Detalles de la Evaluación",
+    "quizDetails": "Evaluación de unidad",
     "correctAnswers": "Respuestas correctas",
     "progressTrend": "Tendencia de Progreso",
     "current": "Actual",
@@ -461,7 +482,12 @@
     "monthSep": "sep",
     "monthOct": "oct",
     "monthNov": "nov",
-    "monthDec": "dic"
+    "monthDec": "dic",
+    "lessonQuizzes": "Evaluaciones de Lección",
+    "completed": "Completado",
+    "averagePreviousUnits": "Promedio de unidades anteriores",
+    "trendActivities": "Actividades (promedio de notas)",
+    "previousUnit": "Unidad anterior"
   },
   "components": {
     "notifications_screen": {
@@ -476,6 +502,12 @@
       "allChildrenInGroup": "Todos tus niños ya están en un grupo",
       "groupNotFound": "Grupo no encontrado",
       "joinedGroupSuccess": "{name} se unió a \"{group}\"",
+      "groupCodeLabel": "Código del grupo",
+      "copyCode": "Copiar código",
+      "codeCopied": "Código copiado",
+      "invitationTitle": "Invitación a un grupo",
+      "invitationHowTo": "Para unir a tu niño, ve a Mis Niños, toca \"Unirse a Grupo\" en tu niño y escribe este código.",
+      "invitationExpired": "Esta invitación venció. Pide al docente que te invite de nuevo.",
       "notificationFallbackTitle": "Notificación",
       "noNotificationsYet": "Aún no hay notificaciones",
       "noNotificationsHint": "Cuando recibas notificaciones,\naparecerán aquí",
@@ -497,6 +529,13 @@
     },
     "policy_consent_checkbox": {
       "viewPolicy": "Ver Política de Privacidad"
+    },
+    "image_dialog": {
+      "title": "Seleccionar Imagen",
+      "adminTab": "Biblioteca ({count})",
+      "mineTab": "Mías ({count})",
+      "noCategories": "Aún no hay categorías",
+      "noImagesInCategory": "No hay imágenes en esta categoría"
     }
   },
   "initials": {
@@ -509,6 +548,19 @@
     "activity_play_screen": {
       "practiceRound": "Ronda de Práctica",
       "groupArchived": "Tu grupo fue archivado por tu profesor. Esta actividad no se guardó."
+    },
+    "quiz_complete_screen": {
+      "quizComplete": "¡Evaluación Completada!",
+      "quizPassed": "¡Evaluación Aprobada! 🎉",
+      "almostThere": "¡Casi lo Logras!",
+      "niceEffort": "¡Buen Esfuerzo!",
+      "teacherWillHelp": "Tu profesor verá tu resultado y te ayudará a repasar.",
+      "tryAgainHint": {
+        "one": "Puedes intentarlo de nuevo — te queda {} intento",
+        "other": "Puedes intentarlo de nuevo — te quedan {} intentos"
+      },
+      "tryAgain": "Intentar de nuevo",
+      "checkingAnswers": "¡Buen trabajo! Revisando tus respuestas…"
     },
     "quiz_play_screen": {
       "pleaseAnswerAll": "Por favor responde las {count} preguntas",
@@ -528,19 +580,12 @@
       "next": "Siguiente",
       "submitQuiz": "Enviar Evaluación"
     },
-    "activity_complete_screen": {
-      "attemptsLeftBanner": {
-        "one": "Tienes {} intento restante",
-        "other": "Tienes {} intentos restantes"
-      },
-      "tryAgainWithAttempts": {
-        "one": "Intentar de Nuevo ({} intento restante)",
-        "other": "Intentar de Nuevo ({} intentos restantes)"
-      }
-    },
     "task_result_sheet": {
       "practiceRoundNote": "Esta es una ronda de práctica — no afectará tu puntaje. ¡Échale otro vistazo e inténtalo de nuevo!",
-      "youSaid": "Dijiste:"
+      "almostPerfectMissedWord": "¡Casi perfecto! Te faltó una palabra",
+      "almostPerfectPronunciation": "¡Casi perfecto! Practica cómo se dice esta palabra",
+      "almostPerfectClarity": "¡Casi perfecto! Te entendí, pero dilo con más claridad",
+      "practiceInOrange": "En naranja: palabras para practicar"
     },
     "exit_task_dialog": {
       "title": "¿Salir de esta actividad?",
@@ -673,14 +718,11 @@
       "confirmPasswordValidation": "Por favor confirma tu nueva contraseña"
     },
     "register_screen": {
-      "adminExists": "Ya existe una cuenta de administrador.",
-      "accountCreatedAs": "Cuenta creada como {role}",
       "emailAlreadyRegistered": "Este correo ya está registrado.",
       "weakPassword": "La contraseña es muy débil.",
       "invalidEmailFormat": "Formato de correo inválido.",
       "registrationFailed": "Error en el registro",
       "signUpSubtitle": "Regístrate en Loringo",
-      "registeringAsAdmin": "Registrando como Administrador",
       "iAmA": "Soy...",
       "createAccountButton": "Crear Cuenta",
       "alreadyHaveAccount": "¿Ya tienes una cuenta? ",
@@ -774,16 +816,19 @@
     "admin_navigation_screen": {
       "imageManagerLabel": "GESTOR DE IMÁGENES",
       "dashboard": "Panel",
-      "images": "Imágenes",
+      "images": "Biblioteca de Medios",
       "imageManagerTitle": "Gestor de Imágenes",
       "manageImages": "Administrar Imágenes",
       "manageEducationalImages": "Administrar Imágenes Educativas"
     },
     "admin_images_screen": {
+      "title": "Biblioteca de Medios",
       "newCategory": "Nueva Categoría",
+      "editCategory": "Editar Categoría",
       "categoryNameLabel": "Nombre de categoría",
       "categoryNameHint": "ej. \"Animales\"",
       "categoryCreated": "Categoría \"{name}\" creada",
+      "categoryUpdated": "Categoría renombrada a \"{name}\"",
       "deleteCategory": "Eliminar Categoría",
       "deletePrefix": "¿Eliminar ",
       "deleteSuffix": " y todas sus imágenes?\n",
@@ -823,6 +868,20 @@
       "addImages": "Agregar Imágenes",
       "noImagesYet": "Aún No Hay Imágenes",
       "uploadImagesToCategoryMsg": "Sube imágenes a esta categoría para comenzar",
+      "markForDelete": "Marcar para eliminar",
+      "replaceImage": "Reemplazar con otra imagen",
+      "undoChange": "Deshacer cambio",
+      "markedForDelete": "Se eliminará",
+      "fileReadError": "No se pudo leer el archivo seleccionado",
+      "confirmChangesButton": "Confirmar ({count})",
+      "confirmChangesTitle": "Confirmar Cambios",
+      "confirmChangesMsg": "Se eliminarán {deleted} imagen(es) y se reemplazarán {replaced}. Los archivos anteriores se borrarán definitivamente; las tareas que los usaban dejarán de mostrarlos.",
+      "deletedCount": "{count} eliminadas",
+      "replacedCount": "{count} reemplazadas",
+      "applyingChanges": "Aplicando cambios...",
+      "discardChangesTitle": "¿Descartar Cambios?",
+      "discardChangesMsg": "Tienes cambios sin confirmar. Si sales, se perderán.",
+      "discard": "Descartar",
       "uploadImages": "Subir Imágenes"
     },
     "admin_upload_image_screen": {
@@ -926,6 +985,13 @@
       "latest": "más reciente"
     },
     "parent_child_activity_status_screen": {
+      "quizAvailableNow": "Disponible ahora",
+      "activityBadge": "ACTIVIDAD",
+      "lessonQuizBadge": "EVALUACIÓN DE LECCIÓN",
+      "unitQuizBadge": "EVALUACIÓN DE UNIDAD",
+      "reportSent": "Reporte enviado",
+      "reportPending": "Reporte pendiente",
+      "viewResult": "Ver resultado",
       "titleActivities": "Actividades de {name}",
       "filterUpcoming": "Próximas",
       "filterPastDue": "Atrasadas",
@@ -982,7 +1048,8 @@
       "yourChild": "Tu hijo/a",
       "invalidCode": "Código de grupo inválido",
       "groupNotAccepting": "Este grupo ya no acepta nuevos estudiantes",
-      "joinedGroup": "{name} se unió al grupo: {group}"
+      "joinedGroup": "{name} se unió al grupo: {group}",
+      "childAlreadyInGroup": "{name} ya está en el grupo: {group}"
     },
     "parent_register_child_screen": {
       "noAuthUser": "No se encontró un usuario autenticado",
@@ -1044,6 +1111,13 @@
     }
   },
   "teacher": {
+    "league_xp_notice": {
+      "noCampaign": "No hay una campaña de liga activa",
+      "noCampaignHint": "Los estudiantes seguirán ganando XP Total, pero no contará para el ranking de la liga.",
+      "createCampaign": "Crear campaña",
+      "active": "Cuenta para la liga",
+      "activeUntil": "Cuenta para la liga hasta el {date}"
+    },
     "teacher_home_screen": {
       "drawerTitle": "Panel del Profesor",
       "myGroups": "Mis Grupos",
@@ -1078,7 +1152,7 @@
       "teacherFeedback": "Retroalimentación del Docente",
       "feedbackHint": "Escribe una nota interna sobre esta actividad...",
       "feedbackConfirmedNote": "Retroalimentación confirmada — ya no se puede editar.",
-      "feedbackVisibleNote": "Visible solo para docentes — no se envía al padre.",
+      "feedbackVisibleNote": "El padre podrá ver esta retroalimentación.",
       "feedbackConfirmedButton": "Retroalimentación Confirmada",
       "saveFeedback": "Guardar Retroalimentación",
       "bestScore": "Mejor puntaje: {score}%",
@@ -1130,7 +1204,7 @@
       "teacherFeedback": "Retroalimentación del Docente",
       "feedbackHint": "Escribe una nota interna sobre este intento de evaluación...",
       "feedbackConfirmedNote": "Retroalimentación confirmada — ya no se puede editar.",
-      "feedbackVisibleNote": "Visible solo para docentes — no se envía al padre. La Evaluación de Lección es formativa y nunca genera un informe para el padre.",
+      "feedbackVisibleNote": "El padre podrá ver esta retroalimentación. La Evaluación de Lección es formativa y no genera un informe.",
       "feedbackConfirmedButton": "Retroalimentación Confirmada",
       "saveFeedback": "Guardar Retroalimentación"
     },
@@ -1157,11 +1231,13 @@
       "backToMyGroups": "Volver a Mis Grupos"
     },
     "teacher_image_screen": {
-      "title": "Categorías de Imágenes",
+      "title": "Biblioteca de Medios",
       "newCategory": "Nueva Categoría",
+      "editCategory": "Editar Categoría",
       "categoryNameLabel": "Nombre de categoría",
       "categoryNameHint": "ej. \"Animales\"",
       "categoryCreated": "Categoría \"{name}\" creada",
+      "categoryUpdated": "Categoría renombrada a \"{name}\"",
       "deleteCategory": "Eliminar Categoría",
       "deletePrefix": "¿Eliminar ",
       "deleteSuffix": " y todas sus imágenes?\n",
@@ -1177,6 +1253,18 @@
       "title": "Liga y Ranking",
       "rankingTab": "Ranking",
       "rewardsTab": "Recompensas",
+      "historyTab": "Historial",
+      "firstPlaceReward": "El 1er lugar gana: {reward}",
+      "noHistoryYet": "Aún no hay temporadas finalizadas",
+      "noHistoryHint": "Cuando una campaña termine, sus ganadores y premios aparecerán aquí.",
+      "allGroups": "Todos los grupos",
+      "studentsCount": {
+        "one": "{} estudiante",
+        "other": "{} estudiantes"
+      },
+      "winnersTitle": "Ganadores",
+      "noWinners": "No se ganaron premios en esta temporada",
+      "topThreeTitle": "Top 3 por liga",
       "noGroupsYet": "Aún no hay grupos",
       "noGroupsRankingHint": "Crea un grupo para ver el ranking",
       "noGroupsRewardsHint": "Crea un grupo primero para configurar las recompensas de liga",
@@ -1212,19 +1300,11 @@
     "teacher_content_editor_screen": {
       "title": "Mi Contenido",
       "newContent": "Nuevo Contenido",
-      "noBookmarksYet": "Aún no hay marcadores",
-      "continueLabel": "Continuar",
-      "bookmarksCount": "{count} Marcadores",
-      "content": "Contenido",
-      "unit": "Unidad",
-      "lesson": "Lección",
-      "activity": "Actividad",
-      "task": "Tarea",
-      "bookmarks": "Marcadores",
-      "pickUpWhereLeftOff": "Continúa donde lo dejaste",
+      "archivedTooltip": "Archivados",
+      "archivedScreenTitle": "Contenido Archivado",
       "assignToGroups": "Asignar a Grupos",
       "archiveContentTitle": "Archivar Contenido",
-      "archiveContentMsg": "¿Archivar \"{title}\"? Esto no se ve afectado por el archivado de grupos — puedes desarchivarlo cuando quieras.",
+      "archiveContentMsg": "¿Archivar \"{title}\"? Puedes desarchivarlo cuando quieras.",
       "unarchiveContentTitle": "Desarchivar Contenido",
       "unarchiveContentMsg": "¿Desarchivar \"{title}\"?",
       "assignGroups": "Asignar grupos",
@@ -1237,11 +1317,16 @@
       "contentDeleted": "Contenido eliminado",
       "contentUpdated": "Contenido actualizado",
       "group": "Grupo",
-      "assignToOne": "¿Deseas asignar a {names}?",
-      "assignToMany": "¿Deseas asignar a estos grupos: {names}?",
-      "unassignFromOne": "Esto también desasignará de {names}.",
-      "unassignFromMany": "Esto también desasignará de estos grupos: {names}.",
+      "assignToOne": "Los estudiantes de {names} podrán acceder a este contenido.",
+      "assignToMany": "Los estudiantes de estos grupos podrán acceder a este contenido: {names}.",
+      "unassignFromOne": "Los estudiantes de {names} ya no tendrán acceso a este contenido.",
+      "unassignFromMany": "Los estudiantes de estos grupos ya no tendrán acceso a este contenido: {names}.",
       "confirmAssignment": "Confirmar Asignación",
+      "assignGroupTitle": "¿Asignar este contenido al grupo?",
+      "assignGroupsTitle": "¿Asignar este contenido a estos grupos?",
+      "unassignGroupTitle": "¿Quitar contenido del grupo?",
+      "cannotUnassignTitle": "No se puede quitar este contenido",
+      "cannotUnassignMsg": "Uno o más estudiantes de este grupo ya han iniciado este contenido. Para proteger su progreso, no es posible quitarlo del grupo.",
       "selectGroupsAccess": "Selecciona qué grupos pueden acceder a este contenido",
       "noGroupsFound": "No se encontraron grupos",
       "alreadyHaveProgress": "Los estudiantes ya tienen progreso — no se puede desasignar",
@@ -1285,7 +1370,9 @@
       "tapToCreateFirstUnit": "Toca + para crear tu primera unidad",
       "createFirstUnit": "Crear Primera Unidad",
       "tapToViewLessons": "Toca para ver las lecciones",
-      "addUnit": "Agregar Unidad"
+      "addUnit": "Agregar Unidad",
+      "unitsTab": "Unidades",
+      "summativeQuizTab": "Examen Final"
     },
     "create_unit_screen": {
       "unitUpdatedSuccess": "¡Unidad actualizada con éxito!",
@@ -1311,7 +1398,16 @@
       "tapToCreateFirstLesson": "Toca + para crear tu primera lección",
       "createFirstLesson": "Crear primera lección",
       "tapToViewActivities": "Toca para ver actividades",
-      "addLesson": "Agregar lección"
+      "addLesson": "Agregar lección",
+      "lessonsTab": "Lecciones",
+      "formativeQuizTab": "Evaluación Formativa"
+    },
+    "teacher_content_structure_screen": {
+      "viewActivities": "Actividades",
+      "evaluationsTab": "Evaluaciones",
+      "unitHeader": "Unidad {order}",
+      "lessonHeader": "Lección {order}",
+      "noQuizzesYet": "Crea una Unidad para empezar a agregar evaluaciones"
     },
     "create_lesson_screen": {
       "lessonUpdated": "Lección actualizada",
@@ -1329,6 +1425,7 @@
     },
     "teacher_activity_editor_screen": {
       "reorderActivitiesTitle": "Reordenar actividades",
+      "thisActivity": "esta actividad",
       "reorderActivitiesMsg": "¿Mover \"{title}\" a la posición {position}?",
       "activities": "Actividades",
       "noActivitiesYet": "Aún no hay actividades",
@@ -1719,12 +1816,9 @@
       "noImagesSubtitle": "Sube imágenes a esta categoría para comenzar",
       "uploadImages": "Subir Imágenes"
     },
-    "continue_bookmark_button": {
-      "savedSnackbar": "Guardado — continúa aquí más tarde desde Mi Contenido",
-      "bookmarkTooltip": "Marca esto — continúa aquí más tarde"
-    },
     "teacher_image_tile": {
-      "untitled": "Sin título"
+      "untitled": "Sin título",
+      "markedForDelete": "Se eliminará"
     },
     "teacher_uploading_view": {
       "uploadingImages": "Subiendo Imágenes…",
@@ -1919,9 +2013,11 @@
     },
     "invite_student_modal": {
       "title": "Invitar Estudiante",
+      "revealCodeHint": "Confirma que eres tú para ver y compartir el código del grupo",
+      "viewCode": "Ver Código",
       "shareCodeHint": "Comparte este código con tus estudiantes",
       "groupCodeLabel": "Código del Grupo",
-      "copyCode": "Copiar Código",
+      "tapToCopy": "Toca para copiar",
       "or": "O",
       "sendDirectInvitation": "Enviar Invitación Directa",
       "enterParentEmail": "Ingresa el correo del padre para enviar una invitación al grupo",
@@ -1962,7 +2058,7 @@
       "lessonQuizCreated": "Evaluación de lección creada correctamente",
       "quizCreated": "Evaluación creada correctamente",
       "lessonQuizFor": "Evaluación de lección para: {name}",
-      "unitTestFor": "Examen de unidad para: {name}",
+      "unitTestFor": "Evaluación de unidad para: {name}",
       "passingScore": "Puntaje de Aprobación",
       "passingScoreHelp": "Los estudiantes deben responder correctamente al menos esta cantidad de preguntas para aprobar",
       "xpReward": "Recompensa de XP",
@@ -2025,6 +2121,7 @@
       "review": "Revisar",
       "unknownQuiz": "Evaluación Desconocida",
       "deletedQuiz": "Evaluación Eliminada",
+      "unknownActivity": "Actividad",
       "errorLoadingQuiz": "Error al cargar la evaluación",
       "noQuizzesInUnit": "Aún no se han tomado evaluaciones en esta unidad",
       "noQuizzesYet": "Aún no se han tomado evaluaciones",
@@ -2069,7 +2166,20 @@
         "other": "{} Imágenes"
       },
       "scrollToLoadMore": "Desplázate para ver más",
-      "addImages": "Agregar Imágenes"
+      "addImages": "Agregar Imágenes",
+      "markForDelete": "Marcar para eliminar",
+      "replaceImage": "Reemplazar con otra imagen",
+      "undoChange": "Deshacer cambio",
+      "fileReadError": "No se pudo leer el archivo seleccionado",
+      "confirmChangesButton": "Confirmar ({count})",
+      "confirmChangesTitle": "Confirmar Cambios",
+      "confirmChangesMsg": "Se eliminarán {deleted} imagen(es) y se reemplazarán {replaced}. Los archivos anteriores se borrarán definitivamente; las tareas que los usaban dejarán de mostrarlos.",
+      "deletedCount": "{count} eliminadas",
+      "replacedCount": "{count} reemplazadas",
+      "applyingChanges": "Aplicando cambios...",
+      "discardChangesTitle": "¿Descartar Cambios?",
+      "discardChangesMsg": "Tienes cambios sin confirmar. Si sales, se perderán.",
+      "discard": "Descartar"
     },
     "teacher_upload_image_screen": {
       "onlyPngSvgWebp": "Solo se aceptan archivos PNG, SVG y WebP",

@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -68,7 +69,7 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
       });
 
   Widget _buildCategoryList(List<Map<String, dynamic>> categories) {
-    if (categories.isEmpty) return const Center(child: Text('No categories yet', style: TextStyle(color: Colors.grey)));
+    if (categories.isEmpty) return Center(child: Text('components.image_dialog.noCategories'.tr(), style: const TextStyle(color: Colors.grey)));
     return ListView.builder(
       itemCount: categories.length,
       itemBuilder: (_, index) {
@@ -103,7 +104,7 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
         child: _isLoadingImages
             ? const Center(child: CircularProgressIndicator(color: _green))
             : _images.isEmpty
-                ? const Center(child: Text('No images in this category'))
+                ? Center(child: Text('components.image_dialog.noImagesInCategory'.tr()))
                 : GridView.builder(
                     padding: const EdgeInsets.all(8),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 8, crossAxisSpacing: 8),
@@ -141,7 +142,7 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
           Container(
             color: _green,
             child: Row(children: [
-              const Padding(padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14), child: Text('Select Image', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
+              Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14), child: Text('components.image_dialog.title'.tr(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
               const Spacer(),
               IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
             ]),
@@ -150,7 +151,10 @@ class _SelectImageDialogState extends State<SelectImageDialog> with SingleTicker
             TabBar(
               controller: _tabController,
               labelColor: _green, unselectedLabelColor: Colors.grey, indicatorColor: _green,
-              tabs: [Tab(text: 'Admin (${_adminCategories.length})'), Tab(text: 'Mine (${_teacherCategories.length})')],
+              tabs: [
+                Tab(text: 'components.image_dialog.adminTab'.tr(namedArgs: {'count': '${_adminCategories.length}'})),
+                Tab(text: 'components.image_dialog.mineTab'.tr(namedArgs: {'count': '${_teacherCategories.length}'})),
+              ],
             ),
           Expanded(
             child: _isLoadingCategories

@@ -12,6 +12,7 @@ import 'package:loringo_app/screens/initials/activity_play_screen.dart';
 import 'package:loringo_app/screens/initials/quiz_play_screen.dart';
 import 'package:loringo_app/screens/student/widgets/league_ascension_dialog.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/app_route_observer.dart';
 
 // CHANGE LOG (lesson quiz removal):
 // - Import of quiz_lesson_play_screen.dart removed — that file is being
@@ -74,20 +75,34 @@ class StudentActivitiesTab extends StatefulWidget {
   /// embedded flag in group_navigation_screen.dart.
   final bool embedded;
 
+  /// Switches StudentMainScreen to the League tab — called when the
+  /// student taps "Continue" on the league ascension pop-up.
+  final VoidCallback? onOpenLeague;
+
   const StudentActivitiesTab({
     super.key,
     required this.studentId,
     required this.studentName,
     this.studentAvatar,
     this.embedded = true,
+    this.onOpenLeague,
   });
 
   @override
   State<StudentActivitiesTab> createState() => _StudentActivitiesTabState();
 }
 
-class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
+class _StudentActivitiesTabState extends State<StudentActivitiesTab>
+    with RouteAware {
   String? groupId;
+
+  // Tier the student had before starting the activity/quiz they just
+  // left, waiting to be compared once this screen is actually visible
+  // again (see _checkPendingAscension / didPopNext). Null = nothing to
+  // check.
+  Map<String, dynamic>? _pendingPreviousTier;
+  bool _awaitingAscensionCheck = false;
+  ModalRoute<void>? _observedRoute;
 
   // Archived groups keep every student's existing xp/progress/reports
   // fully intact (nothing here touches stored data) — this only stops
@@ -127,9 +142,29 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null && route != _observedRoute) {
+      if (_observedRoute != null) appRouteObserver.unsubscribe(this);
+      _observedRoute = route;
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _studentSub?.cancel();
     super.dispose();
+  }
+
+  /// The route above this one was popped — this screen is visible again
+  /// (e.g. the student tapped Continue on ActivityCompleteScreen).
+  @override
+  void didPopNext() {
+    _refreshContent();
+    _checkPendingAscension();
   }
 
   void _listenToStudentDoc() {
@@ -312,6 +347,7 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
                     studentName: widget.studentName,
                     studentAvatar: widget.studentAvatar,
                     embedded: false,
+                    onOpenLeague: widget.onOpenLeague,
                   ),
                 ),
               ),
@@ -673,7 +709,39 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
       leagueName: tierLabel(newTier['key'] as String),
       leagueImage: newTier['image'] as String?,
       leagueColor: newTier['color'] as Color,
-    );
+    ).then((goToLeague) {
+      if (goToLeague != true || !mounted) return;
+      if (widget.embedded) {
+        widget.onOpenLeague?.call();
+      } else {
+        // Full-screen mode is its own route on top of StudentMainScreen:
+        // close it first, then the embedded tab's callback switches tabs.
+        Navigator.of(context).pop();
+        widget.onOpenLeague?.call();
+      }
+    });
+  }
+
+  /// Called when returning from an activity/quiz. ActivityPlayScreen and
+  /// QuizPlayScreen hand off to ActivityCompleteScreen via
+  /// pushReplacement, which completes our push() future while the
+  /// completion screen is STILL on top — showing the pop-up then put it
+  /// over ActivityCompleteScreen. So the tier diff is only run once this
+  /// screen is genuinely the visible route again: right away if it
+  /// already is (student backed out normally), otherwise from didPopNext
+  /// when ActivityCompleteScreen closes.
+  void _queueAscensionCheck(Map<String, dynamic>? previousTier) {
+    _pendingPreviousTier = previousTier;
+    _awaitingAscensionCheck = true;
+    if (ModalRoute.of(context)?.isCurrent == true) _checkPendingAscension();
+  }
+
+  Future<void> _checkPendingAscension() async {
+    if (!_awaitingAscensionCheck) return;
+    _awaitingAscensionCheck = false;
+    final previousTier = _pendingPreviousTier;
+    _pendingPreviousTier = null;
+    _maybeCelebrateAscension(previousTier, await _fetchCurrentTier());
   }
 
   void _navigateToActivity(Map<String, dynamic> item, bool isQuiz) async {
@@ -695,9 +763,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             studentName: widget.studentName,
           ),
         ),
-      ).then((_) async {
+      ).then((_) {
         _refreshContent();
-        _maybeCelebrateAscension(previousTier, await _fetchCurrentTier());
+        _queueAscensionCheck(previousTier);
       });
     } else {
       Navigator.push(
@@ -716,9 +784,9 @@ class _StudentActivitiesTabState extends State<StudentActivitiesTab> {
             isPreview: false,
           ),
         ),
-      ).then((_) async {
+      ).then((_) {
         _refreshContent();
-        _maybeCelebrateAscension(previousTier, await _fetchCurrentTier());
+        _queueAscensionCheck(previousTier);
       });
     }
   }

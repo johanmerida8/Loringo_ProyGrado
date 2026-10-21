@@ -119,6 +119,10 @@ class _ScreenEightState extends State<ScreenEight> with RetryableTask {
           _wordBank.shuffle();
           _isLoading = false;
         });
+        TaskTtsService.prefetch(
+          [_promptSentence],
+          voice: _isEsToEn ? TtsVoice.ximena : TtsVoiceDefaults.defaultEnglish,
+        );
       } else {
         setState(() => _isLoading = false);
       }

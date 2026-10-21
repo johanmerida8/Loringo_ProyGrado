@@ -40,6 +40,8 @@
 // base64 bytes, since synthesized audio is cached in Cloudinary, not in
 // Firestore. just_audio plays straight from that URL via setUrl().
 
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -94,6 +96,21 @@ class TaskTtsService {
       if (myToken != _playToken) return false;
       debugPrint('TaskTtsService: speak failed: $e');
       return false;
+    }
+  }
+
+  /// Kicks off synthesis/lookup for every text up front, so the first real
+  /// speak() hits an already-resolved (or already in-flight) cache entry
+  /// instead of paying the Cloud Function round trip on the student's first
+  /// tap. Fire-and-forget, same idea as ReadingTtsService.prefetchPages:
+  /// failures are swallowed by _synthesizeAndCache, and a text that fails to
+  /// prefetch just falls back to speak()'s normal on-demand path.
+  static void prefetch(Iterable<String> texts, {TtsVoice? voice}) {
+    final activeVoice = voice ?? _voice;
+    for (final text in texts) {
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) continue;
+      unawaited(_getOrSynthesize(activeVoice, trimmed));
     }
   }
 

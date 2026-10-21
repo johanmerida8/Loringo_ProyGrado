@@ -21,6 +21,11 @@ class ResponsiveScaffold extends StatelessWidget {
   final Widget? bottomNavigationBar;
   final bool hideBottomNavOnWide;
 
+  /// On narrow layouts the drawer is only built when there is no bottom nav
+  /// (the bottom nav is the phone navigation). Set true to keep a drawer that
+  /// is opened explicitly by a menu button alongside the bottom nav.
+  final bool showDrawerOnNarrow;
+
   // Student-specific
   final bool isStudent;
   final String? studentId;
@@ -45,6 +50,7 @@ class ResponsiveScaffold extends StatelessWidget {
     this.appBar,
     this.bottomNavigationBar,
     this.hideBottomNavOnWide = true,
+    this.showDrawerOnNarrow = false,
     this.isStudent = false,
     this.studentId,
     this.studentAvatar,
@@ -65,7 +71,10 @@ class ResponsiveScaffold extends StatelessWidget {
         return Scaffold(
           backgroundColor: AppColors.scaffoldBackground,
           appBar: appBar,
-          drawer: isWide
+          // Edge-swipe would open the drawer by accident on phones; it can
+          // only be opened through an explicit menu button.
+          drawerEnableOpenDragGesture: false,
+          drawer: (isWide || (bottomNavigationBar != null && !showDrawerOnNarrow))
               ? null
               : AppDrawer(
                   headerIcon: headerIcon,

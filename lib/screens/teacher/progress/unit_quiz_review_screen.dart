@@ -1,0 +1,440 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/material.dart';
+import 'package:loringo_app/components/parent_feedback_view.dart';
+import 'package:loringo_app/screens/teacher/progress/widgets/feedback_tag_selector.dart';
+import 'package:loringo_app/screens/teacher/widgets/teacher_screen_header.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/theme/app_theme.dart';
+
+class UnitQuizReviewScreen extends StatefulWidget {
+  final String studentId;
+  final String studentName;
+  final String groupId;
+  final String quizId;
+  final String quizTitle;
+  final String unitId;
+  final String contentId;
+
+  /// Parent view: same answers the teacher sees, the report's feedback
+  /// read-only, no send button.
+  final bool readOnly;
+
+  const UnitQuizReviewScreen({
+    super.key,
+    required this.studentId,
+    required this.studentName,
+    required this.groupId,
+    required this.quizId,
+    required this.quizTitle,
+    required this.unitId,
+    required this.contentId,
+    this.readOnly = false,
+  });
+
+  @override
+  State<UnitQuizReviewScreen> createState() => _UnitQuizReviewScreenState();
+}
+
+class _UnitQuizReviewScreenState extends State<UnitQuizReviewScreen> {
+  List<Map<String, dynamic>> _questions = [];
+  List<Map<String, dynamic>> _answers = [];
+  bool _isLoading = true;
+  int _score = 0;
+  int _totalQuestions = 0;
+  String _feedback = '';
+  // Optional one-tap rating (models/feedback_tag.dart), shown to the parent
+  // in their report. The report needs at least this OR a comment.
+  String? _feedbackTag;
+  bool _isSaving = false;
+
+  // ── Guard de reporte ya enviado ─────────────────────────────────────────
+  // Un reporte por unitId es la regla: una vez enviado, no se puede volver
+  // a enviar. _reportAlreadySent se determina en _loadData() consultando
+  // si ya existe students/{studentId}/reports/{unitId}, y controla tanto
+  // la visibilidad del botón de envío como si el campo de feedback es
+  // editable.
+  bool _reportAlreadySent = false;
+  DateTime? _reportSentAt;
+
+  final TextEditingController _feedbackController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  @override
+  void dispose() {
+    _feedbackController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    try {
+      // 1. Load quiz questions
+      final questionsSnapshot = await Database().getQuizQuestions(
+        widget.contentId,
+        widget.unitId,
+        widget.quizId,
+      );
+
+      _questions = questionsSnapshot.docs.map((doc) {
+        final d = doc.data() as Map<String, dynamic>;
+        return {
+          'id': doc.id,
+          'question': d['question'] ?? '',
+          'options': List<String>.from(d['options'] ?? []),
+          'correctIndex': d['correctIndex'] as int? ?? 0,
+        };
+      }).toList();
+      _totalQuestions = _questions.length;
+
+      // 2. Load student's answers from progress document
+      final progressDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
+          .collection('students')
+          .doc(widget.studentId)
+          .collection('progress')
+          .doc(widget.quizId)
+          .get();
+
+      if (progressDoc.exists) {
+        final data = progressDoc.data() as Map<String, dynamic>;
+        _score = data['correctAnswers'] as int? ?? 0;
+        _answers = List<Map<String, dynamic>>.from(data['answers'] ?? []);
+      }
+
+      // 3. Load existing report (if any) — this is the source of truth for
+      // whether a report was already sent for this specific unit.
+      final reportDoc = await FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(widget.groupId)
+          .collection('students')
+          .doc(widget.studentId)
+          .collection('reports')
+          .doc(widget.unitId)
+          .get();
+
+      if (reportDoc.exists) {
+        final data = reportDoc.data() as Map<String, dynamic>;
+        _feedback = data['feedback'] as String? ?? '';
+        _feedbackTag = data['feedbackTag'] as String?;
+        _reportAlreadySent = true;
+        final generatedAt = data['generatedAt'] as Timestamp?;
+        _reportSentAt = generatedAt?.toDate();
+      } else {
+        _reportAlreadySent = false;
+      }
+
+      _feedbackController.text = _feedback;
+    } catch (e) {
+      debugPrint('Error loading quiz review: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _sendReport() async {
+    // Segunda barrera además de la UI deshabilitada: nunca ejecutar el
+    // envío si ya existe un reporte, sin importar cómo se haya disparado
+    // la llamada.
+    if (_reportAlreadySent) return;
+
+    // A report can only be sent once, so it must carry something from the
+    // teacher: a tag, a comment, or both.
+    if (_feedback.trim().isEmpty && _feedbackTag == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('common.feedbackTagOrComment'.tr())),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      final db = Database();
+
+      // Report generation is ordinary app business logic (score/feedback
+      // tallying, activity totals) — stays client-side. Only the actual
+      // notification send moves server-side, via the sendReportNotification
+      // Cloud Function (functions/src/reportNotifications.ts), which
+      // supersedes the old NotificationService.sendReportNotification:
+      // that function did the parentId lookup + notifications doc write +
+      // OneSignal push all from the client; now it's one server call.
+      await db.saveReportOnly(
+        studentId: widget.studentId,
+        unitId: widget.unitId,
+        unitTitle: widget.quizTitle,
+        score: _score,
+        totalQuestions: _totalQuestions,
+        stars: _getStars(),
+        feedback: _feedback.trim(),
+        feedbackTag: _feedbackTag,
+      );
+
+      try {
+        final callable = FirebaseFunctions.instance.httpsCallable('sendReportNotification');
+        await callable.call({
+          'studentId': widget.studentId,
+          'studentName': widget.studentName,
+          'unitTitle': widget.quizTitle,
+        });
+      } on FirebaseFunctionsException catch (e) {
+        // Report itself is already saved above — a notification failure
+        // shouldn't block the teacher from seeing "Report sent" and
+        // moving on, same as the old client-side version's swallowed
+        // try/catch around NotificationService.
+        debugPrint('sendReportNotification failed: ${e.code} - ${e.message}');
+      }
+
+      if (mounted) {
+        setState(() {
+          _reportAlreadySent = true;
+          _reportSentAt = DateTime.now();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                  'teacher.unit_quiz_review_screen.reportSentToParent'.tr()),
+              backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('teacher.unit_quiz_review_screen.errorWithMessage'
+                  .tr(namedArgs: {'error': '$e'})),
+              backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  int _getStars() {
+    final percent = _totalQuestions == 0 ? 0 : (_score / _totalQuestions * 100).round();
+    if (percent >= 90) return 3;
+    if (percent >= 70) return 2;
+    return 1;
+  }
+
+  String _formatSentDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      body: Column(
+        children: [
+          TeacherScreenHeader(
+            title: 'teacher.unit_quiz_review_screen.reviewTitle'
+                .tr(namedArgs: {'title': widget.quizTitle}),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Student info card
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 30,
+                          backgroundColor: AppColors.primary.withOpacity(0.1),
+                          child: Text(widget.studentName.isNotEmpty ? widget.studentName[0].toUpperCase() : '?', style: TextStyle(fontSize: 24, color: AppColors.primary)),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(widget.studentName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              Text(
+                                  'teacher.unit_quiz_review_screen.scoreLabel'
+                                      .tr(namedArgs: {
+                                    'score': '$_score',
+                                    'total': '$_totalQuestions',
+                                    'percent':
+                                        '${(_score / _totalQuestions * 100).round()}',
+                                  }),
+                                  style: TextStyle(fontSize: 14, color: _score >= (_totalQuestions * 0.7) ? Colors.green : Colors.orange)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Banner de reporte ya enviado (solo para el docente)
+                  if (_reportAlreadySent && !widget.readOnly) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _reportSentAt != null
+                                  ? 'teacher.unit_quiz_review_screen.reportAlreadySentOn'
+                                      .tr(namedArgs: {
+                                      'date': _formatSentDate(_reportSentAt!)
+                                    })
+                                  : 'teacher.unit_quiz_review_screen.reportAlreadySent'
+                                      .tr(),
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 24),
+                  Text('teacher.unit_quiz_review_screen.questionsReview'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  ..._questions.asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final q = entry.value;
+                    final studentAnswer = idx < _answers.length ? _answers[idx]['selectedIndex'] as int? : null;
+                    final isCorrect = studentAnswer == q['correctIndex'];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: isCorrect ? Colors.green.shade200 : Colors.red.shade200),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Icon(isCorrect ? Icons.check_circle : Icons.cancel, color: isCorrect ? Colors.green : Colors.red, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text('teacher.unit_quiz_review_screen.questionLabel'.tr(namedArgs: {'number': '${idx+1}', 'text': '${q['question']}'}), style: const TextStyle(fontWeight: FontWeight.w600))),
+                            ]),
+                            const SizedBox(height: 8),
+                            ...List.generate((q['options'] as List).length, (optIdx) {
+                              final isStudentChoice = studentAnswer == optIdx;
+                              final isCorrectChoice = q['correctIndex'] == optIdx;
+                              Color? bgColor;
+                              if (isCorrectChoice) bgColor = Colors.green.shade50;
+                              else if (isStudentChoice && !isCorrectChoice) bgColor = Colors.red.shade50;
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 4),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: bgColor,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: isCorrectChoice ? Colors.green : (isStudentChoice ? Colors.red : Colors.grey.shade200)),
+                                ),
+                                child: Row(children: [
+                                  Text('${String.fromCharCode(65+optIdx)}.', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  const SizedBox(width: 8),
+                                  Expanded(child: Text(q['options'][optIdx])),
+                                  if (isCorrectChoice) const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                  if (isStudentChoice && !isCorrectChoice) const Icon(Icons.cancel, color: Colors.red, size: 16),
+                                ]),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 24),
+                  Text('teacher.unit_quiz_review_screen.teacherFeedback'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  if (widget.readOnly)
+                    // Parent view: the unit report's feedback is always
+                    // parent-facing, so it's shown as soon as it exists.
+                    ParentFeedbackView(
+                      tagKey: _feedbackTag,
+                      comment: _feedback,
+                      emptyMessage: 'common.unitReportNotSentYet'.tr(),
+                    )
+                  else ...[
+                  FeedbackTagSelector(
+                    selected: _feedbackTag,
+                    enabled: !_reportAlreadySent,
+                    onChanged: (t) => setState(() => _feedbackTag = t),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _feedbackController,
+                    onChanged: (v) => _feedback = v,
+                    maxLines: 5,
+                    // Una vez enviado el reporte, el feedback queda de solo
+                    // lectura — ya no tiene efecto modificarlo porque no hay
+                    // reenvío posible.
+                    enabled: !_reportAlreadySent,
+                    decoration: InputDecoration(
+                      labelText: 'common.commentOptional'.tr(),
+                      hintText: 'teacher.unit_quiz_review_screen.feedbackHint'.tr(),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      filled: true,
+                      fillColor: _reportAlreadySent ? Colors.grey.shade100 : Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      // Deshabilitado también mientras se guarda o si ya
+                      // se envió — bloqueo total, no solo visual.
+                      onPressed: (_isSaving || _reportAlreadySent) ? null : _sendReport,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _reportAlreadySent ? Colors.grey.shade400 : AppColors.primary,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: _isSaving
+                          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white))
+                          : Text(
+                              _reportAlreadySent
+                                  ? 'teacher.unit_quiz_review_screen.reportAlreadySentButton'
+                                      .tr()
+                                  : 'teacher.unit_quiz_review_screen.sendReportToParent'
+                                      .tr(),
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                    ),
+                  ),
+                  ],
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

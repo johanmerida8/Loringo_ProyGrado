@@ -16,28 +16,62 @@ import { onCall, HttpsError } from "firebase-functions/https";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import {
+  callerOwnsGroup,
+  encryptGroupCode,
+  INVITATION_TTL_MS,
+} from "./groupCode";
 
 const ONESIGNAL_APP_ID = defineSecret("ONESIGNAL_APP_ID");
 const ONESIGNAL_REST_API_KEY = defineSecret("ONESIGNAL_REST_API_KEY");
+const GROUP_CODE_KEY = defineSecret("GROUP_CODE_KEY");
 
 interface SendGroupInvitationData {
   parentEmail: string;
   groupId: string;
   groupName: string;
-  groupCode: string;
 }
 
 export const sendGroupInvitationNotification = onCall(
-  { secrets: [ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY] },
+  { secrets: [ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY, GROUP_CODE_KEY] },
   async (request) => {
-    const { parentEmail, groupId, groupName, groupCode } =
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { parentEmail, groupId, groupName } =
       request.data as SendGroupInvitationData;
 
-    if (!parentEmail || !groupId || !groupName || !groupCode) {
+    if (!parentEmail || !groupId || !groupName) {
       throw new HttpsError("invalid-argument", "Missing required fields");
     }
 
     const db = getFirestore();
+
+    // The code never travels from the client and is never stored in the
+    // clear: the notification carries the group's own encrypted code, which
+    // only revealInvitationGroupCode can decrypt, for the invited parent.
+    const groupSnap = await db.collection("teacherGroups").doc(groupId).get();
+    if (!groupSnap.exists) {
+      throw new HttpsError("not-found", "Group not found.");
+    }
+    const groupData = groupSnap.data() ?? {};
+    if (!callerOwnsGroup(request.auth.uid, groupData.teacherId)) {
+      throw new HttpsError(
+        "permission-denied",
+        "Only the owning teacher can invite to this group."
+      );
+    }
+    let groupCodeEncrypted = groupData.groupCodeEncrypted as string | undefined;
+    if (!groupCodeEncrypted && typeof groupData.groupCode === "string") {
+      // Legacy group still holding its code in plaintext.
+      groupCodeEncrypted = encryptGroupCode(
+        groupData.groupCode,
+        GROUP_CODE_KEY.value()
+      );
+    }
+    if (!groupCodeEncrypted) {
+      throw new HttpsError("failed-precondition", "Group has no code.");
+    }
     const userSnap = await db
       .collection("users")
       .where("email", "==", parentEmail)
@@ -61,9 +95,10 @@ export const sendGroupInvitationNotification = onCall(
       type: "group_invitation",
       title,
       message,
-      data: { groupId, groupName, groupCode },
+      data: { groupId, groupName, groupCodeEncrypted },
       isRead: false,
       createdAt: Timestamp.now(),
+      expiresAt: Timestamp.fromMillis(Date.now() + INVITATION_TTL_MS),
     });
 
     const response = await fetch("https://onesignal.com/api/v1/notifications", {

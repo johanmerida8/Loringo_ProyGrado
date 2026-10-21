@@ -5,9 +5,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/feedback_tag_chip.dart';
+import 'package:loringo_app/components/report_comparison_card.dart';
+import 'package:loringo_app/models/feedback_tag.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/report_comparison.dart';
 import 'package:loringo_app/utils/unit_report_pdf.dart';
 
 /// Full report history for a single child — reached by tapping a child's
@@ -147,16 +151,20 @@ class _ChildReportDetailScreenState extends State<ChildReportDetailScreen> {
     final totalActivities = (report['totalActivities'] as num?)?.toInt() ?? 0;
     final activitiesPercent =
         (report['activitiesPercent'] as num?)?.toInt() ?? 0;
-    final previousScores = List<int>.from(
-      ((report['previousUnitScores'] as List?) ?? []).map(
-        (e) => (e as num).toInt(),
-      ),
-    );
+    final completedLessonQuizzes =
+        (report['completedLessonQuizzes'] as num?)?.toInt() ?? 0;
+    final totalLessonQuizzes =
+        (report['totalLessonQuizzes'] as num?)?.toInt() ?? 0;
+    final comparison = computeReportComparison(report, allReports);
     final generatedAt = report['generatedAt'] as Timestamp?;
     final dateStr = generatedAt != null
         ? widget.formatDate(generatedAt.toDate())
         : 'parent.child_report_detail_screen.recently'.tr();
     final feedback = (report['feedback'] as String?) ?? '';
+    // One-tap rating the teacher picked (models/feedback_tag.dart) —
+    // absent on reports sent before tags existed.
+    final feedbackTag = report['feedbackTag'] as String?;
+    final hasFeedbackTag = feedbackTagFor(feedbackTag) != null;
 
     final scoreColor = quizPercent >= 80
         ? const Color(0xFF4CAF50)
@@ -273,9 +281,23 @@ class _ChildReportDetailScreenState extends State<ChildReportDetailScreen> {
                       valueColor: const Color(0xFF4CAF50),
                     ),
                   ),
+                  Container(
+                    width: 1,
+                    height: 50,
+                    color: const Color(0xFFF0F0F0),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _statBlock(
+                      label: 'common.lessonQuizzes'.tr(),
+                      value: '$completedLessonQuizzes/$totalLessonQuizzes',
+                      sub: 'common.completed'.tr(),
+                      valueColor: AppColors.primary,
+                    ),
+                  ),
                 ],
               ),
-              if (feedback.isNotEmpty)
+              if (feedback.isNotEmpty || hasFeedbackTag)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Container(
@@ -306,19 +328,25 @@ class _ChildReportDetailScreenState extends State<ChildReportDetailScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          feedback,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontStyle: FontStyle.italic,
+                        if (hasFeedbackTag) ...[
+                          const SizedBox(height: 8),
+                          FeedbackTagChip(tagKey: feedbackTag),
+                        ],
+                        if (feedback.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            feedback,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontStyle: FontStyle.italic,
+                            ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
                 ),
-              if (previousScores.isNotEmpty) ...[
+              if (comparison.hasData) ...[
                 const SizedBox(height: 12),
                 const Divider(
                   height: 1,
@@ -326,33 +354,11 @@ class _ChildReportDetailScreenState extends State<ChildReportDetailScreen> {
                   color: Color(0xFFF0F0F0),
                 ),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 4,
-                  children: [
-                    ...previousScores.map(
-                      (s) => Chip(
-                        label: Text(
-                          '$s%',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        backgroundColor: Colors.grey[100],
-                        padding: EdgeInsets.zero,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                    ),
-                    Chip(
-                      label: Text(
-                        '$quizPercent%',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      backgroundColor: scoreColor.withOpacity(0.18),
-                      padding: EdgeInsets.zero,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ],
+                ReportComparisonCard(
+                  comparison: comparison,
+                  unitTitle: unitTitle,
+                  activitiesPercent:
+                      (report['activitiesAvgScore'] as num?)?.toInt() ?? 0,
                 ),
               ],
             ],

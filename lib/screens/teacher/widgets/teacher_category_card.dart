@@ -5,17 +5,22 @@ import 'package:provider/provider.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-import 'package:loringo_app/screens/teacher/teacher_view_images_screen.dart';
+import 'package:loringo_app/screens/teacher/media/teacher_view_images_screen.dart';
 
 // ── Teacher category card ─────────────────────────────────────────────────────
 
 class TeacherCategoryCard extends StatelessWidget {
   final QueryDocumentSnapshot doc;
   final Database db;
+  final void Function(String id, String name) onEdit;
   final void Function(String id, String name) onDelete;
 
   const TeacherCategoryCard(
-      {super.key, required this.doc, required this.db, required this.onDelete});
+      {super.key,
+      required this.doc,
+      required this.db,
+      required this.onEdit,
+      required this.onDelete});
 
   Color _accentFor(String name) {
     const palette = [
@@ -129,16 +134,44 @@ class TeacherCategoryCard extends StatelessWidget {
             ],
           )),
           Row(mainAxisSize: MainAxisSize.min, children: [
-            GestureDetector(
-              onTap: () => onDelete(categoryId, categoryName),
+            // ⋮ menu: Edit (rename) / Delete (asks to confirm).
+            PopupMenuButton<String>(
+              tooltip: '',
+              padding: EdgeInsets.zero,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadii.md)),
+              onSelected: (v) => v == 'edit'
+                  ? onEdit(categoryId, categoryName)
+                  : onDelete(categoryId, categoryName),
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'edit',
+                  child: Row(children: [
+                    const Icon(Icons.edit_outlined,
+                        size: 18, color: AppColors.primary),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text('common.edit'.tr()),
+                  ]),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: Row(children: [
+                    const Icon(Icons.delete_outline,
+                        size: 18, color: AppColors.danger),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text('common.delete'.tr(),
+                        style: const TextStyle(color: AppColors.danger)),
+                  ]),
+                ),
+              ],
               child: Container(
                   padding: const EdgeInsets.all(AppSpacing.sm),
                   margin: const EdgeInsets.only(right: AppSpacing.xs),
                   decoration: BoxDecoration(
-                      color: AppColors.danger.withOpacity(0.06),
+                      color: Colors.grey.withOpacity(0.08),
                       borderRadius: BorderRadius.circular(AppRadii.sm)),
-                  child: Icon(Icons.delete_outline,
-                      size: 18, color: AppColors.danger)),
+                  child: Icon(Icons.more_vert_rounded,
+                      size: 18, color: Colors.grey[600])),
             ),
             Container(
               margin:

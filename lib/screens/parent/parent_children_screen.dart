@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
 import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
 import 'package:loringo_app/screens/parent/parent_child_progress_path_screen.dart';
 import 'package:loringo_app/screens/parent/parent_join_group_screen.dart';
@@ -99,46 +100,59 @@ class ParentChildrenScreen extends StatelessWidget {
               style: const TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  vertical: 16, horizontal: 24),
-              decoration: BoxDecoration(
-                color: AppColors.primarySoft(0.08),
+            Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                border:
-                    Border.all(color: AppColors.primary, width: 2),
-              ),
-              child: Text(
-                accessCode,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 6,
-                  color: AppColors.primary,
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: accessCode));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                    content: Text('common.codeCopied'.tr()),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(seconds: 2),
+                  ));
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 16, horizontal: 24),
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySoft(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border:
+                        Border.all(color: AppColors.primary, width: 2),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            accessCode,
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 6,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Icon(Icons.copy_rounded,
+                              color: AppColors.primary, size: 20),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'common.tapToCopy'.tr(),
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: accessCode));
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                  content: Text('common.codeCopied'.tr()),
-                  backgroundColor: Colors.green,
-                  duration: const Duration(seconds: 2),
-                ));
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-              ),
-              icon: const Icon(Icons.copy_rounded),
-              label: Text('common.copyCode'.tr()),
             ),
           ],
         ),
@@ -213,6 +227,15 @@ class ParentChildrenScreen extends StatelessWidget {
     if (result == true) onRefresh();
   }
 
+  Future<void> _openRegisterChild(BuildContext context) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (context) => const ParentRegisterChildScreen()),
+    );
+    if (result == true) onRefresh();
+  }
+
   void _navigateToActivityStatus(
       BuildContext context, Map<String, dynamic> child) {
     Navigator.push(
@@ -240,56 +263,37 @@ class ParentChildrenScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Inline header ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-            child: Text(
-              'common.myChildren'.tr(),
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // ── Add child button ──
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const ParentRegisterChildScreen()),
-                  );
-                  if (result == true) onRefresh();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
+          // ── Header: shared ParentScreenHeader (no back — this is a root
+          // tab) with the "add child" action as a compact icon button in
+          // the same soft-tint style as the header's back button.
+          ParentScreenHeader(
+            title: 'common.myChildren'.tr(),
+            showBack: false,
+            trailing: Tooltip(
+              message: 'common.addChild'.tr(),
+              child: Material(
+                color: AppColors.primarySoft(0.1),
+                borderRadius: AppRadii.mdAll,
+                child: InkWell(
+                  borderRadius: AppRadii.mdAll,
+                  onTap: () => _openRegisterChild(context),
+                  child: const Padding(
+                    padding: EdgeInsets.all(AppSpacing.sm),
+                    child: Icon(
+                      Icons.person_add_alt_1_rounded,
+                      color: AppColors.primary,
+                      size: 22,
+                    ),
+                  ),
                 ),
-                icon: const Icon(Icons.add),
-                label: Text('common.addChild'.tr(),
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           if (myChildren.isEmpty)
-            _emptyPlaceholder()
+            _emptyPlaceholder(context)
           else
             ...myChildren.map(
               (child) => Padding(
@@ -501,7 +505,9 @@ class ParentChildrenScreen extends StatelessWidget {
     );
   }
 
-  Widget _emptyPlaceholder() {
+  // With no children yet, the header's small icon button is easy to miss,
+  // so the empty state carries its own add action too.
+  Widget _emptyPlaceholder(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 48),
@@ -513,6 +519,18 @@ class ParentChildrenScreen extends StatelessWidget {
             Text('common.noChildRegistered'.tr(),
                 style: TextStyle(
                     fontSize: 15, color: Colors.grey[500])),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => _openRegisterChild(context),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+              label: Text('common.addChild'.tr()),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
           ],
         ),
       ),

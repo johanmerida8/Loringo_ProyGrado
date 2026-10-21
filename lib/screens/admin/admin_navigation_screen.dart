@@ -9,8 +9,8 @@ import 'package:loringo_app/components/responsive_scaffold.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/admin/admin_dashboard_screen.dart';
 import 'package:loringo_app/screens/admin/admin_images_screen.dart';
-import 'package:loringo_app/screens/admin/admin_profile_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/connectivity_banner.dart';
 import 'package:loringo_app/widget/secured_screen.dart';
 
 class AdminNavigationScreen extends StatefulWidget {
@@ -45,10 +45,9 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
   // current state (e.g. _name once loaded) — same pattern student/parent
   // main screens use. Flutter's element reconciliation keeps each tab's
   // own State alive across rebuilds since type + position stay the same.
-  List<Widget> _buildTabs() => [
-        AdminDashboardScreen(name: _name),
+  List<Widget> _buildTabs(bool isWide) => [
+        AdminDashboardScreen(name: _name, isWide: isWide),
         const AdminImagesScreen(),
-        const AdminProfileScreen(),
       ];
 
   List<Widget> _buildNavItems(bool isWide) {
@@ -104,12 +103,13 @@ class _AdminNavigationScreenState extends State<AdminNavigationScreen> {
                 label: 'admin.admin_navigation_screen.dashboard'.tr()),
             AppNavItem(
                 icon: Icons.image, label: 'admin.admin_navigation_screen.images'.tr()),
-            AppNavItem(icon: Icons.person_rounded, label: 'common.myProfile'.tr()),
           ],
         ),
-        bodyBuilder: (context, isWide) => IndexedStack(
-          index: _currentIndex,
-          children: _buildTabs(),
+        bodyBuilder: (context, isWide) => ConnectivityBanner(
+          child: IndexedStack(
+            index: _currentIndex,
+            children: _buildTabs(isWide),
+          ),
         ),
       ),
     );

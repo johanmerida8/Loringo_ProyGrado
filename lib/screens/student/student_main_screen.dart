@@ -8,6 +8,7 @@ import 'package:loringo_app/screens/student/student_activities_screen.dart';
 import 'package:loringo_app/screens/student/student_league_screen.dart';
 import 'package:loringo_app/screens/student/student_settings_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/connectivity_banner.dart';
 import 'package:loringo_app/widget/secured_screen.dart';
 
 class StudentMainScreen extends StatefulWidget {
@@ -55,6 +56,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
           studentId: widget.studentId,
           studentName: widget.studentName,
           studentAvatar: _currentAvatar,
+          onOpenLeague: () => setState(() => _currentIndex = 1),
         ),
         StudentLeagueTab(
           studentId: widget.studentId,
@@ -149,7 +151,8 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
             AppNavItem(icon: Icons.settings_rounded, label: 'common.settings'.tr()),
           ],
         ),
-        bodyBuilder: (context, isWide) => Container(
+        bodyBuilder: (context, isWide) => ConnectivityBanner(
+          child: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               colors: [Color(0xFFE8F5E9), Colors.white],
@@ -168,6 +171,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
             index: _currentIndex,
             children: _buildTabs(),
           ),
+        ),
         ),
       ),
     );

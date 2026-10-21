@@ -40,9 +40,14 @@ Future<bool> confirmIdentity(BuildContext context, {required String reason}) asy
     // Fall through to password on failure/cancel, same as
     // BiometricVerificationScreen does.
   } else if (isSupported && context.mounted) {
-    // Not enabled yet — recommend it, then continue to password regardless
-    // of the user's choice so this confirmation doesn't block on it.
-    await context.read<BiometricProvider>().toggle(context, user.uid);
+    // Not enabled yet — recommend it. Enabling itself requires passing a
+    // biometric prompt (see BiometricProvider.toggle), so if that succeeds
+    // the user has already proven their identity — no need to also ask
+    // for a password. Only fall through to password if they declined the
+    // nudge or the biometric prompt during enabling failed/was canceled.
+    final provider = context.read<BiometricProvider>();
+    await provider.toggle(context, user.uid);
+    if (provider.isEnabled) return true;
   }
 
   if (!context.mounted) return false;

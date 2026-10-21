@@ -8,10 +8,10 @@
 // in a test without a working Firestore connection (see the source-level
 // investigation this test suite is built on: pumping it throws "no
 // Firebase App" before any interaction is possible). This instead covers
-// what IS reachable and real: Database.createCategory (and the
-// sanitizeCategoryName it now derives the folder-safe categoryName from —
-// see that method's doc comment for why categoryName and displayName are
-// two separate fields).
+// what IS reachable and real: Database.createCategory, updateCategory and
+// deleteCategory. categoryName (the Cloudinary folder) is the category's own
+// doc id, separate from displayName (what the user typed) — see
+// createCategory's comment.
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -43,13 +43,13 @@ void main() {
           .doc(categoryId)
           .get();
       expect(doc.exists, true);
-      expect(doc.data()!['categoryName'], 'animals');
+      expect(doc.data()!['categoryName'], categoryId);
       expect(doc.data()!['displayName'], 'animals');
       expect(doc.data()!['ownerRole'], 'image_manager');
     });
 
     test('ARRANGE-ACT-ASSERT: a spaced, mixed-case display name is stored '
-        'verbatim while categoryName becomes its folder-safe form',
+        'verbatim while categoryName (the Cloudinary folder) is the doc id',
         () async {
       // ARRANGE & ACT
       final categoryId = await database.createCategory(
@@ -66,7 +66,35 @@ void main() {
           .doc(categoryId)
           .get();
       expect(doc.data()!['displayName'], 'Sea Animals');
-      expect(doc.data()!['categoryName'], 'sea_animals');
+      expect(doc.data()!['categoryName'], categoryId);
+    });
+
+    test('ARRANGE-ACT-ASSERT: updateCategory renames the displayName but '
+        'keeps the Cloudinary folder (categoryName) unchanged',
+        () async {
+      // ARRANGE
+      final categoryId = await database.createCategory(
+        displayName: 'Animals',
+        ownerId: 'owner_1',
+        ownerRole: 'teacher',
+      );
+
+      // ACT
+      await database.updateCategory(
+        ownerId: 'owner_1',
+        categoryId: categoryId,
+        displayName: '  Farm Animals ',
+      );
+
+      // ASSERT
+      final doc = await fakeDb
+          .collection('mediaLibrary')
+          .doc('owner_1')
+          .collection('categories')
+          .doc(categoryId)
+          .get();
+      expect(doc.data()!['displayName'], 'Farm Animals');
+      expect(doc.data()!['categoryName'], categoryId);
     });
 
     test('ARRANGE-ACT-ASSERT: two different owners can create categories with the same name independently',

@@ -27,6 +27,9 @@ const GROUP_CODE_KEY = defineSecret("GROUP_CODE_KEY");
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0/I/1
 
+// How long a group invitation can be used to reveal the group code.
+export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 // ── Pure helpers (no Firebase imports) — unit-tested directly in
 // groupCode.test.ts, independent of the Functions runtime. ──────────────
 
@@ -241,6 +244,71 @@ export const revealGroupCode = onCall<
     }
 
     throw new HttpsError("not-found", "No access code found for this group.");
+  }
+);
+
+interface RevealInvitationRequest {
+  notificationId?: string;
+}
+
+/** Hands the group code to the parent a `group_invitation` notification was
+ * sent to. The notification only holds the code encrypted
+ * (`data.groupCodeEncrypted`); this decrypts it after checking that the
+ * caller is the notification's recipient and that the invitation hasn't
+ * expired. Older invitations (no `expiresAt`) expire 7 days after
+ * `createdAt`; ones that still carry a plaintext `data.groupCode` are
+ * answered with it as-is. */
+export const revealInvitationGroupCode = onCall<
+  RevealInvitationRequest,
+  Promise<{ groupCode: string; groupId: string; groupName: string }>
+>(
+  { secrets: [GROUP_CODE_KEY], maxInstances: 2 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const notificationId = (request.data?.notificationId ?? "").trim();
+    if (!notificationId) {
+      throw new HttpsError("invalid-argument", "notificationId is required.");
+    }
+
+    const snap = await getFirestore()
+      .collection("notifications")
+      .doc(notificationId)
+      .get();
+    const notification = snap.data();
+    if (
+      !snap.exists ||
+      !notification ||
+      notification.type !== "group_invitation" ||
+      notification.userId !== request.auth.uid
+    ) {
+      throw new HttpsError("permission-denied", "Not your invitation.");
+    }
+
+    const createdAtMs: number | undefined = notification.createdAt?.toMillis?.();
+    const expiresAtMs: number | undefined =
+      notification.expiresAt?.toMillis?.() ??
+      (createdAtMs === undefined ? undefined : createdAtMs + INVITATION_TTL_MS);
+    if (expiresAtMs !== undefined && Date.now() > expiresAtMs) {
+      throw new HttpsError("failed-precondition", "invitation-expired");
+    }
+
+    const data = notification.data ?? {};
+    let groupCode: string | undefined;
+    if (typeof data.groupCodeEncrypted === "string") {
+      groupCode = decryptGroupCode(data.groupCodeEncrypted, GROUP_CODE_KEY.value());
+    } else if (typeof data.groupCode === "string") {
+      groupCode = data.groupCode;
+    }
+    if (!groupCode) {
+      throw new HttpsError("not-found", "This invitation has no code.");
+    }
+    return {
+      groupCode,
+      groupId: String(data.groupId ?? ""),
+      groupName: String(data.groupName ?? ""),
+    };
   }
 );
 

@@ -101,7 +101,7 @@ void main() {
       expect(progressDoc.data()!['stars'], 1);
     });
 
-    test('ARRANGE-ACT-ASSERT: a retry that beats the previous best updates bestScore/stars but only earns flat 5 XP',
+    test('ARRANGE-ACT-ASSERT: a retry that beats the previous best updates bestScore/stars, earns the one-time flat 5 XP bonus, and adds it to the roster',
         () async {
       // ARRANGE - a prior attempt already scored 60 (1 star)
       await seedActivityProgress(
@@ -130,14 +130,134 @@ void main() {
         bonusXP: 50,
       );
 
-      // ASSERT - retries always earn a flat 5 XP, regardless of how much
-      // the score improved (only a first attempt uses the xpBase/bonus
-      // formula) — real behavior, not the intuitive "recompute the bonus".
+      // ASSERT - the first improving retry earns a flat 5 XP bonus
+      // (only a first attempt uses the xpBase/bonus formula), the bonus is
+      // marked used so it can never be paid again for this activity, the
+      // progress doc's xpEarned is the running sum (60 + 5 = 65, not a raw
+      // overwrite), and the roster's xp counter is credited the same 5.
       expect(xpEarned, 5);
       final progressDoc = await progressDocFor('activity_3');
       expect(progressDoc.data()!['bestScore'], 95);
       expect(progressDoc.data()!['stars'], 3);
       expect(progressDoc.data()!['totalAttempts'], 2);
+      expect(progressDoc.data()!['xpEarned'], 65);
+      expect(progressDoc.data()!['retryBonusAwarded'], true);
+      final rosterDoc = await fakeDb
+          .collection('teacherGroups')
+          .doc(groupId)
+          .collection('students')
+          .doc('student_1')
+          .get();
+      expect(rosterDoc.data()!['xp'], 5);
+    });
+
+    test('ARRANGE-ACT-ASSERT: a non-improving retry earns 0 XP and does not touch the roster or the progress doc xpEarned',
+        () async {
+      // ARRANGE - a prior attempt already scored 90
+      await seedActivityProgress(
+        fakeDb,
+        studentId: 'student_1',
+        groupId: groupId,
+        activityId: 'activity_3b',
+        contentId: 'content_1',
+        unitId: 'unit_1',
+        bestScore: 90,
+        totalAttempts: 1,
+        stars: 3,
+        xpEarned: 140,
+      );
+
+      // ACT - retry ties at 90 (not a new best: strictly-greater required)
+      final tieXp = await database.saveActivityCompletion(
+        studentId: 'student_1',
+        activityId: 'activity_3b',
+        contentId: 'content_1',
+        unitId: 'unit_1',
+        score: 90,
+        correctAnswers: 4,
+        wrongAnswers: 1,
+        xpBase: 100,
+        bonusXP: 50,
+      );
+
+      // ASSERT
+      expect(tieXp, 0);
+      final progressDoc = await progressDocFor('activity_3b');
+      expect(progressDoc.data()!['xpEarned'], 140);
+      expect(progressDoc.data()!.containsKey('retryBonusAwarded'), false);
+      final rosterDoc = await fakeDb
+          .collection('teacherGroups')
+          .doc(groupId)
+          .collection('students')
+          .doc('student_1')
+          .get();
+      expect(rosterDoc.data()!['xp'], 0);
+    });
+
+    test('ARRANGE-ACT-ASSERT: the retry bonus can only be paid once — a later attempt that improves further earns 0 extra XP',
+        () async {
+      // ARRANGE - first attempt (60), then an improving retry (95) that
+      // already consumed the one-time bonus.
+      await database.saveActivityCompletion(
+        studentId: 'student_1',
+        activityId: 'activity_3c',
+        contentId: 'content_1',
+        unitId: 'unit_1',
+        score: 60,
+        correctAnswers: 3,
+        wrongAnswers: 2,
+        xpBase: 100,
+        bonusXP: 50,
+      );
+      await database.saveActivityCompletion(
+        studentId: 'student_1',
+        activityId: 'activity_3c',
+        contentId: 'content_1',
+        unitId: 'unit_1',
+        score: 95,
+        correctAnswers: 5,
+        wrongAnswers: 0,
+        xpBase: 100,
+        bonusXP: 50,
+      );
+      final progressAfterBonus = await progressDocFor('activity_3c');
+      final xpEarnedAfterBonus = progressAfterBonus.data()!['xpEarned'] as int;
+      final rosterAfterBonus = await fakeDb
+          .collection('teacherGroups')
+          .doc(groupId)
+          .collection('students')
+          .doc('student_1')
+          .get();
+      final rosterXpAfterBonus = rosterAfterBonus.data()!['xp'] as int;
+
+      // ACT - a third attempt improves further to a perfect 100
+      final thirdXp = await database.saveActivityCompletion(
+        studentId: 'student_1',
+        activityId: 'activity_3c',
+        contentId: 'content_1',
+        unitId: 'unit_1',
+        score: 100,
+        correctAnswers: 5,
+        wrongAnswers: 0,
+        xpBase: 100,
+        bonusXP: 50,
+      );
+
+      // ASSERT - the bonus was already used on attempt 2, so a further
+      // improving attempt 3 earns nothing more, and neither the progress
+      // doc's xpEarned nor the roster's xp increase beyond what attempt 2
+      // already granted.
+      expect(thirdXp, 0);
+      final progressDoc = await progressDocFor('activity_3c');
+      expect(progressDoc.data()!['bestScore'], 100);
+      expect(progressDoc.data()!['xpEarned'], xpEarnedAfterBonus);
+      final rosterDoc = await fakeDb
+          .collection('teacherGroups')
+          .doc(groupId)
+          .collection('students')
+          .doc('student_1')
+          .get();
+      expect(rosterDoc.data()!['xp'], rosterXpAfterBonus);
     });
 
     test('ARRANGE-ACT-ASSERT: a retry that scores worse keeps the previous bestScore and discards its taskAnswers',
@@ -171,12 +291,14 @@ void main() {
       );
 
       // ASSERT - bestScore/stars stay at the prior best; the worse
-      // attempt's taskAnswers are never persisted over the better one's.
+      // attempt's taskAnswers are never persisted over the better one's;
+      // xpEarned stays at the previously-granted total (no regression).
       final progressDoc = await progressDocFor('activity_4');
       expect(progressDoc.data()!['bestScore'], 90);
       expect(progressDoc.data()!['stars'], 3);
       expect(progressDoc.data()!['totalAttempts'], 2);
       expect(progressDoc.data()!['taskAnswers'], <String, dynamic>{});
+      expect(progressDoc.data()!['xpEarned'], 140);
     });
 
     test('ARRANGE-ACT-ASSERT: a retry that ties the previous best still refreshes taskAnswers',
@@ -210,10 +332,12 @@ void main() {
       );
 
       // ASSERT - a tie is not a new best, but the UI should still show
-      // what just happened, so taskAnswers refreshes even on a tie.
+      // what just happened, so taskAnswers refreshes even on a tie; xpEarned
+      // does not change on a tie (0 XP granted for this attempt).
       final progressDoc = await progressDocFor('activity_5');
       expect(progressDoc.data()!['bestScore'], 100);
       expect(progressDoc.data()!['taskAnswers'], {'task_1': {'answer': 'correct again'}});
+      expect(progressDoc.data()!['xpEarned'], 150);
     });
 
     test('ARRANGE-ACT-ASSERT: a second activity completion is reflected on the group roster progress subcollection',

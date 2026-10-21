@@ -34,7 +34,7 @@ class AppLoadingIndicator extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Lottie.asset(
-            'assets/JSON/loading.json',
+            'assets/JSON/happy-loader.json',
             width: size,
             height: size,
             fit: BoxFit.contain,

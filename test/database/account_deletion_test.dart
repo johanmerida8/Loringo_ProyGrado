@@ -24,15 +24,17 @@ void main() {
     test('ARRANGE-ACT-ASSERT: deletes the student and all progress/reports across every group they were ever in',
         () async {
       // ARRANGE - student currently in group_2, previously in group_1
-      // (recorded in groupHistory)
+      // (recorded in the groupHistory subcollection)
       await seedStudent(fakeDb,
           studentId: 'student_1', studentName: 'Ana', groupId: 'group_2');
-      await fakeDb.collection('students').doc('student_1').update({
-        'groupHistory': [
-          {'groupId': 'group_1'},
-          {'groupId': 'group_2'},
-        ],
-      });
+      for (final groupId in ['group_1', 'group_2']) {
+        await fakeDb
+            .collection('students')
+            .doc('student_1')
+            .collection('groupHistory')
+            .doc(groupId)
+            .set({'groupId': groupId});
+      }
       // Historical group_1 roster (not seeded by seedStudent, which only
       // seeds the current group)
       await fakeDb
@@ -82,6 +84,13 @@ void main() {
       // ASSERT
       expect((await fakeDb.collection('students').doc('student_1').get()).exists,
           false);
+      // The groupHistory subcollection doesn't vanish with its parent doc.
+      final historySnap = await fakeDb
+          .collection('students')
+          .doc('student_1')
+          .collection('groupHistory')
+          .get();
+      expect(historySnap.docs, isEmpty);
       for (final groupId in ['group_1', 'group_2']) {
         final rosterDoc = await fakeDb
             .collection('teacherGroups')
@@ -142,11 +151,12 @@ void main() {
       // ARRANGE
       await seedStudent(fakeDb,
           studentId: 'student_1', studentName: 'Ana', groupId: 'group_1');
-      await fakeDb.collection('students').doc('student_1').update({
-        'groupHistory': [
-          {'groupId': 'group_1'},
-        ],
-      });
+      await fakeDb
+          .collection('students')
+          .doc('student_1')
+          .collection('groupHistory')
+          .doc('group_1')
+          .set({'groupId': 'group_1'});
       await seedActivityProgress(fakeDb,
           studentId: 'student_1',
           groupId: 'group_1',
@@ -187,7 +197,13 @@ void main() {
       final studentDoc =
           await fakeDb.collection('students').doc('student_1').get();
       expect(studentDoc.exists, true);
-      expect(studentDoc.data()!['groupHistory'], isNotEmpty);
+      final historyDoc = await fakeDb
+          .collection('students')
+          .doc('student_1')
+          .collection('groupHistory')
+          .doc('group_1')
+          .get();
+      expect(historyDoc.exists, true);
     });
   });
 
@@ -248,7 +264,7 @@ void main() {
       database = Database(firestore: fakeDb);
     });
 
-    test('ARRANGE-ACT-ASSERT: deletes content, media categories/images, bookmarks, league campaign, and every owned group (with student progress) — but keeps student profiles',
+    test('ARRANGE-ACT-ASSERT: deletes content, media categories/images, league campaign, and every owned group (with student progress) — but keeps student profiles',
         () async {
       // ARRANGE - content
       await fakeDb.collection('content').add({'teacherId': teacherId, 'title': 'Unit 1'});
@@ -260,14 +276,6 @@ void main() {
           .collection('categories')
           .add({'displayName': 'Animals'});
       await categoryRef.collection('imageItems').add({'name': 'cat.png'});
-
-      // ARRANGE - continue bookmark
-      await fakeDb
-          .collection('teacherContinueBookmarks')
-          .doc(teacherId)
-          .collection('bookmarks')
-          .doc('bookmark_1')
-          .set({'level': 'unit'});
 
       // ARRANGE - league campaign
       await fakeDb.collection('leagueCampaigns').doc(teacherId).set({'scope': 'all'});
@@ -302,14 +310,6 @@ void main() {
           .collection('categories')
           .get();
       expect(categoriesSnap.docs, isEmpty);
-
-      // ASSERT - bookmarks gone
-      final bookmarksSnap = await fakeDb
-          .collection('teacherContinueBookmarks')
-          .doc(teacherId)
-          .collection('bookmarks')
-          .get();
-      expect(bookmarksSnap.docs, isEmpty);
 
       // ASSERT - league campaign gone
       final leagueDoc =

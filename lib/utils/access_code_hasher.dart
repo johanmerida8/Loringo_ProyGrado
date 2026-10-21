@@ -8,8 +8,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 //
 // Student access codes are never stored in plaintext (see database.dart's
 // STUDENTS section) — only their HMAC-SHA256 hash is persisted. HMAC (keyed
-// with a pepper from .env, same secret-loading pattern as
-// CLOUDINARY_API_SECRET in image_service.dart) is used instead of a plain
+// with a pepper from .env) is used instead of a plain
 // hash because the code's keyspace is small (33 symbols^6 ≈ 1.29B
 // combinations) and fully precomputable into a rainbow table offline; the
 // pepper makes that precomputation infeasible without also having the key.
@@ -31,6 +30,9 @@ class AccessCodeHasher {
     final pepper = dotenv.env['ACCESS_CODE_PEPPER'];
     if (pepper == null) throw Exception('Missing ACCESS_CODE_PEPPER');
     final hmac = Hmac(sha256, utf8.encode(pepper));
-    return hmac.convert(utf8.encode(code.trim().toUpperCase())).toString();
+
+    return hmac
+        .convert(utf8.encode(code.trim().toUpperCase()))
+        .toString();
   }
 }

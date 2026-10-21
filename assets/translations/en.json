@@ -1,5 +1,25 @@
 {
   "common": {
+    "noInternet": "No internet connection",
+    "backOnline": "Back online",
+    "moderationTitle": "Automatic moderation",
+    "moderationOnStatus": "On: images are analyzed with Google Vision before uploading",
+    "moderationOffStatus": "Off: no Google Vision analysis, basic checks only",
+    "moderationDisableTitle": "Turn off automatic moderation?",
+    "moderationDisableBody": "Images will be uploaded without going through Google Vision; only the basic checks (format, size and file name) will apply. Use this only with images you already know are appropriate for children.",
+    "moderationDisableConfirm": "Turn off",
+    "noTeacherFeedbackYet": "The teacher hasn't left feedback yet.",
+    "unitReportNotSentYet": "The teacher hasn't sent this unit's report yet.",
+    "feedbackTags": {
+      "getting_started": "Getting Started",
+      "learning": "Learning",
+      "good_progress": "Good Progress",
+      "great_work": "Great Work!",
+      "excellent": "Excellent!"
+    },
+    "feedbackTagOrComment": "Choose a tag or write a comment",
+    "commentOptional": "Comment (optional)",
+    "quickRating": "Quick rating",
     "captcha": "Please complete the captcha",
     "emailValidation1": "Email is required",
     "emailValidation2": "Please enter a valid email",
@@ -128,6 +148,7 @@
     "shareCodeToChild": "Share this code with your child to log in:",
     "codeCopied": "Code copied",
     "copyCode": "Copy Code",
+    "tapToCopy": "Tap to copy",
     "addChild": "Add Child",
     "joinGroup": "Join Group",
     "accessCode": "Access Code",
@@ -149,7 +170,7 @@
     "value": "Value",
     "activitiesCompleted": "Activities completed",
     "completionRate": "Completion rate",
-    "quizDetails": "Quiz Details",
+    "quizDetails": "Unit Quiz",
     "correctAnswers": "Correct answers",
     "progressTrend": "Progress Trend",
     "current": "Current",
@@ -461,7 +482,12 @@
     "monthSep": "Sep",
     "monthOct": "Oct",
     "monthNov": "Nov",
-    "monthDec": "Dec"
+    "monthDec": "Dec",
+    "lessonQuizzes": "Lesson Quizzes",
+    "completed": "Completed",
+    "averagePreviousUnits": "Average of previous units",
+    "trendActivities": "Activities (average score)",
+    "previousUnit": "Previous unit"
   },
   "components": {
     "notifications_screen": {
@@ -476,6 +502,12 @@
       "allChildrenInGroup": "All your children are already in a group",
       "groupNotFound": "Group not found",
       "joinedGroupSuccess": "{name} joined \"{group}\"",
+      "groupCodeLabel": "Group code",
+      "copyCode": "Copy code",
+      "codeCopied": "Code copied",
+      "invitationTitle": "Group invitation",
+      "invitationHowTo": "To add your child, go to My Children, tap \"Join Group\" on your child and enter this code.",
+      "invitationExpired": "This invitation has expired. Ask the teacher to invite you again.",
       "notificationFallbackTitle": "Notification",
       "noNotificationsYet": "No notifications yet",
       "noNotificationsHint": "When you receive notifications,\nthey will appear here",
@@ -497,6 +529,13 @@
     },
     "policy_consent_checkbox": {
       "viewPolicy": "View Privacy Policy"
+    },
+    "image_dialog": {
+      "title": "Select Image",
+      "adminTab": "Library ({count})",
+      "mineTab": "Mine ({count})",
+      "noCategories": "No categories yet",
+      "noImagesInCategory": "No images in this category"
     }
   },
   "initials": {
@@ -509,6 +548,19 @@
     "activity_play_screen": {
       "practiceRound": "Practice Round",
       "groupArchived": "Your teacher archived your group. This activity was not saved."
+    },
+    "quiz_complete_screen": {
+      "quizComplete": "Quiz Complete!",
+      "quizPassed": "Quiz Passed! 🎉",
+      "almostThere": "Almost There!",
+      "niceEffort": "Nice Effort!",
+      "teacherWillHelp": "Your teacher will see your result and help you review.",
+      "tryAgainHint": {
+        "one": "You can try again — {} attempt left",
+        "other": "You can try again — {} attempts left"
+      },
+      "tryAgain": "Try Again",
+      "checkingAnswers": "Great job! Checking your answers…"
     },
     "quiz_play_screen": {
       "pleaseAnswerAll": "Please answer all {count} questions",
@@ -528,19 +580,12 @@
       "next": "Next",
       "submitQuiz": "Submit Quiz"
     },
-    "activity_complete_screen": {
-      "attemptsLeftBanner": {
-        "one": "You have {} attempt left",
-        "other": "You have {} attempts left"
-      },
-      "tryAgainWithAttempts": {
-        "one": "Try Again ({} attempt left)",
-        "other": "Try Again ({} attempts left)"
-      }
-    },
     "task_result_sheet": {
       "practiceRoundNote": "This is a practice round — it won't count against your score. Take another look and try again!",
-      "youSaid": "You said:"
+      "almostPerfectMissedWord": "Almost perfect! You missed one word",
+      "almostPerfectPronunciation": "Almost perfect! Practice how to say this word",
+      "almostPerfectClarity": "Almost perfect! I understood you, but say it more clearly",
+      "practiceInOrange": "In orange: words to practice"
     },
     "exit_task_dialog": {
       "title": "Quit this activity?",
@@ -673,14 +718,11 @@
       "confirmPasswordValidation": "Please confirm your new password"
     },
     "register_screen": {
-      "adminExists": "An administrator account already exists.",
-      "accountCreatedAs": "Account created as {role}",
       "emailAlreadyRegistered": "This email is already registered.",
       "weakPassword": "Password is too weak.",
       "invalidEmailFormat": "Invalid email format.",
       "registrationFailed": "Registration failed",
       "signUpSubtitle": "Sign up to Loringo",
-      "registeringAsAdmin": "Registering as Administrator",
       "iAmA": "I am a…",
       "createAccountButton": "Create Account",
       "alreadyHaveAccount": "Already have an account? ",
@@ -774,16 +816,19 @@
     "admin_navigation_screen": {
       "imageManagerLabel": "IMAGE MANAGER",
       "dashboard": "Dashboard",
-      "images": "Images",
+      "images": "Media Library",
       "imageManagerTitle": "Image Manager",
       "manageImages": "Manage Images",
       "manageEducationalImages": "Manage Educational Images"
     },
     "admin_images_screen": {
+      "title": "Media Library",
       "newCategory": "New Category",
+      "editCategory": "Edit Category",
       "categoryNameLabel": "Category name",
       "categoryNameHint": "e.g. \"Animals\"",
       "categoryCreated": "Category \"{name}\" created",
+      "categoryUpdated": "Category renamed to \"{name}\"",
       "deleteCategory": "Delete Category",
       "deletePrefix": "Delete ",
       "deleteSuffix": " and all its images?\n",
@@ -823,6 +868,20 @@
       "addImages": "Add Images",
       "noImagesYet": "No Images Yet",
       "uploadImagesToCategoryMsg": "Upload images to this category to get started",
+      "markForDelete": "Mark for deletion",
+      "replaceImage": "Replace with a new image",
+      "undoChange": "Undo change",
+      "markedForDelete": "Will be deleted",
+      "fileReadError": "Couldn't read the selected file",
+      "confirmChangesButton": "Confirm ({count})",
+      "confirmChangesTitle": "Confirm Changes",
+      "confirmChangesMsg": "{deleted} image(s) will be deleted and {replaced} will be replaced. The previous files will be permanently removed; tasks that used them will no longer show them.",
+      "deletedCount": "{count} removed",
+      "replacedCount": "{count} replaced",
+      "applyingChanges": "Applying changes...",
+      "discardChangesTitle": "Discard Changes?",
+      "discardChangesMsg": "You have changes that haven't been confirmed. If you leave, they'll be lost.",
+      "discard": "Discard",
       "uploadImages": "Upload Images"
     },
     "admin_upload_image_screen": {
@@ -926,6 +985,13 @@
       "latest": "latest"
     },
     "parent_child_activity_status_screen": {
+      "quizAvailableNow": "Available now",
+      "activityBadge": "ACTIVITY",
+      "lessonQuizBadge": "LESSON QUIZ",
+      "unitQuizBadge": "UNIT QUIZ",
+      "reportSent": "Report sent",
+      "reportPending": "Report pending",
+      "viewResult": "View result",
       "titleActivities": "{name}'s Activities",
       "filterUpcoming": "Upcoming",
       "filterPastDue": "Past Due",
@@ -982,7 +1048,8 @@
       "yourChild": "Your child",
       "invalidCode": "Invalid group code",
       "groupNotAccepting": "This group is no longer accepting new students",
-      "joinedGroup": "{name} joined the group: {group}"
+      "joinedGroup": "{name} joined the group: {group}",
+      "childAlreadyInGroup": "{name} is already in the group: {group}"
     },
     "parent_register_child_screen": {
       "noAuthUser": "No authenticated user found",
@@ -1044,6 +1111,13 @@
     }
   },
   "teacher": {
+    "league_xp_notice": {
+      "noCampaign": "No active league campaign",
+      "noCampaignHint": "Students will still earn Total XP, but it won't count toward league rankings.",
+      "createCampaign": "Create campaign",
+      "active": "Counts toward the league",
+      "activeUntil": "Counts toward the league until {date}"
+    },
     "teacher_home_screen": {
       "drawerTitle": "Teacher Panel",
       "myGroups": "My Groups",
@@ -1078,7 +1152,7 @@
       "teacherFeedback": "Teacher Feedback",
       "feedbackHint": "Write an internal note about this activity...",
       "feedbackConfirmedNote": "Feedback confirmed — can no longer be edited.",
-      "feedbackVisibleNote": "Visible only to teachers — not sent to the parent.",
+      "feedbackVisibleNote": "The parent will be able to see this feedback.",
       "feedbackConfirmedButton": "Feedback Confirmed",
       "saveFeedback": "Save Feedback",
       "bestScore": "Best score: {score}%",
@@ -1130,7 +1204,7 @@
       "teacherFeedback": "Teacher Feedback",
       "feedbackHint": "Write an internal note about this quiz attempt...",
       "feedbackConfirmedNote": "Feedback confirmed — can no longer be edited.",
-      "feedbackVisibleNote": "Visible only to teachers — not sent to the parent. Lesson Quiz is formative and never generates a parent report.",
+      "feedbackVisibleNote": "The parent will be able to see this feedback. Lesson Quiz is formative and doesn't generate a report.",
       "feedbackConfirmedButton": "Feedback Confirmed",
       "saveFeedback": "Save Feedback"
     },
@@ -1157,11 +1231,13 @@
       "backToMyGroups": "Back to My Groups"
     },
     "teacher_image_screen": {
-      "title": "Image Categories",
+      "title": "Media Library",
       "newCategory": "New Category",
+      "editCategory": "Edit Category",
       "categoryNameLabel": "Category name",
       "categoryNameHint": "e.g. \"Animals\"",
       "categoryCreated": "Category \"{name}\" created",
+      "categoryUpdated": "Category renamed to \"{name}\"",
       "deleteCategory": "Delete Category",
       "deletePrefix": "Delete ",
       "deleteSuffix": " and all its images?\n",
@@ -1177,6 +1253,18 @@
       "title": "League & Ranking",
       "rankingTab": "Ranking",
       "rewardsTab": "Rewards",
+      "historyTab": "History",
+      "firstPlaceReward": "1st place wins: {reward}",
+      "noHistoryYet": "No finished seasons yet",
+      "noHistoryHint": "When a campaign ends, its winners and prizes will appear here.",
+      "allGroups": "All groups",
+      "studentsCount": {
+        "one": "{} student",
+        "other": "{} students"
+      },
+      "winnersTitle": "Winners",
+      "noWinners": "No prizes were won this season",
+      "topThreeTitle": "Top 3 per league",
       "noGroupsYet": "No groups yet",
       "noGroupsRankingHint": "Create a group to see the ranking",
       "noGroupsRewardsHint": "Create a group first to configure league rewards",
@@ -1212,19 +1300,11 @@
     "teacher_content_editor_screen": {
       "title": "My Content",
       "newContent": "New Content",
-      "noBookmarksYet": "No bookmarks yet",
-      "continueLabel": "Continue",
-      "bookmarksCount": "{count} Bookmarks",
-      "content": "Content",
-      "unit": "Unit",
-      "lesson": "Lesson",
-      "activity": "Activity",
-      "task": "Task",
-      "bookmarks": "Bookmarks",
-      "pickUpWhereLeftOff": "Pick up where you left off",
+      "archivedTooltip": "Archived",
+      "archivedScreenTitle": "Archived Content",
       "assignToGroups": "Assign to Groups",
       "archiveContentTitle": "Archive Content",
-      "archiveContentMsg": "Archive \"{title}\"? This is untouched by group archiving -- you can unarchive it anytime.",
+      "archiveContentMsg": "Archive \"{title}\"? You can unarchive it anytime.",
       "unarchiveContentTitle": "Unarchive Content",
       "unarchiveContentMsg": "Unarchive \"{title}\"?",
       "assignGroups": "Assign groups",
@@ -1237,11 +1317,16 @@
       "contentDeleted": "Content deleted",
       "contentUpdated": "Content updated",
       "group": "Group",
-      "assignToOne": "Would you like to assign to {names}?",
-      "assignToMany": "Would you like to assign to these groups: {names}?",
-      "unassignFromOne": "This will also unassign from {names}.",
-      "unassignFromMany": "This will also unassign from these groups: {names}.",
+      "assignToOne": "Students in {names} will get access to this content.",
+      "assignToMany": "Students in these groups will get access to this content: {names}.",
+      "unassignFromOne": "Students in {names} will no longer have access to this content.",
+      "unassignFromMany": "Students in these groups will no longer have access to this content: {names}.",
       "confirmAssignment": "Confirm Assignment",
+      "assignGroupTitle": "Assign this content to the group?",
+      "assignGroupsTitle": "Assign this content to these groups?",
+      "unassignGroupTitle": "Remove content from the group?",
+      "cannotUnassignTitle": "This content can't be removed",
+      "cannotUnassignMsg": "One or more students in this group have already started this content. To protect their progress, it can't be removed from the group.",
       "selectGroupsAccess": "Select which groups can access this content",
       "noGroupsFound": "No groups found",
       "alreadyHaveProgress": "Students already have progress — can't be unassigned",
@@ -1285,7 +1370,9 @@
       "tapToCreateFirstUnit": "Tap + to create your first unit",
       "createFirstUnit": "Create First Unit",
       "tapToViewLessons": "Tap to view lessons",
-      "addUnit": "Add Unit"
+      "addUnit": "Add Unit",
+      "unitsTab": "Units",
+      "summativeQuizTab": "Summative Quiz"
     },
     "create_unit_screen": {
       "unitUpdatedSuccess": "Unit updated successfully!",
@@ -1311,7 +1398,16 @@
       "tapToCreateFirstLesson": "Tap + to create your first lesson",
       "createFirstLesson": "Create First Lesson",
       "tapToViewActivities": "Tap to view activities",
-      "addLesson": "Add Lesson"
+      "addLesson": "Add Lesson",
+      "lessonsTab": "Lessons",
+      "formativeQuizTab": "Formative Quiz"
+    },
+    "teacher_content_structure_screen": {
+      "viewActivities": "Activities",
+      "evaluationsTab": "Quizzes",
+      "unitHeader": "Unit {order}",
+      "lessonHeader": "Lesson {order}",
+      "noQuizzesYet": "Create a Unit to start adding quizzes"
     },
     "create_lesson_screen": {
       "lessonUpdated": "Lesson updated",
@@ -1329,6 +1425,7 @@
     },
     "teacher_activity_editor_screen": {
       "reorderActivitiesTitle": "Reorder Activities",
+      "thisActivity": "this activity",
       "reorderActivitiesMsg": "Move \"{title}\" to position {position}?",
       "activities": "Activities",
       "noActivitiesYet": "No Activities Yet",
@@ -1719,12 +1816,9 @@
       "noImagesSubtitle": "Upload images to this category to get started",
       "uploadImages": "Upload Images"
     },
-    "continue_bookmark_button": {
-      "savedSnackbar": "Saved — pick up here later from My Content",
-      "bookmarkTooltip": "Bookmark this — continue here later"
-    },
     "teacher_image_tile": {
-      "untitled": "Untitled"
+      "untitled": "Untitled",
+      "markedForDelete": "Will be deleted"
     },
     "teacher_uploading_view": {
       "uploadingImages": "Uploading Images…",
@@ -1919,9 +2013,11 @@
     },
     "invite_student_modal": {
       "title": "Invite Student",
+      "revealCodeHint": "Confirm it's you to view and share the group code",
+      "viewCode": "View Code",
       "shareCodeHint": "Share this code with your students",
       "groupCodeLabel": "Group Code",
-      "copyCode": "Copy Code",
+      "tapToCopy": "Tap to copy",
       "or": "OR",
       "sendDirectInvitation": "Send Direct Invitation",
       "enterParentEmail": "Enter parent's email to send a group invitation",
@@ -1962,7 +2058,7 @@
       "lessonQuizCreated": "Lesson Quiz created successfully",
       "quizCreated": "Quiz created successfully",
       "lessonQuizFor": "Lesson Quiz for: {name}",
-      "unitTestFor": "Unit Test for: {name}",
+      "unitTestFor": "Unit Quiz for: {name}",
       "passingScore": "Passing Score",
       "passingScoreHelp": "Students must answer at least this many questions correctly to pass",
       "xpReward": "XP Reward",
@@ -2025,6 +2121,7 @@
       "review": "Review",
       "unknownQuiz": "Unknown Quiz",
       "deletedQuiz": "Deleted Quiz",
+      "unknownActivity": "Activity",
       "errorLoadingQuiz": "Error loading quiz",
       "noQuizzesInUnit": "No quizzes taken yet in this unit",
       "noQuizzesYet": "No quizzes taken yet",
@@ -2069,7 +2166,20 @@
         "other": "{} Images"
       },
       "scrollToLoadMore": "Scroll to load more",
-      "addImages": "Add Images"
+      "addImages": "Add Images",
+      "markForDelete": "Mark for deletion",
+      "replaceImage": "Replace with a new image",
+      "undoChange": "Undo change",
+      "fileReadError": "Couldn't read the selected file",
+      "confirmChangesButton": "Confirm ({count})",
+      "confirmChangesTitle": "Confirm Changes",
+      "confirmChangesMsg": "{deleted} image(s) will be deleted and {replaced} will be replaced. The previous files will be permanently removed; tasks that used them will no longer show them.",
+      "deletedCount": "{count} removed",
+      "replacedCount": "{count} replaced",
+      "applyingChanges": "Applying changes...",
+      "discardChangesTitle": "Discard Changes?",
+      "discardChangesMsg": "You have changes that haven't been confirmed. If you leave, they'll be lost.",
+      "discard": "Discard"
     },
     "teacher_upload_image_screen": {
       "onlyPngSvgWebp": "Only PNG, SVG, and WebP files are accepted",

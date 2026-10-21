@@ -208,6 +208,13 @@ class _ScreenSixState extends State<ScreenSix> with SingleTickerProviderStateMix
         _errorMessage = null;
       });
 
+      // Warm every word's audio now, so the first correct match doesn't
+      // wait on the Cloud Function round trip before it can speak.
+      TaskTtsService.prefetch(
+        validPairs.map((p) => p.english),
+        voice: TtsVoiceDefaults.defaultEnglish,
+      );
+
       debugPrint('ScreenSix loaded ${validPairs.length} pairs');
     } catch (e, stackTrace) {
       debugPrint('ScreenSix ERROR: $e');

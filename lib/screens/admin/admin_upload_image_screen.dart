@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/moderation_switch.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/admin/widgets/admin_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -44,6 +45,16 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
 
   List<Map<String, dynamic>> _selectedFiles = [];
   bool _isUploading = false;
+  // "Moderación automática" switch of the preview sheet. ON by default; it is
+  // only a request to skip Google Vision — the server decides (see
+  // ImageService.uploadToCloudinary's moderationEnabled).
+  final ValueNotifier<bool> _moderationEnabled = ValueNotifier<bool>(true);
+
+  @override
+  void dispose() {
+    _moderationEnabled.dispose();
+    super.dispose();
+  }
   int _uploadedCount = 0;
   int _totalCount = 0;
   bool _isDragging = false;
@@ -226,6 +237,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _PreviewSheet(
+        moderationEnabled: _moderationEnabled,
         selectedFiles: _selectedFiles,
         onSelectMore: _selectMoreImages,
         onRemove: (i) {
@@ -371,6 +383,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
         final result = await _imageService.uploadToCloudinary(
           file,
           categoryName: widget.categoryName,
+          moderationEnabled: _moderationEnabled.value,
         );
         if (result['success'] != true) {
           if (result['reason'] == 'REJECT_INAPPROPRIATE_IMAGE') {
@@ -386,6 +399,7 @@ class _AdminUploadImageScreenState extends State<AdminUploadImageScreen> {
             imageUrl: result['secure_url'] as String,
             cloudinaryPublicId: result['public_id'] as String,
             fileExtension: ext,
+            isModerated: result['moderationApplied'] == true,
           );
           success++;
         }
@@ -823,11 +837,13 @@ class _UploadingView extends StatelessWidget {
 // ── Preview sheet ─────────────────────────────────────────────────────────────
 
 class _PreviewSheet extends StatelessWidget {
+  final ValueNotifier<bool> moderationEnabled;
   final List<Map<String, dynamic>> selectedFiles;
   final void Function(int) onRemove;
   final VoidCallback onClearAll, onUpload, onSelectMore;
 
   const _PreviewSheet({
+    required this.moderationEnabled,
     required this.selectedFiles,
     required this.onRemove,
     required this.onClearAll,
@@ -1086,6 +1102,7 @@ class _PreviewSheet extends StatelessWidget {
                 },
               ),
             ),
+            ModerationSwitch(enabled: moderationEnabled),
             Padding(
               padding: EdgeInsets.fromLTRB(
                 AppSpacing.md,

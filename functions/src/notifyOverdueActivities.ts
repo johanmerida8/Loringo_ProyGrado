@@ -144,9 +144,15 @@ export const notifyOverdueActivities = onSchedule(
     // mirrors the same shape, one entry per parent instead of teacher.
     const teachersToNotify = new Map<string, Set<string>>();
     const parentsToNotify = new Map<string, Set<string>>();
+    // Same recipients -> the dedup keys of the pairs each one's
+    // notification summarizes (stored on the notification doc itself, see
+    // the dedup check in the student loop below).
+    const teacherKeys = new Map<string, string[]>();
+    const parentKeys = new Map<string, string[]>();
 
     for (const activityDoc of overdueSnap.docs) {
       const activityId = activityDoc.id;
+      const dueMillis = (activityDoc.data().dueDate as Timestamp).toMillis();
       const activityTitle = (activityDoc.data().title as string | undefined) ?? "an activity";
       // closeDate >= dueDate is enforced client-side (turn_in_widget.dart),
       // so reaching this loop at all already implies dueDate has passed;
@@ -200,15 +206,26 @@ export const notifyOverdueActivities = onSchedule(
         const isCompleted = progressDoc.exists && progressDoc.data()?.isCompleted === true;
         if (isCompleted) continue;
 
-        // Dedup: skip pairs already flagged to this teacher on a
-        // previous run, so staying overdue doesn't re-notify every
-        // day. Marker lives on the (possibly not-yet-existent)
-        // progress doc itself, since that's the natural per-student
-        // per-activity record — merge:true creates it if absent
-        // without touching completion fields.
+        // Dedup: skip pairs already flagged on a previous run, so staying
+        // overdue doesn't re-notify every day. The record of "already
+        // notified" lives on the notification docs themselves
+        // (`dedupKeys`), not on the student's progress doc — writing a
+        // marker there created a progress doc for students who never
+        // started the activity, which the app then mistook for a retry.
+        // The key carries the due date, so moving the due date makes a
+        // new key and re-arms the alert without any reset step.
+        // overdueNotifiedAt on the progress doc is the legacy marker,
+        // still honored until old ones are cleaned up.
         if (progressDoc.exists && progressDoc.data()?.overdueNotifiedAt) {
           continue;
         }
+        const dedupKey = `${studentId}_${activityId}_overdue_${dueMillis}`;
+        const alreadyNotified = await db
+          .collection("notifications")
+          .where("dedupKeys", "array-contains", dedupKey)
+          .limit(1)
+          .get();
+        if (!alreadyNotified.empty) continue;
 
         const studentDoc = await db.collection("students").doc(studentId).get();
         const childName = (studentDoc.data()?.names as string | undefined) ?? "a student";
@@ -220,18 +237,15 @@ export const notifyOverdueActivities = onSchedule(
           teachersToNotify.set(teacherId, new Set());
         }
         teachersToNotify.get(teacherId)!.add(pairLabel);
+        teacherKeys.set(teacherId, [...(teacherKeys.get(teacherId) ?? []), dedupKey]);
 
         if (parentId) {
           if (!parentsToNotify.has(parentId)) {
             parentsToNotify.set(parentId, new Set());
           }
           parentsToNotify.get(parentId)!.add(pairLabel);
+          parentKeys.set(parentId, [...(parentKeys.get(parentId) ?? []), dedupKey]);
         }
-
-        await progressDoc.ref.set(
-          { overdueNotifiedAt: Timestamp.now() },
-          { merge: true }
-        );
       }
     }
 
@@ -260,6 +274,7 @@ export const notifyOverdueActivities = onSchedule(
             message: body,
             isRead: false,
             createdAt: Timestamp.now(),
+            dedupKeys: teacherKeys.get(teacherId) ?? [],
           })
           .then(() => undefined)
       );
@@ -289,6 +304,7 @@ export const notifyOverdueActivities = onSchedule(
             message: body,
             isRead: false,
             createdAt: Timestamp.now(),
+            dedupKeys: parentKeys.get(parentId) ?? [],
           })
           .then(() => undefined)
       );

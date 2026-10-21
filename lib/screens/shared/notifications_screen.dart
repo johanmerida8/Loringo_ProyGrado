@@ -14,9 +14,11 @@
 // (see functions/src/groupInvitationNotifications.ts — always sent to a
 // parentId).
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:loringo_app/components/app_loading_indicator.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
@@ -33,6 +35,10 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<Map<String, dynamic>> notifications = [];
   bool isLoading = true;
+
+  // True while a Group Invitation tap is being handled (group lookup, child
+  // dialog, join). Extra taps in that time are ignored so only one dialog opens.
+  bool _handlingInvitation = false;
   String? currentUserId;
 
   @override
@@ -124,140 +130,117 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _handleGroupInvitation(Map<String, dynamic> notification) async {
-    final data = notification['data'];
-    if (data == null) return;
+    if (_handlingInvitation) return;
+    _handlingInvitation = true;
+    try {
+      await _processGroupInvitation(notification);
+    } finally {
+      _handlingInvitation = false;
+    }
+  }
 
-    final groupCode = data['groupCode'] as String?;
-    final groupName = data['groupName'] as String?;
-
-    if (groupCode == null) return;
-
+  Future<void> _processGroupInvitation(
+      Map<String, dynamic> notification) async {
     await _markAsRead(notification['id']);
 
     if (!mounted) return;
 
-    final studentsSnapshot = await FirebaseFirestore.instance
-        .collection('students')
-        .where('parentId', isEqualTo: currentUserId)
-        .get();
-
-    final students = studentsSnapshot.docs.map((doc) {
-      final data = doc.data();
-      data['id'] = doc.id;
-      return data;
-    }).toList();
-
-    if (students.isEmpty) {
-      _showSnackBar(
-          'components.notifications_screen.noChildrenRegistered'.tr(),
-          AppColors.danger);
-      return;
-    }
-
-    // Every child is a valid candidate here, not just ungrouped ones —
-    // accepting this invitation is allowed to switch a child already in a
-    // different group, same as manually entering a group code in
-    // parent_join_group_screen.dart does. The old `groupId == null` filter
-    // blocked that entirely, permanently showing "all children already in
-    // a group" for any parent whose kid already had one, with no way to
-    // accept a new group's invitation at all.
-    final availableStudents = students;
-
-    final selectedStudentId = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.lg),
-        ),
-        title: Row(
-          children: [
-            Icon(Icons.group_add_rounded, color: AppColors.primary, size: 24),
-            const SizedBox(width: AppSpacing.sm),
-            Text('components.notifications_screen.joinGroupTitle'.tr()),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'components.notifications_screen.joinGroupPrompt'
-                  .tr(namedArgs: {'group': '$groupName'}),
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text('components.notifications_screen.selectAChild'.tr()),
-            const SizedBox(height: AppSpacing.md),
-            ...availableStudents.map((student) => ListTile(
-              leading: CircleAvatar(
-                backgroundColor: AppColors.primary.withOpacity(0.1),
-                child: Text(
-                  (student['names'] as String? ?? 'C')[0].toUpperCase(),
-                  style: TextStyle(color: AppColors.primary),
-                ),
-              ),
-              title: Text(student['names'] ?? 'common.noName'.tr()),
-              onTap: () => Navigator.pop(context, student['id']),
-            )),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('common.cancel'.tr()),
-          ),
-        ],
-      ),
-    );
-
-    if (selectedStudentId == null) return;
-
+    // The group code travels encrypted inside the notification; the server
+    // decrypts it only for the invited parent and only until it expires.
+    // The invitation only shows the code: the parent joins the child from
+    // My Children > Join Group (parent_join_group_screen.dart).
+    final Map<String, dynamic> invitation;
     try {
-      // Hashed/verified server-side — see functions/src/groupCode.ts.
-      final group = await Database().findGroupByCode(groupCode);
-
-      if (group == null) {
-        throw Exception('components.notifications_screen.groupNotFound'.tr());
-      }
-      if (group['archived'] == true) {
-        throw Exception(
-            'parent.parent_join_group_screen.groupNotAccepting'.tr());
-      }
-      final groupId = group['groupId'] as String;
-      final student = availableStudents.firstWhere(
-        (s) => s['id'] == selectedStudentId,
-      );
-
-      // Same "leaving a group" handling parent_join_group_screen.dart's
-      // manual-code-entry flow already does — marks the old membership as
-      // left (its XP/progress/reports stay in place, untouched) and starts
-      // the student fresh under the new group — so accepting an invitation
-      // switches groups exactly as cleanly as typing the code in manually
-      // does.
-      final previousGroupId = student['groupId'] as String?;
-      await Database().switchGroup(
-        studentId: selectedStudentId,
-        oldGroupId: (previousGroupId != null && previousGroupId.isNotEmpty)
-            ? previousGroupId
-            : null,
-        newGroupId: groupId,
-      );
-
-      if (mounted) {
-        _showSnackBar(
-            'components.notifications_screen.joinedGroupSuccess'.tr(
-                namedArgs: {
-                  'name': '${student['names']}',
-                  'group': '$groupName',
-                }),
-            AppColors.success);
-        _loadNotifications();
-      }
+      invitation =
+          await Database().revealInvitationGroupCode(notification['id']);
+    } on FirebaseFunctionsException catch (e) {
+      final expired = e.code == 'failed-precondition';
+      _showSnackBar(
+          expired
+              ? 'components.notifications_screen.invitationExpired'.tr()
+              : 'common.errorWithMessage'
+                  .tr(namedArgs: {'error': '${e.message}'}),
+          expired ? AppColors.warning : AppColors.danger);
+      return;
     } catch (e) {
       _showSnackBar(
           'common.errorWithMessage'.tr(namedArgs: {'error': '$e'}),
           AppColors.danger);
+      return;
     }
+    final groupCode = invitation['groupCode'] as String;
+    final groupName = invitation['groupName'] as String;
+
+    if (!mounted) return;
+
+    bool copied = false;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.lg),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.group_add_rounded,
+                  color: AppColors.primary, size: 24),
+              const SizedBox(width: AppSpacing.sm),
+              Text('components.notifications_screen.invitationTitle'.tr()),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                groupName,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text('components.notifications_screen.groupCodeLabel'.tr()),
+              Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      groupCode,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 3,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'components.notifications_screen.copyCode'.tr(),
+                    icon: Icon(copied ? Icons.check : Icons.copy,
+                        color: AppColors.primary),
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: groupCode));
+                      setDialogState(() => copied = true);
+                    },
+                  ),
+                ],
+              ),
+              if (copied)
+                Text(
+                  'components.notifications_screen.codeCopied'.tr(),
+                  style: TextStyle(color: AppColors.success),
+                ),
+              const SizedBox(height: AppSpacing.md),
+              Text('components.notifications_screen.invitationHowTo'.tr()),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('common.close'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showSnackBar(String message, Color color) {
@@ -441,7 +424,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                               ? Icons.group_add_rounded
                                               : type == 'quiz_report'
                                                   ? Icons.quiz_rounded
-                                                  : Icons.notifications_rounded,
+                                                  : type == 'unit_completed'
+                                                      ? Icons.emoji_events_rounded
+                                                      : Icons.notifications_rounded,
                                           color: isUnread ? AppColors.primary : AppColors.textSecondary,
                                           size: 24,
                                         ),

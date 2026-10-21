@@ -11,7 +11,7 @@ import 'package:loringo_app/providers/notification_provider.dart';
 import 'package:loringo_app/screens/parent/child_report_detail_screen.dart';
 import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
 import 'package:loringo_app/screens/parent/parent_profile_screen.dart';
-import 'package:loringo_app/screens/teacher/widgets/task_type_option.dart';
+import 'package:loringo_app/components/task_type_option.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;

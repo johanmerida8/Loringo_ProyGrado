@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/components/app_loading_indicator.dart';
-import 'package:loringo_app/screens/initials/activity_complete_screen.dart';
+import 'package:loringo_app/screens/initials/quiz_complete_screen.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -117,8 +117,8 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
       }
 
       // Calculate remaining attempts using the current _maxAttempts.
-      // Meaningless for scope: 'lesson' (maxAttempts is the fixed 99
-      // sentinel there) but harmless to compute either way — the UI
+      // Meaningless for scope: 'lesson' (a Lesson Quiz stores no
+      // maxAttempts) but harmless to compute either way — the UI
       // simply never displays it for that scope (see
       // _buildQuestionChip).
       _attemptsRemaining = _maxAttempts - _attemptsUsed;
@@ -148,8 +148,8 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     final isLessonScope = widget.lessonId != null;
 
     // Get max attempts from quiz data (default to 0). For scope:
-    // 'lesson' this is the fixed 99 sentinel create_quiz_screen.dart
-    // writes — not read as a real cap anywhere in this file anymore.
+    // 'lesson' the field doesn't exist (ungraded, unlimited retries) and
+    // isn't used as a cap anywhere in this file.
     final maxAttempts = (quizData['maxAttempts'] as num?)?.toInt() ?? 0;
 
     _maxAttempts = maxAttempts;
@@ -337,7 +337,11 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
       return;
     }
 
+    // Shows the "checking your answers" overlay (see build). It stays up
+    // until this screen is replaced by the result, so the hand-off from
+    // the last question to QuizCompleteScreen never feels abrupt.
     setState(() => _isSubmitting = true);
+    final overlayShownAt = DateTime.now();
 
     int correctCount = 0;
     for (int i = 0; i < _questions.length; i++) {
@@ -440,7 +444,11 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
       }
     }
 
-    setState(() => _isSubmitting = false);
+    // Keep the overlay up for a real moment even when saving is instant
+    // (e.g. teacher preview), so it reads as a step, not a flash.
+    const minOverlay = Duration(milliseconds: 1600);
+    final shownFor = DateTime.now().difference(overlayShownAt);
+    if (shownFor < minOverlay) await Future.delayed(minOverlay - shownFor);
     if (!mounted) return;
 
     // Calculate remaining attempts — meaningless for scope: 'lesson'
@@ -461,27 +469,35 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     // attempts remain.
     final bool showRetake = _isLessonScope || (!passed && remainingAttempts > 0);
 
+    // Fade + slight scale-in instead of the default slide, continuing the
+    // overlay's motion into the result. QuizCompleteScreen owns the
+    // Lesson-vs-Unit wording (no pass/fail for Lesson Quizzes).
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
-        builder: (_) => ActivityCompleteScreen(
-          // scope: 'lesson' always shows a neutral "Complete!" — there
-          // is no passing/failing state to celebrate or soften.
-          screenTitle: _isLessonScope
-              ? 'initials.quiz_play_screen.completeTitle'.tr()
-              : (passed
-                  ? 'initials.quiz_play_screen.quizPassedTitle'.tr()
-                  : 'initials.quiz_play_screen.quizCompleteTitle'.tr()),
-          activityTitle: widget.quizTitle,
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 550),
+        pageBuilder: (_, __, ___) => QuizCompleteScreen(
+          quizTitle: widget.quizTitle,
+          isLessonQuiz: _isLessonScope,
+          passed: passed,
           scorePercent: scorePercent,
           correctAnswers: correctCount,
           wrongAnswers: totalQ - correctCount,
           xpEarned: xpEarned,
-          isGraded: !_isLessonScope,
           onRetake: showRetake ? (ctx) => _onRetakeQuiz(ctx) : null,
           attemptsRemaining: _isLessonScope ? 0 : (remainingAttempts > 0 ? remainingAttempts : 0),
-          maxAttempts: _isLessonScope ? 0 : _maxAttempts,
         ),
+        transitionsBuilder: (_, animation, __, child) {
+          final curved =
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+          return FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween(begin: 0.94, end: 1.0).animate(curved),
+              child: child,
+            ),
+          );
+        },
       ),
     );
   }
@@ -538,7 +554,9 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
       onRequestExit: _handleClose,
       child: Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      body: Column(
+      body: Stack(
+        children: [
+      Column(
         children: [
           _buildHeader(context),
           Expanded(
@@ -689,6 +707,10 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
           ),
         ],
       ),
+          // Bridge between the last question and the result screen.
+          if (_isSubmitting) const QuizCheckingOverlay(),
+        ],
+      ),
       ),
     );
   }
@@ -739,7 +761,7 @@ class _QuizPlayScreenState extends State<QuizPlayScreen> {
     final primary = AppColors.primary;
 
     // Attempts pip only makes sense for scope: 'unit' — Lesson Quiz has
-    // no real cap to show (maxAttempts is the fixed 99 sentinel there).
+    // no cap to show (it stores no maxAttempts).
     final showAttempts = !widget.isPreview &&
         !_isLoadingAttempts &&
         !_isLessonScope &&

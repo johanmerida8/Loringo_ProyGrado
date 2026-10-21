@@ -1,8 +1,11 @@
 // functions/src/activityUpdatedNotifications.ts
 //
-// Firestore onUpdate trigger: notifies the parent when a teacher edits an
-// activity that already exists -- title, XP reward, difficulty, or any of
-// the three turn-in dates (scheduledDate/dueDate/closeDate). Deliberately
+// Firestore onUpdate trigger: notifies the parent when a teacher moves an
+// existing activity's DUE DATE or CLOSE DATE -- the only edits a parent
+// actually has to act on. Title/XP/difficulty edits used to notify too and
+// were pure noise; they're ignored now. A scheduledDate change notifies
+// nobody here (notifyScheduledActivities announces the activity when it
+// actually opens) but still resets its marker below. Deliberately
 // separate from activityCreatedNotifications.ts's onCreate trigger: "this
 // activity now exists" and "this activity changed" are different events,
 // and conflating them would mean a parent who already saw the create
@@ -18,12 +21,13 @@
 // should trip a parent-facing "updated" notification, so this only fires
 // when one of WATCHED_FIELDS actually changed value.
 //
-// MARKER RESET: if dueDate/closeDate/scheduledDate actually moved, this
-// also clears whichever dedup marker that date's own notifier uses
-// (closingSoonNotifiedAt / overdueNotifiedAt / scheduledNotificationSentAt)
-// -- otherwise a date already notified once under its OLD value would
-// stay silently marked "already notified" forever after being edited,
-// even though the new value hasn't been announced to anyone yet.
+// MARKER RESET: only scheduledDate needs one -- its scheduledNotificationSent
+// At marker lives on the activity doc, so a moved scheduledDate clears it.
+// dueDate/closeDate need none: the overdue and closing-soon notifiers dedupe
+// with a key that includes the date (notifications.dedupKeys), so a moved
+// date is simply a new key. (These used to write a marker onto every
+// student's progress doc here, which created empty progress docs for
+// students who hadn't started the activity.)
 
 import { onDocumentUpdated } from "firebase-functions/firestore";
 import * as logger from "firebase-functions/logger";
@@ -33,9 +37,26 @@ import { getFirestore, Timestamp, DocumentData } from "firebase-admin/firestore"
 const ONESIGNAL_APP_ID = defineSecret("ONESIGNAL_APP_ID");
 const ONESIGNAL_REST_API_KEY = defineSecret("ONESIGNAL_REST_API_KEY");
 
-const WATCHED_FIELDS = [
-  "title", "xpBase", "difficulty", "scheduledDate", "dueDate", "closeDate",
-] as const;
+// Date fields whose change matters at all...
+const WATCHED_FIELDS = ["scheduledDate", "dueDate", "closeDate"] as const;
+// ...and the subset that's worth a push to the parent.
+const NOTIFY_FIELDS = ["dueDate", "closeDate"] as const;
+
+/**
+ * Formats a Timestamp as e.g. "Oct 12" in the app's timezone, for the
+ * push body. Null/absent dates render as null so the caller can say the
+ * date was removed instead.
+ * @param {unknown} value A Firestore Timestamp, or anything else.
+ * @return {string | null} The short date, or null if not a Timestamp.
+ */
+function shortDate(value: unknown): string | null {
+  if (!(value instanceof Timestamp)) return null;
+  return value.toDate().toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "America/La_Paz",
+  });
+}
 
 /**
  * Sends one OneSignal push to a single parent -- same shape as every
@@ -107,11 +128,12 @@ export const notifyActivityUpdated = onDocumentUpdated(
 
     const changed = WATCHED_FIELDS.filter((f) => fieldChanged(before, after, f));
     if (changed.length === 0) {
-      // Nothing a parent needs to know about changed -- e.g. this write
-      // was only a reorder relink or a dedup-marker stamp from a sibling
-      // function. Nothing to notify, nothing to reset.
+      // No date moved -- e.g. a title/XP/difficulty edit, a reorder
+      // relink or a dedup-marker stamp from a sibling function. Nothing
+      // to notify, nothing to reset.
       return;
     }
+    const notifyChanged = NOTIFY_FIELDS.filter((f) => changed.includes(f));
 
     const db = getFirestore();
     const { contentId, activityId } = event.params;
@@ -131,8 +153,7 @@ export const notifyActivityUpdated = onDocumentUpdated(
         db.collection("teacherGroups").doc(groupId).collection("students").get()
       )
     );
-    // studentId -> the group whose roster it was found under, so the
-    // per-student progress reset below can target the right nested path.
+    // studentId -> the group whose roster it was found under.
     const studentGroupIds = new Map<string, string>();
     for (let i = 0; i < groupStudentsSnaps.length; i++) {
       for (const doc of groupStudentsSnaps[i].docs) {
@@ -144,28 +165,25 @@ export const notifyActivityUpdated = onDocumentUpdated(
 
     const resets: Promise<unknown>[] = [];
 
-    // Reset the per-student dedup marker for whichever date actually
-    // moved, so the relevant hourly function re-evaluates against the
-    // NEW value on its next run instead of staying silent because of a
-    // marker already set against the old one.
-    if (changed.includes("closeDate") || changed.includes("dueDate")) {
-      for (const [studentId, studentGroupId] of studentGroupIds) {
-        const update: Record<string, unknown> = {};
-        if (changed.includes("closeDate")) update.closingSoonNotifiedAt = null;
-        if (changed.includes("dueDate")) update.overdueNotifiedAt = null;
-        resets.push(
-          db.collection("teacherGroups").doc(studentGroupId).collection("students")
-            .doc(studentId).collection("progress").doc(activityId)
-            .set(update, { merge: true })
-        );
-      }
-    }
+    // No per-student reset for dueDate/closeDate: the overdue and
+    // closing-soon notifiers dedupe with a key that includes the date
+    // itself (see notifyOverdueActivities.ts), so moving the date makes a
+    // new key and re-arms them. Resetting a marker on every student's
+    // progress doc here used to create an empty progress doc for each
+    // student who hadn't started the activity.
     // scheduledNotificationSentAt lives on the activity doc itself, not
     // per-student -- only needs one reset, not one per student.
     if (changed.includes("scheduledDate")) {
       resets.push(
         event.data!.after.ref.set({ scheduledNotificationSentAt: null }, { merge: true })
       );
+    }
+
+    // Only scheduledDate moved: markers reset, but no parent push.
+    if (notifyChanged.length === 0) {
+      await Promise.all(resets);
+      logger.info(`notifyActivityUpdated: ${activityId} -> reset [${changed.join(", ")}], no push`);
+      return;
     }
 
     // parentUserId -> childNames, same one-push-per-parent aggregation as
@@ -188,11 +206,24 @@ export const notifyActivityUpdated = onDocumentUpdated(
       return;
     }
 
-    const title = "Activity has been updated!";
+    // e.g. "Due date changed" / "\"Getting Dressed\" for Luca: now due
+    // Oct 12 · closes Oct 14."
+    const title = notifyChanged.length === 2 ?
+      "Activity dates changed" :
+      notifyChanged[0] === "dueDate" ? "Due date changed" : "Close date changed";
+    const dateParts: string[] = [];
+    if (notifyChanged.includes("dueDate")) {
+      const d = shortDate(after.dueDate);
+      dateParts.push(d ? `now due ${d}` : "no due date anymore");
+    }
+    if (notifyChanged.includes("closeDate")) {
+      const d = shortDate(after.closeDate);
+      dateParts.push(d ? `closes ${d}` : "no close date anymore");
+    }
     const sends: Promise<unknown>[] = [...resets];
     for (const [parentId, childNames] of parentsToNotify) {
       const names = Array.from(childNames).join(", ");
-      const body = `"${activityTitle}" was updated for ${names}.`;
+      const body = `"${activityTitle}" for ${names}: ${dateParts.join(" · ")}.`;
 
       sends.push(pushToParent(parentId, title, body));
       sends.push(

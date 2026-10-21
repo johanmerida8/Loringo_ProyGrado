@@ -115,6 +115,33 @@ void main() {
       expect(scoreText.style?.color, const Color(0xFFFF7043));
     });
 
+    testWidgets(
+        'ARRANGE-ACT-ASSERT: a report sent with only a feedback tag shows the tag to the parent',
+        (tester) async {
+      // ARRANGE - teacher picked "⭐ Great Work!" and wrote no comment
+      final report = {
+        ...buildReport(
+          unitTitle: 'Unit 4', quizPercent: 85, quizCorrect: 17, quizTotal: 20,
+          activitiesPercent: 100),
+        'feedbackTag': 'great_work',
+      };
+
+      // ACT
+      await pumpApp(
+        tester,
+        ChildReportDetailScreen(
+          child: const {'names': 'Laura'},
+          reports: [report],
+          formatDate: (d) => d.toString(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // ASSERT - the teacher-feedback box is shown, with the tag chip
+      expect(find.text('Teacher Feedback'), findsOneWidget);
+      expect(find.text('⭐ Great Work!'), findsOneWidget);
+    });
+
     testWidgets('ARRANGE-ACT-ASSERT: an empty reports list shows the empty state, not a crash',
         (tester) async {
       // ARRANGE & ACT

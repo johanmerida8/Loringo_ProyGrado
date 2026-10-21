@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
@@ -16,16 +15,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// default) calls `rootBundle.loadString`, which — only when awaited from
 /// inside a [LocalizationsDelegate.load] call during `pumpWidget` (i.e.
 /// inside Flutter's BuildOwner.buildScope) — never resolves on this
-/// Flutter SDK (3.44.6): confirmed by isolating the exact same
-/// `rootBundle.loadString` call in a bare `test()` (resolves instantly)
-/// versus inside a widget-tree delegate load (hangs forever, no
-/// exception, `Localizations` stays on its `SizedBox.shrink()` "still
-/// loading" placeholder — silently blanking every translated screen in
-/// every widget test using this helper). Loading synchronously via
-/// `dart:io` sidesteps that async gap entirely: `SynchronousFuture`
-/// resolves in the same microtask, before Flutter's `Localizations`
-/// widget defers the first frame, matching how `easy_localization`
-/// itself special-cases synchronous delegate futures.
+/// Flutter SDK (3.44.6): the `Localizations` widget stays on its
+/// `SizedBox.shrink()` "still loading" placeholder forever, hanging
+/// `pumpAndSettle()`. Reading the file with `dart:io` instead of
+/// `rootBundle` sidesteps that platform-channel round trip entirely.
+///
+/// IMPORTANT: this must return a plain `Future.value(data)`, NOT a
+/// `SynchronousFuture`. `easy_localization`'s
+/// `EasyLocalizationController._combineAssetLoaders` collects every
+/// loader's future into a list and awaits them with `Future.wait(...)`.
+/// When every future in that list is a `SynchronousFuture` (completes
+/// during the SAME synchronous call that creates it, before `Future.wait`
+/// finishes registering its own internal completion bookkeeping),
+/// `Future.wait` resolves with an EMPTY result list instead of the real
+/// values — a genuine synchronous-reentrancy edge case in how `Future
+/// .wait` composes already-completed futures, confirmed by instrumenting
+/// the package: the loader is called and parses the JSON correctly, but
+/// `Future.wait`'s callback still receives 0 results. The translations
+/// map then stays empty and every `.tr()` call silently returns the raw
+/// key for the rest of the test — no exception, no warning beyond an
+/// easy_localization "key not found" log easy to miss. Wrapping the same
+/// synchronously-read data in a normal `Future.value(...)` (one real
+/// microtask, not a `SynchronousFuture`) avoids that race while still
+/// resolving fast enough that `pumpAndSettle()` never hangs.
 class _SyncFileAssetLoader extends AssetLoader {
   const _SyncFileAssetLoader();
 
@@ -33,7 +45,7 @@ class _SyncFileAssetLoader extends AssetLoader {
   Future<Map<String, dynamic>> load(String path, Locale locale) {
     final file = File('$path/${locale.languageCode}.json');
     final data = json.decode(file.readAsStringSync()) as Map<String, dynamic>;
-    return SynchronousFuture(data);
+    return Future.value(data);
   }
 }
 

@@ -1,7 +1,9 @@
 // admin_view_images_screen.dart
 import 'package:easy_localization/easy_localization.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/models/image_pending_op.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/admin/admin_upload_image_screen.dart';
 import 'package:loringo_app/screens/admin/widgets/admin_screen_header.dart';
@@ -38,6 +40,11 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
   int _perPage = 15;
   late ScrollController _scrollCtrl;
   bool _isNavigatingToUpload = false;
+
+  // Staged changes (imageId → op), applied together from the header's
+  // Confirm button instead of one-by-one on long-press.
+  final Map<String, ImagePendingOp> _pending = {};
+  bool _isApplying = false;
 
   @override
   void initState() {
@@ -137,22 +144,265 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
     }
   }
 
-  Future<void> _deleteImage(String imageId, String cloudinaryPublicId) async {
+  // ── Staged edits (mark for delete / replace) ──────────────────────────────
+
+  Future<void> _showImageOptions(Map<String, dynamic> image) async {
+    if (_isApplying) return;
+    final id = image['id'] as String;
+    final hasPending = _pending.containsKey(id);
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.lg)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.sm,
+              ),
+              child: Text(
+                image['name'] ?? 'common.untitled'.tr(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: AppColors.danger),
+              title: Text('admin.admin_view_images_screen.markForDelete'.tr()),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.swap_horiz_rounded,
+                color: AppColors.primary,
+              ),
+              title: Text('admin.admin_view_images_screen.replaceImage'.tr()),
+              onTap: () => Navigator.pop(ctx, 'replace'),
+            ),
+            if (hasPending)
+              ListTile(
+                leading: const Icon(Icons.undo_rounded, color: AppColors.muted),
+                title: Text('admin.admin_view_images_screen.undoChange'.tr()),
+                onTap: () => Navigator.pop(ctx, 'undo'),
+              ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'delete') {
+      setState(() => _pending[id] = ImagePendingOp.delete());
+    } else if (choice == 'undo') {
+      setState(() => _pending.remove(id));
+    } else if (choice == 'replace') {
+      final file = await _imageService.pickImage();
+      if (!mounted || file == null) return;
+      if (file.bytes == null) {
+        _showErrorSnackBar(
+            context, 'admin.admin_view_images_screen.fileReadError'.tr());
+        return;
+      }
+      setState(() => _pending[id] = ImagePendingOp.replace(file));
+    }
+  }
+
+  Future<void> _applyPending() async {
+    if (_pending.isEmpty || _isApplying) return;
+
+    final toDelete =
+        _pending.values.where((op) => op.kind == ImagePendingKind.delete).length;
+    final toReplace = _pending.length - toDelete;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.lg),
         ),
-        title: Row(
-          children: [
-            const Icon(Icons.delete_outline, color: AppColors.danger, size: 24),
-            const SizedBox(width: AppSpacing.sm + 2),
-            Text('admin.admin_view_images_screen.deleteImage'.tr(),
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-          ],
+        title: Text(
+          'admin.admin_view_images_screen.confirmChangesTitle'.tr(),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        content: Text('admin.admin_view_images_screen.imageRemovedConfirm'.tr()),
+        content: Text(
+          'admin.admin_view_images_screen.confirmChangesMsg'.tr(namedArgs: {
+            'deleted': '$toDelete',
+            'replaced': '$toReplace',
+          }),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'common.cancel'.tr(),
+              style: const TextStyle(color: AppColors.muted),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+              ),
+              elevation: 0,
+            ),
+            child: Text(
+              'common.confirm'.tr(),
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isApplying = true);
+
+    int deleted = 0;
+    int replaced = 0;
+    int rejectedContent = 0;
+    int failedTechnical = 0;
+
+    // Sequential, like the upload loop in AdminUploadImageScreen. Both
+    // paths remove the Cloudinary file too, so storage doesn't pile up —
+    // tasks that copied the old image URL will show it as broken (accepted
+    // trade-off). Ops that fail stay staged so the admin can retry or undo.
+    for (final entry in Map.of(_pending).entries) {
+      final imageId = entry.key;
+      final op = entry.value;
+      final oldPublicId = (images.firstWhere(
+                (img) => img['id'] == imageId,
+                orElse: () => const {},
+              )['cloudinaryPublicId'] as String?) ??
+          '';
+      try {
+        if (op.kind == ImagePendingKind.delete) {
+          // Cloudinary first: if it fails, the Firestore doc stays so the
+          // file is never left orphaned without a record pointing at it.
+          if (oldPublicId.isNotEmpty &&
+              !await _imageService.deleteImage(oldPublicId)) {
+            failedTechnical++;
+            continue;
+          }
+          await _db.deleteImage(widget.ownerId, widget.categoryId, imageId);
+          deleted++;
+        } else {
+          final file = op.file!;
+          final result = await _imageService.uploadToCloudinary(
+            file,
+            categoryName: widget.categoryName,
+          );
+          if (result['success'] != true) {
+            if (result['reason'] == 'REJECT_INAPPROPRIATE_IMAGE') {
+              rejectedContent++;
+            } else {
+              failedTechnical++;
+            }
+            continue;
+          }
+          await _db.replaceImage(
+            ownerId: widget.ownerId,
+            categoryId: widget.categoryId,
+            imageId: imageId,
+            imageUrl: result['secure_url'] as String,
+            cloudinaryPublicId: result['public_id'] as String,
+            fileExtension: file.name.split('.').last,
+            isModerated: result['moderationApplied'] == true,
+          );
+          replaced++;
+          // The new image is already saved; a failed cleanup only leaves an
+          // orphaned old file, so it isn't reported as a failure.
+          if (oldPublicId.isNotEmpty &&
+              !await _imageService.deleteImage(oldPublicId)) {
+            debugPrint('Replace: old Cloudinary file not deleted: $oldPublicId');
+          }
+        }
+        _pending.remove(imageId);
+      } catch (_) {
+        failedTechnical++;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _isApplying = false);
+    _showApplyResultSnackbar(
+      deleted: deleted,
+      replaced: replaced,
+      rejectedContent: rejectedContent,
+      failedTechnical: failedTechnical,
+    );
+    _loadImages();
+  }
+
+  void _showApplyResultSnackbar({
+    required int deleted,
+    required int replaced,
+    required int rejectedContent,
+    required int failedTechnical,
+  }) {
+    final allGood = rejectedContent == 0 && failedTechnical == 0;
+    final message = [
+      if (deleted > 0)
+        'admin.admin_view_images_screen.deletedCount'
+            .tr(namedArgs: {'count': '$deleted'}),
+      if (replaced > 0)
+        'admin.admin_view_images_screen.replacedCount'
+            .tr(namedArgs: {'count': '$replaced'}),
+      if (rejectedContent > 0)
+        'admin.admin_view_images_screen.flaggedCount'
+            .tr(namedArgs: {'count': '$rejectedContent'}),
+      if (failedTechnical > 0)
+        'admin.admin_view_images_screen.failedCount'
+            .tr(namedArgs: {'count': '$failedTechnical'}),
+    ].join(' · ');
+
+    if (allGood) {
+      _showSuccessSnackBar(context, message);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.md),
+          ),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  Future<bool> _confirmDiscardChanges() async {
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+        ),
+        title: Text(
+          'admin.admin_view_images_screen.discardChangesTitle'.tr(),
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'admin.admin_view_images_screen.discardChangesMsg'.tr(),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -172,27 +422,21 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
               elevation: 0,
             ),
             child: Text(
-              'common.delete'.tr(),
+              'admin.admin_view_images_screen.discard'.tr(),
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
         ],
       ),
     );
-    if (confirmed != true) return;
-    final deleted = await _imageService.deleteImage(cloudinaryPublicId);
-    if (!deleted) {
-      if (mounted) {
-        _showErrorSnackBar(context,
-            'admin.admin_view_images_screen.failedDeleteCloudinary'.tr());
-      }
-      return;
-    }
-    await _db.deleteImage(widget.ownerId, widget.categoryId, imageId);
-    if (mounted) {
-      _showSuccessSnackBar(
-          context, 'admin.admin_view_images_screen.imageDeleted'.tr());
-      _loadImages();
+    return discard == true;
+  }
+
+  Future<void> _handleBlockedPop() async {
+    if (_isApplying) return;
+    if (await _confirmDiscardChanges() && mounted) {
+      setState(() => _pending.clear());
+      Navigator.pop(context);
     }
   }
 
@@ -247,6 +491,21 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
     final displayed = images.take(_perPage).toList();
     final hasMore = _perPage < images.length;
 
+    return PopScope(
+      canPop: _pending.isEmpty && !_isApplying,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleBlockedPop();
+      },
+      child: Stack(
+        children: [
+          _buildScaffold(displayed, hasMore),
+          if (_isApplying) const _ApplyingOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScaffold(List<Map<String, dynamic>> displayed, bool hasMore) {
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       body: Column(
@@ -255,6 +514,32 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
             title: widget.categoryDisplayName,
             subtitle: 'admin.admin_view_images_screen.imageCount'
                 .plural(images.length),
+            // maybePop routes through the PopScope above, so pending
+            // changes get the same discard prompt as the system back.
+            onBack: () => Navigator.maybePop(context),
+            trailing: _pending.isEmpty
+                ? null
+                : ElevatedButton.icon(
+                    onPressed: _isApplying ? null : _applyPending,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.onPrimary,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md - 2,
+                        vertical: AppSpacing.sm,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                      ),
+                      elevation: 0,
+                    ),
+                    icon: const Icon(Icons.check_rounded, size: 18),
+                    label: Text(
+                      'admin.admin_view_images_screen.confirmChangesButton'
+                          .tr(namedArgs: {'count': '${_pending.length}'}),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
           ),
           Expanded(
             child: isLoading
@@ -354,10 +639,9 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
                           delegate: SliverChildBuilderDelegate(
                             (_, i) => _ImageTile(
                               image: displayed[i],
-                              onDelete: () => _deleteImage(
-                                displayed[i]['id'],
-                                displayed[i]['cloudinaryPublicId'] ?? '',
-                              ),
+                              pendingOp: _pending[displayed[i]['id']],
+                              onLongPress: () =>
+                                  _showImageOptions(displayed[i]),
                             ),
                             childCount: displayed.length,
                           ),
@@ -409,23 +693,25 @@ class _AdminViewImagesScreenState extends State<AdminViewImagesScreen> {
 
 // ── Image tile ────────────────────────────────────────────────────────────────
 
-class _ImageTile extends StatefulWidget {
+class _ImageTile extends StatelessWidget {
   final Map<String, dynamic> image;
-  final VoidCallback onDelete;
+  final ImagePendingOp? pendingOp;
+  final VoidCallback onLongPress;
 
-  const _ImageTile({required this.image, required this.onDelete});
-
-  @override
-  State<_ImageTile> createState() => _ImageTileState();
-}
-
-class _ImageTileState extends State<_ImageTile> {
-  bool _showDelete = false;
+  const _ImageTile({
+    required this.image,
+    required this.pendingOp,
+    required this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final replacement =
+        pendingOp?.kind == ImagePendingKind.replace ? pendingOp!.file : null;
+    final markedForDelete = pendingOp?.kind == ImagePendingKind.delete;
+
     return GestureDetector(
-      onLongPress: () => setState(() => _showDelete = !_showDelete),
+      onLongPress: onLongPress,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -434,20 +720,27 @@ class _ImageTileState extends State<_ImageTile> {
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.grey[100],
-                border: Border.all(color: AppColors.divider),
-              ),
-              child: Image.network(
-                widget.image['displayUrl'] ?? widget.image['imageUrl'],
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  color: Colors.grey[300],
-                  child: const Icon(
-                    Icons.broken_image,
-                    color: AppColors.muted,
-                    size: 32,
-                  ),
+                border: Border.all(
+                  color: replacement != null
+                      ? AppColors.primary
+                      : AppColors.divider,
+                  width: replacement != null ? 2 : 1,
                 ),
               ),
+              child: replacement != null
+                  ? _ReplacementPreview(file: replacement)
+                  : Image.network(
+                      image['displayUrl'] ?? image['imageUrl'],
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.grey[300],
+                        child: const Icon(
+                          Icons.broken_image,
+                          color: AppColors.muted,
+                          size: 32,
+                        ),
+                      ),
+                    ),
             ),
           ),
           Positioned(
@@ -467,7 +760,7 @@ class _ImageTileState extends State<_ImageTile> {
                 ),
               ),
               child: Text(
-                widget.image['name'] ?? 'common.untitled'.tr(),
+                image['name'] ?? 'common.untitled'.tr(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -478,38 +771,110 @@ class _ImageTileState extends State<_ImageTile> {
               ),
             ),
           ),
-          if (_showDelete)
+          if (replacement != null)
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Container(
+                padding: const EdgeInsets.all(AppSpacing.xs),
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.edit_rounded,
+                  color: AppColors.onPrimary,
+                  size: 14,
+                ),
+              ),
+            ),
+          if (markedForDelete)
             Positioned.fill(
-              child: GestureDetector(
-                onTap: widget.onDelete,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.danger.withOpacity(0.9),
-                    borderRadius: BorderRadius.circular(AppRadii.md - 2),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.delete_rounded,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.danger.withOpacity(0.75),
+                  borderRadius: BorderRadius.circular(AppRadii.md - 2),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.delete_rounded,
+                      color: AppColors.onPrimary,
+                      size: 28,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      'admin.admin_view_images_screen.markedForDelete'.tr(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
                         color: AppColors.onPrimary,
-                        size: 28,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        'common.delete'.tr(),
-                        style: const TextStyle(
-                          color: AppColors.onPrimary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _ReplacementPreview extends StatelessWidget {
+  final PlatformFile file;
+  const _ReplacementPreview({required this.file});
+
+  @override
+  Widget build(BuildContext context) {
+    // Image.memory can't rasterize SVG, so SVG replacements show a
+    // generic icon until they're uploaded (Cloudinary renders them then).
+    if (file.name.toLowerCase().endsWith('.svg') || file.bytes == null) {
+      return Container(
+        color: AppColors.primarySoft(0.1),
+        child: const Icon(
+          Icons.image_rounded,
+          color: AppColors.primary,
+          size: 32,
+        ),
+      );
+    }
+    return Image.memory(file.bytes!, fit: BoxFit.cover);
+  }
+}
+
+// ── Applying overlay ──────────────────────────────────────────────────────────
+
+class _ApplyingOverlay extends StatelessWidget {
+  const _ApplyingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: Material(
+        color: Colors.black.withOpacity(0.35),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppRadii.lg),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: AppColors.primary),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  'admin.admin_view_images_screen.applyingChanges'.tr(),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

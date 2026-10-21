@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
@@ -46,11 +48,65 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
   Map<String, Map<String, dynamic>> _groupInfo = {};
   bool _showGroupBadge = false;
 
+  // ── Realtime sources for the leaderboard / campaign ──────────────────
+  // Everything above used to be a one-time .get() (only the student's own
+  // XP card was a stream), so classmates' points, the tier leaderboard and
+  // the winner banner only updated after a manual pull-to-refresh. These
+  // listeners keep them live: any roster XP change, a classmate joining,
+  // or the teacher editing the campaign re-runs _recomputeLeague().
+  String? _teacherId;
+  Map<String, dynamic>? _campaign; // null = teacher has no campaign doc
+  List<String> _groupIds = [];
+  int _myXp = 0;
+  // seasonXp per student, kept per group so one group's snapshot can
+  // replace its own slice without touching the others.
+  final Map<String, Map<String, int>> _xpByGroup = {};
+  // students/{id} -> name + groupId, for every student in _groupIds.
+  Map<String, ({String name, String groupId})> _studentInfo = {};
+
+  StreamSubscription<DocumentSnapshot>? _myRosterSub;
+  StreamSubscription<DocumentSnapshot>? _campaignSub;
+  StreamSubscription<QuerySnapshot>? _studentsSub;
+  final List<StreamSubscription<QuerySnapshot>> _rosterSubs = [];
+
+  // Cached so build() doesn't open a brand-new Firestore listener on
+  // every setState (now frequent, since the leaderboard is live).
+  Stream<DocumentSnapshot>? _myRosterStream;
+  Stream<QuerySnapshot>? _progressStream;
+
   @override
   void initState() {
     super.initState();
     _loadStudentGroup();
   }
+
+  @override
+  void dispose() {
+    _cancelAll();
+    super.dispose();
+  }
+
+  void _cancelAll() {
+    _myRosterSub?.cancel();
+    _campaignSub?.cancel();
+    _cancelGroupSubs();
+  }
+
+  void _cancelGroupSubs() {
+    _studentsSub?.cancel();
+    _studentsSub = null;
+    for (final s in _rosterSubs) {
+      s.cancel();
+    }
+    _rosterSubs.clear();
+  }
+
+  DocumentReference<Map<String, dynamic>> _myRosterRef(String gid) =>
+      FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(gid)
+          .collection('students')
+          .doc(widget.studentId);
 
   Future<void> _loadStudentGroup() async {
     try {
@@ -63,11 +119,15 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
         final studentData = studentDoc.data();
         final fetchedGroupId = studentData?['groupId'] as String?;
 
-        if (fetchedGroupId != null) {
+        if (fetchedGroupId != null && mounted) {
           setState(() {
             groupId = fetchedGroupId;
+            _myRosterStream = _myRosterRef(fetchedGroupId).snapshots();
+            _progressStream = _myRosterRef(fetchedGroupId)
+                .collection('progress')
+                .snapshots();
           });
-          await _loadLeagueStatus(fetchedGroupId);
+          await _startLeagueListeners(fetchedGroupId);
         }
       }
     } catch (e) {
@@ -75,164 +135,203 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
     }
   }
 
-  Future<void> _loadLeagueStatus(String gid) async {
+  /// Pull-to-refresh: tears down and re-opens every listener. Normally
+  /// unnecessary now, kept as a manual escape hatch.
+  Future<void> _refreshLeague() async {
+    final gid = groupId;
+    if (gid == null) return;
+    _cancelAll();
+    _groupIds = [];
+    _xpByGroup.clear();
+    await _startLeagueListeners(gid);
+  }
+
+  Future<void> _startLeagueListeners(String gid) async {
     try {
-      final myRosterDoc = await FirebaseFirestore.instance
-          .collection('teacherGroups')
-          .doc(gid)
-          .collection('students')
-          .doc(widget.studentId)
-          .get();
-      if (!myRosterDoc.exists) return;
-
-      // League tier is driven by seasonXp (resets each campaign), not the
-      // lifetime `xp` field — see resetLeagueSeasons.ts.
-      final myXp = ((myRosterDoc.data()?['seasonXp'] as num?) ?? 0).toInt();
-      final myTier = tierForXp(myXp);
-      final tierKey = myTier['key'] as String;
-      final tierMin = myTier['min'] as int;
-      final tierMax = myTier['max'] as int;
-      final isLocked = myTier['rewardLocked'] as bool;
-
-      // Rewards live per-teacher now (leagueCampaigns/{teacherId}), not
-      // per-group — find this student's teacher first via their own
-      // group doc.
+      // Rewards live per-teacher (leagueCampaigns/{teacherId}), not
+      // per-group — find this student's teacher first via their group.
       final groupDoc = await FirebaseFirestore.instance
           .collection('teacherGroups')
           .doc(gid)
           .get();
-      final teacherId = groupDoc.data()?['teacherId'] as String?;
-      if (teacherId == null) return;
+      _teacherId = groupDoc.data()?['teacherId'] as String?;
+      if (_teacherId == null || !mounted) return;
 
-      final campaignDoc = await FirebaseFirestore.instance
+      // League tier is driven by seasonXp (resets each campaign), not the
+      // lifetime `xp` field — see resetLeagueSeasons.ts.
+      _myRosterSub = _myRosterRef(gid).snapshots().listen((doc) {
+        _myXp = ((doc.data()?['seasonXp'] as num?) ?? 0).toInt();
+        _recomputeLeague();
+      }, onError: (e) => debugPrint('League: my roster listener error: $e'));
+
+      _campaignSub = FirebaseFirestore.instance
           .collection('leagueCampaigns')
-          .doc(teacherId)
-          .get();
-
-      // Whether a real reward campaign applies to this student — decides
-      // the reward/duration info AND which groups feed the leaderboard.
-      // A 'single'-scope campaign targeting a different group doesn't
-      // apply at all (nothing about it is shown), but the leaderboard
-      // still falls back to just this student's own group below, so
-      // "who am I competing against" always shows something even with
-      // no campaign configured yet.
-      var applies = false;
-      var scope = 'single';
-      var groupIds = [gid];
-
-      if (campaignDoc.exists) {
-        final campaign = campaignDoc.data() as Map<String, dynamic>;
-        final campaignScope = (campaign['scope'] as String?) ?? 'all';
-        final campaignGroupId = campaign['groupId'] as String?;
-
-        if (!(campaignScope == 'single' && campaignGroupId != gid)) {
-          applies = true;
-          scope = campaignScope;
-          if (scope == 'all') {
-            final teacherGroupsSnap = await FirebaseFirestore.instance
-                .collection('teacherGroups')
-                .where('teacherId', isEqualTo: teacherId)
-                .get();
-            groupIds = teacherGroupsSnap.docs.map((d) => d.id).toList();
-          }
+          .doc(_teacherId)
+          .snapshots()
+          .listen((snap) async {
+        _campaign = snap.exists ? snap.data() : null;
+        final ids = await _resolveGroupIds(gid);
+        if (!mounted) return;
+        if ((ids.toList()..sort()).join(',') !=
+            (_groupIds.toList()..sort()).join(',')) {
+          await _subscribeGroups(ids);
         }
-      }
-
-      // Group name/color for the leaderboard's group badge — only ever
-      // shown when scope == 'all' (competing across several groups).
-      final groupDocsSnap = await Future.wait([
-        for (final id in groupIds)
-          FirebaseFirestore.instance.collection('teacherGroups').doc(id).get(),
-      ]);
-      final groupInfo = {
-        for (final doc in groupDocsSnap)
-          if (doc.exists)
-            doc.id: {
-              'name': (doc.data() as Map<String, dynamic>)['name'] ?? '',
-              'color': _parseHex(
-                  (doc.data() as Map<String, dynamic>)['color'] ?? '#4CAF50'),
-            }
-      };
-
-      // Names/groupId come from the root students collection; xp lives on
-      // each group's own roster doc — same split saveActivityCompletion
-      // writes to. Mirrors _RankingTab._loadStudents on the teacher side
-      // of teacher_league_screen.dart.
-      final results = await Future.wait([
-        FirebaseFirestore.instance
-            .collection('students')
-            .where('groupId', whereIn: groupIds)
-            .get(),
-        for (final id in groupIds)
-          FirebaseFirestore.instance
-              .collection('teacherGroups')
-              .doc(id)
-              .collection('students')
-              .where('status', isEqualTo: 'active')
-              .get(),
-      ]);
-      final studentsSnap = results.first;
-      final xpByStudentId = <String, int>{};
-      for (final rosterSnap in results.skip(1)) {
-        for (final doc in rosterSnap.docs) {
-          final d = doc.data() as Map<String, dynamic>;
-          xpByStudentId[doc.id] = ((d['seasonXp'] as num?) ?? 0).toInt();
-        }
-      }
-      final allStudents = studentsSnap.docs.map((doc) {
-        final d = doc.data();
-        return LeagueStudentEntry(
-          id: doc.id,
-          name: (d['names'] as String?) ?? (d['name'] as String?) ?? 'Student',
-          xp: xpByStudentId[doc.id] ?? 0,
-          groupId: (d['groupId'] as String?) ?? '',
-        );
-      }).toList();
-
-      final tierEntries = allStudents
-          .where((s) => s.xp >= tierMin && s.xp < tierMax)
-          .toList()
-        ..sort((a, b) => b.xp.compareTo(a.xp));
-
-      // Winner check only makes sense for an unlocked tier — Starter never
-      // has a prize to win regardless of the campaign.
-      var isWinner = false;
-      var reward = '';
-      var rewardsMap = <String, String>{};
-      DateTime? startDate;
-      DateTime? endDate;
-
-      if (applies) {
-        final campaign = campaignDoc.data() as Map<String, dynamic>;
-        final rawRewards = (campaign['rewards'] as Map<String, dynamic>?) ?? {};
-        rewardsMap = rawRewards.map(
-            (key, value) => MapEntry(key, (value as String?) ?? ''));
-        startDate = (campaign['startDate'] as Timestamp?)?.toDate();
-        endDate = (campaign['endDate'] as Timestamp?)?.toDate();
-
-        if (!isLocked) {
-          isWinner = tierEntries.isNotEmpty &&
-              tierEntries.first.id == widget.studentId;
-          reward = isWinner ? (rewardsMap[tierKey] ?? '') : '';
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _isLeagueWinner = isWinner && reward.isNotEmpty;
-          _leagueReward = reward;
-          _campaignApplies = applies;
-          _campaignStartDate = startDate;
-          _campaignEndDate = endDate;
-          _campaignRewards = rewardsMap;
-          _tierLeaderboard = tierEntries;
-          _groupInfo = groupInfo;
-          _showGroupBadge = scope == 'all';
-        });
-      }
+        _recomputeLeague();
+      }, onError: (e) => debugPrint('League: campaign listener error: $e'));
     } catch (e) {
       debugPrint('Error loading league status: $e');
     }
+  }
+
+  /// Whether the teacher's campaign applies to this student's group —
+  /// a 'single'-scope campaign targeting a different group doesn't apply
+  /// at all (nothing about it is shown).
+  bool _campaignAppliesTo(String gid) {
+    final c = _campaign;
+    if (c == null) return false;
+    final scope = (c['scope'] as String?) ?? 'all';
+    return !(scope == 'single' && c['groupId'] != gid);
+  }
+
+  String _effectiveScope(String gid) => _campaignAppliesTo(gid)
+      ? ((_campaign!['scope'] as String?) ?? 'all')
+      : 'single';
+
+  /// Which groups feed the leaderboard: every group of this teacher for
+  /// an 'all'-scope campaign, otherwise just this student's own group (so
+  /// "who am I competing against" always shows something even with no
+  /// campaign configured yet).
+  Future<List<String>> _resolveGroupIds(String gid) async {
+    if (_effectiveScope(gid) != 'all') return [gid];
+    final teacherGroupsSnap = await FirebaseFirestore.instance
+        .collection('teacherGroups')
+        .where('teacherId', isEqualTo: _teacherId)
+        .get();
+    final ids = teacherGroupsSnap.docs.map((d) => d.id).toList();
+    return ids.isEmpty ? [gid] : ids;
+  }
+
+  Future<void> _subscribeGroups(List<String> ids) async {
+    _cancelGroupSubs();
+    _groupIds = ids;
+    _xpByGroup.clear();
+    _studentInfo = {};
+
+    // Group name/color for the leaderboard's group badge — only ever
+    // shown when scope == 'all' (competing across several groups).
+    // Static enough to read once per group set.
+    final groupDocsSnap = await Future.wait([
+      for (final id in ids)
+        FirebaseFirestore.instance.collection('teacherGroups').doc(id).get(),
+    ]);
+    _groupInfo = {
+      for (final doc in groupDocsSnap)
+        if (doc.exists)
+          doc.id: {
+            'name': (doc.data() as Map<String, dynamic>)['name'] ?? '',
+            'color': _parseHex(
+                (doc.data() as Map<String, dynamic>)['color'] ?? '#4CAF50'),
+          }
+    };
+
+    // Names/groupId come from the root students collection; xp lives on
+    // each group's own roster doc — same split saveActivityCompletion
+    // writes to. Mirrors _RankingTab._loadStudents on the teacher side
+    // of teacher_league_screen.dart.
+    _studentsSub = FirebaseFirestore.instance
+        .collection('students')
+        .where('groupId', whereIn: ids)
+        .snapshots()
+        .listen((snap) {
+      _studentInfo = {
+        for (final doc in snap.docs)
+          doc.id: (
+            name: (doc.data()['names'] as String?) ??
+                (doc.data()['name'] as String?) ??
+                'Student',
+            groupId: (doc.data()['groupId'] as String?) ?? '',
+          ),
+      };
+      _recomputeLeague();
+    }, onError: (e) => debugPrint('League: students listener error: $e'));
+
+    for (final id in ids) {
+      _rosterSubs.add(FirebaseFirestore.instance
+          .collection('teacherGroups')
+          .doc(id)
+          .collection('students')
+          .where('status', isEqualTo: 'active')
+          .snapshots()
+          .listen((snap) {
+        _xpByGroup[id] = {
+          for (final doc in snap.docs)
+            doc.id: (((doc.data())['seasonXp'] as num?) ?? 0).toInt(),
+        };
+        _recomputeLeague();
+      }, onError: (e) => debugPrint('League: roster listener error: $e')));
+    }
+  }
+
+  /// Rebuilds the leaderboard, winner and campaign state from whatever the
+  /// listeners above currently hold. Pure in-memory — no reads.
+  void _recomputeLeague() {
+    final gid = groupId;
+    if (!mounted || gid == null) return;
+
+    final myTier = tierForXp(_myXp);
+    final tierKey = myTier['key'] as String;
+    final tierMin = myTier['min'] as int;
+    final tierMax = myTier['max'] as int;
+    final isLocked = myTier['rewardLocked'] as bool;
+
+    final xpByStudentId = <String, int>{
+      for (final slice in _xpByGroup.values) ...slice,
+    };
+    final tierEntries = _studentInfo.entries
+        .map((e) => LeagueStudentEntry(
+              id: e.key,
+              name: e.value.name,
+              xp: xpByStudentId[e.key] ?? 0,
+              groupId: e.value.groupId,
+            ))
+        .where((s) => s.xp >= tierMin && s.xp < tierMax)
+        .toList()
+      ..sort((a, b) => b.xp.compareTo(a.xp));
+
+    // Winner check only makes sense for an unlocked tier — Starter never
+    // has a prize to win regardless of the campaign.
+    final applies = _campaignAppliesTo(gid);
+    var isWinner = false;
+    var reward = '';
+    var rewardsMap = <String, String>{};
+    DateTime? startDate;
+    DateTime? endDate;
+
+    if (applies) {
+      final campaign = _campaign!;
+      final rawRewards = (campaign['rewards'] as Map<String, dynamic>?) ?? {};
+      rewardsMap = rawRewards.map(
+          (key, value) => MapEntry(key, (value as String?) ?? ''));
+      startDate = (campaign['startDate'] as Timestamp?)?.toDate();
+      endDate = (campaign['endDate'] as Timestamp?)?.toDate();
+
+      if (!isLocked) {
+        isWinner = tierEntries.isNotEmpty &&
+            tierEntries.first.id == widget.studentId;
+        reward = isWinner ? (rewardsMap[tierKey] ?? '') : '';
+      }
+    }
+
+    setState(() {
+      _isLeagueWinner = isWinner && reward.isNotEmpty;
+      _leagueReward = reward;
+      _campaignApplies = applies;
+      _campaignStartDate = startDate;
+      _campaignEndDate = endDate;
+      _campaignRewards = rewardsMap;
+      _tierLeaderboard = tierEntries;
+      _showGroupBadge = _effectiveScope(gid) == 'all';
+    });
   }
 
   static Color _parseHex(String hex) {
@@ -257,21 +356,10 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
         child: groupId == null
             ? const Center(child: CircularProgressIndicator())
             : StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('teacherGroups')
-              .doc(groupId)
-              .collection('students')
-              .doc(widget.studentId)
-              .snapshots(),
+          stream: _myRosterStream,
           builder: (context, studentSnap) {
             return StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('teacherGroups')
-                  .doc(groupId)
-                  .collection('students')
-                  .doc(widget.studentId)
-                  .collection('progress')
-                  .snapshots(),
+              stream: _progressStream,
               builder: (context, progressSnap) {
                 // Total XP is lifetime — only ever grows, feeds just the
                 // Total XP stat card. League tier/progress below is driven
@@ -314,7 +402,7 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
                 final String tierReward = _campaignRewards[leagueKey] ?? '';
 
                 return RefreshIndicator(
-                  onRefresh: () => _loadLeagueStatus(groupId!),
+                  onRefresh: _refreshLeague,
                   child: SingleChildScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.symmetric(
@@ -687,7 +775,7 @@ class _StudentLeagueTabState extends State<StudentLeagueTab> {
 
   /// "Who am I competing against?" — every student sharing the current
   /// tier, scoped to just this student's group or every group this
-  /// teacher has (see _loadLeagueStatus / _showGroupBadge). The league
+  /// teacher has (see _subscribeGroups / _showGroupBadge). The league
   /// chip above this list already identifies the tier, so this only
   /// renders the rows themselves.
   Widget _buildLeaderboard(Color leagueColor) {

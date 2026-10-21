@@ -136,7 +136,7 @@ class _ScreenElevenState extends State<ScreenEleven> with RetryableTask {
     // of the student's pick, so it's right even on a wrong answer.
     //
     // BUGFIX: this task's editor (SoundMatchTask in
-    // screens/teacher/task_types/sound_match_task.dart) stores each
+    // screens/teacher/content/task_types/sound_match_task.dart) stores each
     // option's display name under the key 'label', not 'text' —
     // 'options': [{'label': ..., 'image': ..., 'isCorrect': ...}].
     // Reading option['text'] here always returned null/empty regardless

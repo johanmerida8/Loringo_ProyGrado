@@ -6,7 +6,13 @@ import 'package:flutter/foundation.dart';
 import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/utils/access_code_cipher.dart';
 import 'package:loringo_app/utils/access_code_hasher.dart';
-import 'package:loringo_app/utils/privacy_policy.dart';
+
+/// Thrown by [Database.joinGroup] when the student already belongs to the
+/// group — joining again would wipe their XP.
+class AlreadyInGroupException implements Exception {
+  @override
+  String toString() => 'Student is already in this group';
+}
 
 class Database {
   final FirebaseFirestore _db;
@@ -20,8 +26,8 @@ class Database {
 
   CollectionReference get users => _db.collection('users');
 
-  /// Whether an image_manager account already exists — the single-admin
-  /// cap is enforced against this same check from two places: here
+  /// Whether an image_manager account already exists — the single
+  /// image_manager cap is enforced against this same check from two places: here
   /// (inside createUser, the last line of defense) and from
   /// register_screen.dart _before_ the Firebase Auth account is even
   /// created, so a blocked attempt never leaves behind an authenticated
@@ -36,8 +42,14 @@ class Database {
 
   /// [privacyPolicyAccepted] must be true — the caller (register_screen.dart)
   /// gates its own submit button on the same checkbox, but this is checked
-  /// again here as the last line of defense, same reasoning as the
-  /// image_manager cap re-check just below.
+  /// again here as the last line of defense.
+  ///
+  /// [role] is never auto-promoted to 'image_manager' based on [name] —
+  /// public self-registration can only create 'teacher'/'parent' accounts,
+  /// since RegisterScreen never sends 'image_manager' as the requested
+  /// role. If a caller ever does pass role: 'image_manager' explicitly
+  /// (no path in this app's UI currently does), the single-image_manager
+  /// cap below still applies.
   Future<void> createUser({
     required String uid,
     required String name,
@@ -48,18 +60,14 @@ class Database {
     if (!privacyPolicyAccepted) {
       throw Exception('privacy_policy_not_accepted');
     }
-    String finalRole = role;
-    final nameLower = name.toLowerCase();
-    if (nameLower == 'admin' || nameLower == 'administrador') {
-      if (await imageManagerExists()) {
-        throw Exception('An image manager already exists');
-      }
-      finalRole = 'image_manager';
+    if (role == 'image_manager' && await imageManagerExists()) {
+      throw Exception('An image manager already exists');
     }
     return users.doc(uid).set({
       'name': name,
       'email': email,
-      'role': finalRole,
+      'role': role,
+      'emailVerified': false,
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
@@ -138,7 +146,8 @@ class Database {
   /// [childDataConsentAccepted] must be true — the parent's specific
   /// consent (distinct from their own account's privacy-policy acceptance
   /// in createUser) to collect this particular child's data. Checked here
-  /// as the last line of defense, same as the child-cap check below.
+  /// as the last line of defense, same as the child-cap check below. It is
+  /// only a gate: nothing about the consent is stored on the student doc.
   Future<String> createStudent({
     required String parentId,
     required String names,
@@ -160,8 +169,6 @@ class Database {
       'names': names,
       'accessCodeHash': AccessCodeHasher.hash(code),
       'accessCodeEncrypted': AccessCodeCipher.encrypt(code),
-      'childDataConsentAcceptedAt': FieldValue.serverTimestamp(),
-      'childDataConsentVersion': kPrivacyPolicyVersion,
       'avatar': avatar,
       'createdAt': FieldValue.serverTimestamp(),
     });
@@ -307,6 +314,9 @@ class Database {
     int totalAttempts = 1, bestScore = score, xpEarned;
     dynamic firstCompletedAt;
     final now = FieldValue.serverTimestamp();
+    int previousXpEarned = 0;
+    bool retryBonusAwarded = false;
+    bool payRetryBonus = false;
 
     // Tracks whether THIS attempt's score should update the stored
     // taskAnswers detail — deliberately >= (not strictly >) unlike the
@@ -322,7 +332,15 @@ class Database {
     // time (including any pre-fix data missing a field).
     bool shouldUpdateTaskAnswers = true;
 
-    if (progressDoc.exists) {
+    // A retry means this activity was already COMPLETED before — not just
+    // that a progress doc exists. A doc can exist without the student ever
+    // having done the activity (e.g. one that only carries notification
+    // markers); treating that as a retry paid the 5 XP retry bonus instead
+    // of the full first-time XP. Same rule saveQuizCompletion uses.
+    final bool wasAlreadyCompleted = progressDoc.exists &&
+        (progressDoc.data() as Map<String, dynamic>)['isCompleted'] == true;
+
+    if (wasAlreadyCompleted) {
       final data = progressDoc.data() as Map<String, dynamic>;
       totalAttempts = (data['totalAttempts'] ?? 0) + 1;
       final previousBest = (data['bestScore'] ?? 0) as int;
@@ -331,8 +349,15 @@ class Database {
       // >= here, not just isNewBest — see doc comment above on why a
       // tied score should still refresh taskAnswers.
       shouldUpdateTaskAnswers = score >= previousBest;
-      xpEarned = 5;
-      firstCompletedAt = data['firstCompletedAt'];
+      previousXpEarned = (data['xpEarned'] ?? 0) as int;
+      retryBonusAwarded = (data['retryBonusAwarded'] ?? false) as bool;
+      // The flat retry bonus can only ever be paid once per activity — the
+      // first retry that beats the original score. Any attempt after that,
+      // improving further or not, earns 0 XP, so a student can't keep
+      // farming +5 by inching their score up one point at a time.
+      payRetryBonus = isNewBest && !retryBonusAwarded;
+      xpEarned = payRetryBonus ? 5 : 0;
+      firstCompletedAt = data['firstCompletedAt'] ?? now;
     } else {
       xpEarned = (xpBase * score / 100.0).round() + bonusXP;
       firstCompletedAt = now;
@@ -367,8 +392,15 @@ class Database {
       'totalAttempts': totalAttempts,
       'bestScore': bestScore,
       'stars': stars,
-      'xpEarned': xpEarned,
+      // Running sum of every attempt's actual XP grant (first-attempt
+      // formula plus the one-time retry bonus, if/when paid) — never a
+      // raw overwrite or a max — so summing xpEarned across a student's
+      // items always matches the roster's cumulative xp/seasonXp totals.
+      'xpEarned': previousXpEarned + xpEarned,
     };
+    if (payRetryBonus) {
+      progressPayload['retryBonusAwarded'] = true;
+    }
     // Only overwrite the stored per-task detail when this attempt ties
     // or beats the previous best — a strictly worse retry's taskAnswers
     // never replace a better attempt's stored detail. On the very first
@@ -379,15 +411,21 @@ class Database {
     }
 
     await progressRef.set(progressPayload, SetOptions(merge: true));
-    await teacherGroups.doc(groupId).collection('students').doc(studentId).update({
-      'xp': FieldValue.increment(xpEarned),
-      // Season-scoped counter: same increment as `xp`, but reset to 0 by
-      // resetLeagueSeasons.ts whenever a league campaign's end date passes.
-      // League tier/leaderboard read this field, not lifetime `xp`, so a
-      // season can end and mean something without ever touching a
-      // student's permanent Total XP.
-      'seasonXp': FieldValue.increment(xpEarned),
-    });
+    final rosterUpdate = <String, dynamic>{'xp': FieldValue.increment(xpEarned)};
+    // Season-scoped counter: only accrues while a league campaign is
+    // actually active for this group (see _isLeagueCampaignActiveForGroup)
+    // — reset to 0 by resetLeagueSeasons.ts whenever a campaign's end date
+    // passes. League tier/leaderboard read this field, not lifetime `xp`,
+    // so a season can end and mean something without ever touching a
+    // student's permanent Total XP.
+    if (xpEarned > 0 && await _isLeagueCampaignActiveForGroup(groupId)) {
+      rosterUpdate['seasonXp'] = FieldValue.increment(xpEarned);
+    }
+    await teacherGroups
+        .doc(groupId)
+        .collection('students')
+        .doc(studentId)
+        .update(rosterUpdate);
     return xpEarned;
   }
 
@@ -404,9 +442,16 @@ class Database {
     required String studentId,
     required String activityId,
     required String feedback,
+    // Optional one-tap rating key from models/feedback_tag.dart; either
+    // this or [feedback] may be empty, never both (enforced by the screen).
+    String? feedbackTag,
   }) async {
     await groupProgress(groupId, studentId).doc(activityId).set({
       'feedback': feedback,
+      'feedbackTag': feedbackTag,
+      // Notes saved from now on are shown to the parent (read-only review
+      // screens); older ones lack this flag and stay teacher-only.
+      'sharedWithParent': true,
       'feedbackAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -421,9 +466,12 @@ class Database {
     required String studentId,
     required String quizId,
     required String feedback,
+    String? feedbackTag,
   }) async {
     await groupProgress(groupId, studentId).doc(quizId).set({
       'feedback': feedback,
+      'feedbackTag': feedbackTag,
+      'sharedWithParent': true,
       'feedbackAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -473,6 +521,8 @@ class Database {
     int currentAttempts = 0;
     int previousBestScore = -1;
     bool previousPassed = false;
+    int previousXpEarned = 0;
+    bool retryBonusAwarded = false;
     dynamic firstCompletedAt;
     final now = FieldValue.serverTimestamp();
     final bool wasAlreadyCompleted =
@@ -484,15 +534,12 @@ class Database {
       currentAttempts = (data['totalAttempts'] ?? 0) as int;
       previousBestScore = (data['bestScore'] ?? -1) as int;
       previousPassed = (data['passed'] ?? false) as bool;
+      previousXpEarned = (data['xpEarned'] ?? 0) as int;
+      retryBonusAwarded = (data['retryBonusAwarded'] ?? false) as bool;
       firstCompletedAt = data['firstCompletedAt'];
     } else {
       firstCompletedAt = now;
     }
-
-    final bool effectivePassed = scope == 'lesson' ? true : passed;
-    final int effectiveXpEarned = scope == 'lesson'
-        ? (wasAlreadyCompleted ? 5 : configuredXp)
-        : xpEarned;
 
     final scorePercent = totalQuestions == 0
         ? 0
@@ -500,6 +547,18 @@ class Database {
     final newAttempts = currentAttempts + 1;
     final bool isNewBest = scorePercent > previousBestScore;
     final bool shouldUpdateAnswers = scorePercent >= previousBestScore;
+
+    final bool effectivePassed = scope == 'lesson' ? true : passed;
+    // Unit-scope retries: only the first attempt that beats the previous
+    // best ever earns the client's "improvement" XP — same one-time cap as
+    // activities, so a student can't keep farming small XP bumps by
+    // improving their score one point at a time across many retries. The
+    // server, not the client, decides eligibility here.
+    final bool payRetryBonus =
+        scope == 'unit' && wasAlreadyCompleted && isNewBest && !retryBonusAwarded;
+    final int effectiveXpEarned = scope == 'lesson'
+        ? (wasAlreadyCompleted ? 0 : configuredXp)
+        : (wasAlreadyCompleted ? (payRetryBonus ? xpEarned : 0) : xpEarned);
 
     int stars = 1;
     if (scorePercent >= 90)
@@ -530,12 +589,17 @@ class Database {
       // unconditional `true` here), kept as-is since fixing it wasn't
       // part of this schema cleanup.
       'isClosedAfterAttempts': true,
-      'xpEarned': effectiveXpEarned,
+      // Running sum of every attempt's actual XP grant, not a raw
+      // overwrite or a max — see saveActivityCompletion's matching comment.
+      'xpEarned': previousXpEarned + effectiveXpEarned,
     };
     if (isNewBest) {
       progressPayload['bestScore'] = scorePercent;
       progressPayload['correctAnswers'] = correctAnswers;
       progressPayload['stars'] = stars;
+    }
+    if (payRetryBonus) {
+      progressPayload['retryBonusAwarded'] = true;
     }
     if (shouldUpdateAnswers) {
       progressPayload['answers'] = answers;
@@ -543,10 +607,17 @@ class Database {
     await progressRef.set(progressPayload, SetOptions(merge: true));
 
     if (effectiveXpEarned > 0 && effectivePassed) {
-      await teacherGroups.doc(groupId).collection('students').doc(studentId).update({
+      final rosterUpdate = <String, dynamic>{
         'xp': FieldValue.increment(effectiveXpEarned),
-        'seasonXp': FieldValue.increment(effectiveXpEarned),
-      });
+      };
+      if (await _isLeagueCampaignActiveForGroup(groupId)) {
+        rosterUpdate['seasonXp'] = FieldValue.increment(effectiveXpEarned);
+      }
+      await teacherGroups
+          .doc(groupId)
+          .collection('students')
+          .doc(studentId)
+          .update(rosterUpdate);
       debugPrint('Added $effectiveXpEarned XP to student $studentId');
     } else {
       debugPrint('No XP added (xpEarned = $effectiveXpEarned)');
@@ -561,6 +632,9 @@ class Database {
     required int totalQuestions,
     required int stars,
     required String feedback,
+    // Parent-facing one-tap rating (models/feedback_tag.dart), shown in
+    // child_report_detail_screen.dart and the report PDF.
+    String? feedbackTag,
   }) async {
     final quizPercent = totalQuestions == 0
         ? 0
@@ -568,15 +642,9 @@ class Database {
 
     final groupId = await resolveCurrentGroupId(studentId);
 
-    final existingReport = await groupReports(groupId, studentId).doc(unitId).get();
-    final previousUnitScores = existingReport.exists
-        ? (existingReport.data() as Map<String, dynamic>)['previousUnitScores']
-                  as List? ??
-              []
-        : [];
-
     int totalActivities = 0;
     int activitiesCompleted = 0;
+    int activitiesScoreSum = 0;
     int totalLessonQuizzes = 0;
     int completedLessonQuizzes = 0;
 
@@ -626,6 +694,7 @@ class Database {
           if (data['unitId'] != unitId || data['isCompleted'] != true) continue;
           if (data['type'] == 'activity') {
             activitiesCompleted++;
+            activitiesScoreSum += (data['bestScore'] as num?)?.toInt() ?? 0;
           } else if (data['type'] == 'quiz' &&
               lessonQuizIds.contains(progressDoc.id)) {
             completedLessonQuizzes++;
@@ -640,6 +709,13 @@ class Database {
         ? 0
         : (activitiesCompleted / totalActivities * 100).round();
 
+    // Average of the activities' best scores in this unit (one score per
+    // activity, however many lessons the unit has) -- the second row of the
+    // Progress Trend comparison (see report_comparison.dart).
+    final activitiesAvgScore = activitiesCompleted == 0
+        ? 0
+        : (activitiesScoreSum / activitiesCompleted).round();
+
     await groupReports(groupId, studentId).doc(unitId).set({
       'reportType': 'unit',
       'unitId': unitId,
@@ -651,11 +727,12 @@ class Database {
       'activitiesCompleted': activitiesCompleted,
       'totalActivities': totalActivities,
       'activitiesPercent': activitiesPercent,
+      'activitiesAvgScore': activitiesAvgScore,
       'completedLessonQuizzes': completedLessonQuizzes,
       'totalLessonQuizzes': totalLessonQuizzes,
-      'previousUnitScores': previousUnitScores,
       'stars': stars,
       'feedback': feedback,
+      'feedbackTag': feedbackTag,
       'generatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
@@ -708,19 +785,27 @@ class Database {
 
   // Adds/removes a group from a content item's `assignedTo` list -- the
   // "share with a parallel group" action on the content card (My Content).
+  // Each also re-syncs `archived` from the (now-changed) set of assigned
+  // groups -- see _syncContentArchivedFromGroups.
   Future<void> shareContentWithGroup({
     required String contentId,
     required String groupId,
-  }) => personalizedContent.doc(contentId).update({
-    'assignedTo': FieldValue.arrayUnion([groupId]),
-  });
+  }) async {
+    await personalizedContent.doc(contentId).update({
+      'assignedTo': FieldValue.arrayUnion([groupId]),
+    });
+    await _syncContentArchivedFromGroups(contentId);
+  }
 
   Future<void> unshareContentFromGroup({
     required String contentId,
     required String groupId,
-  }) => personalizedContent.doc(contentId).update({
-    'assignedTo': FieldValue.arrayRemove([groupId]),
-  });
+  }) async {
+    await personalizedContent.doc(contentId).update({
+      'assignedTo': FieldValue.arrayRemove([groupId]),
+    });
+    await _syncContentArchivedFromGroups(contentId);
+  }
 
   Stream<QuerySnapshot> getTeacherContentStream(String teacherId) =>
       personalizedContent
@@ -739,10 +824,66 @@ class Database {
 
   // archived is a bool. Drives the Archive/Unarchive transition -- see
   // teacher_content_editor_screen.dart for the menu action that calls this.
+  // Only ever called for Content with zero assigned groups (the UI hides
+  // this action once a group is assigned) -- Content with any assigned
+  // group has its `archived` fully derived instead, see
+  // _syncContentArchivedFromGroups.
   Future<void> setContentArchived({
     required String contentId,
     required bool archived,
   }) => personalizedContent.doc(contentId).update({'archived': archived});
+
+  // Archives/unarchives a Group, then re-syncs `archived` on every Content
+  // doc assigned to it -- see _syncContentArchivedFromGroups for the rule
+  // (available iff at least one assigned group is active). Content still
+  // needed by another active Group is left active, since the sync checks
+  // ALL of a content's assigned groups, not just this one.
+  Future<void> setGroupArchived({
+    required String groupId,
+    required bool archived,
+  }) async {
+    await teacherGroups.doc(groupId).update({'archived': archived});
+
+    final assigned =
+        await personalizedContent.where('assignedTo', arrayContains: groupId).get();
+    for (final doc in assigned.docs) {
+      await _syncContentArchivedFromGroups(doc.id);
+    }
+  }
+
+  // Recomputes `archived` for one Content doc straight from its currently
+  // assigned groups' active/archived state: available iff at least one
+  // assigned group is active. No-op if the content has no assigned groups
+  // at all -- that's the manual-archive zone (setContentArchived above),
+  // left untouched here. Called after every assign/unassign
+  // (shareContentWithGroup/unshareContentFromGroup) and after a Group's
+  // own archived state changes (setGroupArchived), so it's always the
+  // single source of truth for a Content-with-groups' archived field.
+  Future<void> _syncContentArchivedFromGroups(String contentId) async {
+    final doc = await personalizedContent.doc(contentId).get();
+    if (!doc.exists) return;
+    final groupIds = ((doc.data() as Map<String, dynamic>)['assignedTo'] as List?)
+            ?.cast<String>() ??
+        const [];
+    if (groupIds.isEmpty) return;
+    final anyActive = await _anyGroupActive(groupIds);
+    await doc.reference.update({'archived': !anyActive});
+  }
+
+  // Chunked into batches of 30 -- Firestore's whereIn limit, same
+  // constraint already accepted by getPersonalizedContentForGroupsStream.
+  Future<bool> _anyGroupActive(List<String> groupIds) async {
+    for (var i = 0; i < groupIds.length; i += 30) {
+      final chunk = groupIds.sublist(
+          i, i + 30 > groupIds.length ? groupIds.length : i + 30);
+      final snap =
+          await teacherGroups.where(FieldPath.documentId, whereIn: chunk).get();
+      final anyActive = snap.docs.any(
+          (d) => (d.data() as Map<String, dynamic>)['archived'] != true);
+      if (anyActive) return true;
+    }
+    return false;
+  }
 
   Future<DocumentSnapshot> getPersonalizedContentDoc(String contentId) =>
       personalizedContent.doc(contentId).get();
@@ -836,15 +977,84 @@ class Database {
     String contentId,
   ) => personalizedUnits(contentId).orderBy('order').snapshots();
 
+  /// A quiz's stored title is derived from its Unit/Lesson name, never
+  /// typed by the teacher. Single source for that format -- used by
+  /// CreateQuizScreen at save time and by the rename methods below.
+  static String unitQuizTitle(String unitTitle) => '$unitTitle — Unit Quiz';
+  static String lessonQuizTitle(String lessonTitle) =>
+      '$lessonTitle — Lesson Quiz';
+
+  /// Returns the title a quiz SHOULD have and, if the stored one differs
+  /// (quizzes created/last saved before rename-propagation existed still
+  /// carry e.g. "Unit 1 — Unit Test"; the format is now "— Unit Quiz"),
+  /// rewrites it in the background.
+  /// Self-healing: the first time a teacher screen sees a stale quiz it
+  /// gets fixed in Firestore, so students/parents see the right name too.
+  /// Fire-and-forget on purpose -- display uses the returned value
+  /// immediately, and a failed write just retries on the next view.
+  String syncQuizTitle({
+    required DocumentReference quizRef,
+    required String? storedTitle,
+    required String expectedTitle,
+  }) {
+    if (storedTitle != expectedTitle) {
+      quizRef.update({'title': expectedTitle}).catchError((e) {
+        debugPrint('syncQuizTitle failed for ${quizRef.path}: $e');
+      });
+    }
+    return expectedTitle;
+  }
+
+  /// Same as syncQuizTitle, for callers that only have the quiz doc and
+  /// not its Unit/Lesson title (SummativeQuizSlot/FormativeQuizSlot):
+  /// reads the current Unit or Lesson name first.
+  Future<void> syncQuizTitleFromParent({
+    required String contentId,
+    required String unitId,
+    String? lessonId,
+    required DocumentSnapshot quizDoc,
+  }) async {
+    try {
+      final parentDoc = lessonId != null
+          ? await personalizedLessons(contentId, unitId).doc(lessonId).get()
+          : await personalizedUnits(contentId).doc(unitId).get();
+      final parentTitle =
+          (parentDoc.data() as Map<String, dynamic>?)?['title'] as String?;
+      if (parentTitle == null) return;
+      syncQuizTitle(
+        quizRef: quizDoc.reference,
+        storedTitle:
+            (quizDoc.data() as Map<String, dynamic>?)?['title'] as String?,
+        expectedTitle: lessonId != null
+            ? lessonQuizTitle(parentTitle)
+            : unitQuizTitle(parentTitle),
+      );
+    } catch (e) {
+      debugPrint('syncQuizTitleFromParent failed: $e');
+    }
+  }
+
+  /// Renaming a Unit also renames its Unit Quiz in the same batch, so the
+  /// quiz never keeps showing the old name (teacher_activity_screen,
+  /// quiz_slot_section, student/parent views all read the stored title).
   Future<void> updatePersonalizedUnit({
     required String groupId,
     required String contentId,
     required String unitId,
     required String title,
     required int order,
-  }) => personalizedUnits(
-    contentId,
-  ).doc(unitId).update({'title': title, 'order': order});
+  }) async {
+    final quizzesSnap = await unitQuizzes(contentId, unitId).get();
+    final batch = _db.batch();
+    batch.update(personalizedUnits(contentId).doc(unitId), {
+      'title': title,
+      'order': order,
+    });
+    for (final q in quizzesSnap.docs) {
+      batch.update(q.reference, {'title': unitQuizTitle(title)});
+    }
+    await batch.commit();
+  }
 
   Future<void> deletePersonalizedUnit(
     String groupId,
@@ -899,6 +1109,8 @@ class Database {
     String unitId,
   ) => personalizedLessons(contentId, unitId).orderBy('order').snapshots();
 
+  /// Same as updatePersonalizedUnit: the Lesson Quiz is renamed in the
+  /// same batch as its Lesson.
   Future<void> updatePersonalizedLesson({
     required String groupId,
     required String contentId,
@@ -906,10 +1118,18 @@ class Database {
     required String lessonId,
     required String title,
     required int order,
-  }) => personalizedLessons(
-    contentId,
-    unitId,
-  ).doc(lessonId).update({'title': title, 'order': order});
+  }) async {
+    final quizzesSnap = await lessonQuizzes(contentId, unitId, lessonId).get();
+    final batch = _db.batch();
+    batch.update(personalizedLessons(contentId, unitId).doc(lessonId), {
+      'title': title,
+      'order': order,
+    });
+    for (final q in quizzesSnap.docs) {
+      batch.update(q.reference, {'title': lessonQuizTitle(title)});
+    }
+    await batch.commit();
+  }
 
   Future<void> deletePersonalizedLesson(
     String groupId,
@@ -1041,9 +1261,18 @@ class Database {
   /// `notOpenReason` is either 'scheduled' (scheduledDate still in the
   /// future — see `scheduledDate` for when it opens) or 'locked' (blocked
   /// by lesson/unit progression or an incomplete prerequisite activity).
+  ///
+  /// [includeQuizzes]: also emit each Lesson Quiz (right after its
+  /// lesson's activities) and Unit Quiz (after the unit's lessons), with
+  /// `type` 'lesson_quiz' / 'unit_quiz' (activities are 'activity') and a
+  /// `quizId`. Quizzes have no dates, so their status is only ever
+  /// 'completed', 'later' (open now) or 'not_open_yet' (locked) — same
+  /// unlock rules as student_activities_screen.dart. Off by default so
+  /// parent_home_screen.dart's overdue/follow-up counts stay activity-only.
   Future<List<Map<String, dynamic>>> getChildActivityStatusList({
     required String groupId,
     required String studentId,
+    bool includeQuizzes = false,
   }) async {
     final contentSnap = await _db
         .collection('content')
@@ -1059,10 +1288,15 @@ class Database {
 
     final completedActivities = <String, dynamic>{};
     final completedQuizzes = <String, dynamic>{};
+    // Every quiz progress doc (completed or not) — used only when
+    // includeQuizzes is on, to show a not-passed Unit Quiz that ran out of
+    // attempts as done, with its result viewable.
+    final quizProgress = <String, Map<String, dynamic>>{};
 
     final progressSnapshot = await groupProgress(groupId, studentId).get();
     for (final d in progressSnapshot.docs) {
       final pd = d.data() as Map<String, dynamic>;
+      if (pd['type'] == 'quiz') quizProgress[d.id] = pd;
       if (pd['isCompleted'] == true) {
         if (pd['type'] == 'activity') {
           completedActivities[d.id] = {
@@ -1072,6 +1306,19 @@ class Database {
         } else if (pd['type'] == 'quiz') {
           completedQuizzes[d.id] = true;
         }
+      }
+    }
+
+    // Units whose report the teacher already sent (reports are keyed by
+    // unitId) — lets a completed Unit Quiz row say "report sent/pending".
+    // Best-effort: a failed read just leaves every unit as "pending".
+    final sentReportUnitIds = <String>{};
+    if (includeQuizzes) {
+      try {
+        final reportsSnap = await groupReports(groupId, studentId).get();
+        sentReportUnitIds.addAll(reportsSnap.docs.map((d) => d.id));
+      } catch (e) {
+        debugPrint('getChildActivityStatusList: reports read failed: $e');
       }
     }
 
@@ -1258,6 +1505,7 @@ class Database {
             }
 
             allItems.add({
+              'type': 'activity',
               'contentId': contentId,
               'contentTitle': contentTitle,
               'unitId': unitId,
@@ -1283,6 +1531,66 @@ class Database {
               lessonActivitiesTotal > 0 &&
               lessonActivitiesCompleted == lessonActivitiesTotal;
           previousLessonIds.add(lessonId);
+
+          // Lesson Quiz (at most one per lesson) — unlocks once the
+          // lesson is reachable and all its activities are done, same as
+          // the student path.
+          if (includeQuizzes) {
+            final lqSnap =
+                await lessonQuizzes(contentId, unitId, lessonId).limit(1).get();
+            if (lqSnap.docs.isNotEmpty) {
+              final lqDoc = lqSnap.docs.first;
+              final lqData = lqDoc.data() as Map<String, dynamic>;
+              final progress = quizProgress[lqDoc.id];
+              final done = progress?['isCompleted'] == true;
+              final ready =
+                  isLessonUnlocked && (lessonCompletedMap[lessonId] ?? false);
+              allItems.add(_quizStatusItem(
+                type: 'lesson_quiz',
+                quizId: lqDoc.id,
+                title: lqData['title'] ?? 'Lesson Quiz',
+                contentId: contentId,
+                contentTitle: contentTitle,
+                unitId: unitId,
+                unitTitle: unitData['title'] ?? 'Untitled Unit',
+                lessonId: lessonId,
+                lessonTitle: lessonData['title'] ?? 'Untitled Lesson',
+                progress: progress,
+                status: done
+                    ? 'completed'
+                    : (ready ? 'later' : 'not_open_yet'),
+              ));
+            }
+          }
+        }
+
+        // Unit Quiz — after all of the unit's lessons. A not-passed one
+        // that ran out of attempts counts as done (isClosedAfterAttempts).
+        if (includeQuizzes) {
+          for (final qDoc in unitQuizzesSnap.docs) {
+            final qData = qDoc.data() as Map<String, dynamic>;
+            final progress = quizProgress[qDoc.id];
+            final done = progress?['isCompleted'] == true ||
+                progress?['isClosedAfterAttempts'] == true;
+            final ready = isUnitUnlocked && allActivitiesCompleted;
+            allItems.add({
+              ..._quizStatusItem(
+                type: 'unit_quiz',
+                quizId: qDoc.id,
+                title: qData['title'] ?? 'Unit Quiz',
+                contentId: contentId,
+                contentTitle: contentTitle,
+                unitId: unitId,
+                unitTitle: unitData['title'] ?? 'Untitled Unit',
+                lessonId: '',
+                lessonTitle: '',
+                progress: progress,
+                status:
+                    done ? 'completed' : (ready ? 'later' : 'not_open_yet'),
+              ),
+              'reportSent': sentReportUnitIds.contains(unitId),
+            });
+          }
         }
 
         previousUnitIds.add(unitId);
@@ -1290,6 +1598,43 @@ class Database {
     }
 
     return allItems;
+  }
+
+  /// One quiz row for getChildActivityStatusList(includeQuizzes: true) —
+  /// same keys the activity rows carry (so the parent screen's grouping,
+  /// sorting and filters work unchanged) plus `quizId`, no dates.
+  Map<String, dynamic> _quizStatusItem({
+    required String type,
+    required String quizId,
+    required Object title,
+    required String contentId,
+    required Object contentTitle,
+    required String unitId,
+    required Object unitTitle,
+    required String lessonId,
+    required Object lessonTitle,
+    required Map<String, dynamic>? progress,
+    required String status,
+  }) {
+    return {
+      'type': type,
+      'quizId': quizId,
+      'contentId': contentId,
+      'contentTitle': contentTitle,
+      'unitId': unitId,
+      'unitTitle': unitTitle,
+      'lessonId': lessonId,
+      'lessonTitle': lessonTitle,
+      'title': title,
+      'order': 0,
+      'isCompleted': status == 'completed',
+      'stars': (progress?['stars'] as num?)?.toInt() ?? 0,
+      'scheduledDate': null,
+      'dueDate': null,
+      'closeDate': null,
+      'status': status,
+      'notOpenReason': status == 'not_open_yet' ? 'locked' : null,
+    };
   }
 
   Future<void> updatePersonalizedActivity({
@@ -1616,12 +1961,10 @@ class Database {
       ownerCategories(ownerId).doc(categoryId).collection('imageItems');
 
   /// Folder-safe form of a category name: lowercase, spaces to
-  /// underscores, everything else stripped. `categoryName` (this) is used
-  /// as a literal Cloudinary folder path segment (see
-  /// image_service.dart's uploadToCloudinary), so it can never contain
-  /// spaces or other characters a folder path can't have — `displayName`
-  /// on the category doc keeps what the user actually typed (e.g. "Sea
-  /// Animals") for the UI to show instead.
+  /// underscores, everything else stripped. It was the Cloudinary folder
+  /// for categories created before the doc id took that role (see
+  /// createCategory); the category dialogs still use it to reject names
+  /// with no letters or digits at all.
   static String sanitizeCategoryName(String raw) => raw
       .trim()
       .replaceAll(' ', '_')
@@ -1633,8 +1976,14 @@ class Database {
     required String ownerId,
     required String ownerRole,
   }) async {
-    final ref = await ownerCategories(ownerId).add({
-      'categoryName': sanitizeCategoryName(displayName),
+    // categoryName is the Cloudinary folder for this category's images. New
+    // categories use their own doc id: unique (two "Animals" categories no
+    // longer share a folder) and stable, so renaming a category (see
+    // updateCategory) only ever touches displayName. Categories created
+    // before this keep their name-based folder.
+    final ref = ownerCategories(ownerId).doc();
+    await ref.set({
+      'categoryName': ref.id,
       'displayName': displayName.trim(),
       'ownerId': ownerId,
       'ownerRole': ownerRole,
@@ -1642,6 +1991,16 @@ class Database {
     });
     return ref.id;
   }
+
+  // Rename only: the Cloudinary folder (categoryName) never changes.
+  Future<void> updateCategory({
+    required String ownerId,
+    required String categoryId,
+    required String displayName,
+  }) =>
+      ownerCategories(ownerId)
+          .doc(categoryId)
+          .update({'displayName': displayName.trim()});
 
   // Admin categories can belong to any of up to 3 admin accounts (shared
   // pool, same as before), so listing "all admin categories" now has to
@@ -1701,11 +2060,15 @@ class Database {
     required String imageUrl,
     required String cloudinaryPublicId,
     required String fileExtension,
+    // true if Google Vision analyzed the image when it was uploaded; false
+    // if moderation was skipped (the "Moderación automática" switch) or the
+    // image is an SVG, which Vision can't analyze.
+    required bool isModerated,
   }) async {
     final isSvg = fileExtension.toLowerCase() == 'svg';
     final displayUrl = isSvg
         ? imageUrl.replaceFirst('/upload/', '/upload/f_png,w_512,h_512,q_80/')
-        : imageUrl; 
+        : imageUrl;
 
     final ref = await categoryItems(ownerId, categoryId).add({
       'name': name,
@@ -1713,8 +2076,7 @@ class Database {
       'displayUrl': displayUrl,
       'cloudinaryPublicId': cloudinaryPublicId,
       'format': isSvg ? 'svg' : 'png',
-      'moderationStatus': 'approved',
-      'isVisible': true,
+      'isModerated': isModerated,
       'createdAt': FieldValue.serverTimestamp(),
     });
     return ref.id;
@@ -1749,33 +2111,30 @@ class Database {
   Future<void> deleteImage(String ownerId, String categoryId, String imageId) =>
       categoryItems(ownerId, categoryId).doc(imageId).delete();
 
-  Future<void> approveImage({
+  // Points an existing library image at a newly uploaded file, keeping the
+  // same doc (id, name, category). Only touches Firestore — the caller
+  // (AdminViewImagesScreen) deletes the previous Cloudinary file afterwards.
+  Future<void> replaceImage({
     required String ownerId,
     required String categoryId,
     required String imageId,
-  }) async {
-    final uid = authInstance.currentUser?.uid;
-    await categoryItems(ownerId, categoryId).doc(imageId).update({
-      'moderationStatus': 'approved',
-      'isVisible': true,
-      'approvedAt': FieldValue.serverTimestamp(),
-      'approvedBy': uid,
-      'rejectedAt': null,
-      'rejectedBy': null,
-    });
-  }
+    required String imageUrl,
+    required String cloudinaryPublicId,
+    required String fileExtension,
+    required bool isModerated,
+  }) {
+    final isSvg = fileExtension.toLowerCase() == 'svg';
+    final displayUrl = isSvg
+        ? imageUrl.replaceFirst('/upload/', '/upload/f_png,w_512,h_512,q_80/')
+        : imageUrl;
 
-  Future<void> rejectImage({
-    required String ownerId,
-    required String categoryId,
-    required String imageId,
-  }) async {
-    final uid = authInstance.currentUser?.uid;
-    await categoryItems(ownerId, categoryId).doc(imageId).update({
-      'moderationStatus': 'rejected',
-      'isVisible': false,
-      'rejectedAt': FieldValue.serverTimestamp(),
-      'rejectedBy': uid,
+    return categoryItems(ownerId, categoryId).doc(imageId).update({
+      'imageUrl': imageUrl,
+      'displayUrl': displayUrl,
+      'cloudinaryPublicId': cloudinaryPublicId,
+      'format': isSvg ? 'svg' : 'png',
+      'isModerated': isModerated,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -1862,15 +2221,25 @@ class Database {
     return (result.data as Map)['groupCode'] as String;
   }
 
+  /// Decrypts the group code carried by a `group_invitation` notification —
+  /// only the invited parent is authorized and only until the invitation
+  /// expires (enforced server-side; throws a [FirebaseFunctionsException]
+  /// with code `failed-precondition` when expired). Returns
+  /// `{groupCode, groupId, groupName}`.
+  Future<Map<String, dynamic>> revealInvitationGroupCode(
+      String notificationId) async {
+    final result = await FirebaseFunctions.instance
+        .httpsCallable('revealInvitationGroupCode')
+        .call({'notificationId': notificationId});
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
   /// Looks up a group by its join code — used when a parent/student
   /// enters a code to join. Returns null if no group matches.
-  Future<Map<String, dynamic>?> findGroupByCode(String code) async {
-    final result = await FirebaseFunctions.instance
-        .httpsCallable('findGroupByCode')
-        .call({'code': code});
-    if (result.data == null) return null;
-    return (result.data as Map).cast<String, dynamic>();
-  }
+  /// Goes through firebase_refs.dart's swappable [findGroupByCodeCall]
+  /// (the Cloud Function in the app, a fake under `flutter test`).
+  Future<Map<String, dynamic>?> findGroupByCode(String code) =>
+      findGroupByCodeCall(code);
 
   /// Adds a student to a group's roster and points the student's root
   /// `groupId` at it — called whenever a student joins a group for the
@@ -1884,26 +2253,44 @@ class Database {
   /// under this new roster doc — nothing is copied in from anywhere, the
   /// student simply starts fresh (`xp: 0`, empty progress/reports) under
   /// the new group, exactly like a first-time join.
+  ///
+  /// Throws [AlreadyInGroupException] if the student is already in
+  /// [groupId]: the `set` below would overwrite their roster doc and reset
+  /// their `xp` / `seasonXp` to 0.
   Future<void> joinGroup({
     required String studentId,
     required String groupId,
   }) async {
+    final rosterRef =
+        teacherGroups.doc(groupId).collection('students').doc(studentId);
+    if ((await rosterRef.get()).exists) throw AlreadyInGroupException();
+
     final now = FieldValue.serverTimestamp();
-    await teacherGroups.doc(groupId).collection('students').doc(studentId).set({
+    await rosterRef.set({
       'studentId': studentId,
       'joinedAt': now,
-      'leftAt': null,
       'status': 'active',
       'xp': 0,
       'seasonXp': 0,
     });
-    await _db.collection('students').doc(studentId).update({
+    await _db.collection('students').doc(studentId).update({'groupId': groupId});
+    // The student's record of having been in this group. Doc id = groupId,
+    // so rejoining the same group overwrites the entry instead of piling
+    // up duplicates.
+    await studentGroupHistory(studentId).doc(groupId).set({
       'groupId': groupId,
-      'groupHistory': FieldValue.arrayUnion([
-        {'groupId': groupId, 'joinedAt': DateTime.now()},
-      ]),
+      'joinedAt': now,
     });
   }
+
+  /// `students/{studentId}/groupHistory` — one doc per group the student has
+  /// ever been in (doc id = groupId): `{groupId, joinedAt}`. Remembers
+  /// past groups after [leaveGroup] deletes the roster doc. (Older students
+  /// may still carry the legacy `groupHistory` array on their root doc until
+  /// it is migrated — see [_groupHistoryIds].)
+  CollectionReference<Map<String, dynamic>> studentGroupHistory(
+          String studentId) =>
+      _db.collection('students').doc(studentId).collection('groupHistory');
 
   /// Deletes every document in [query], chunked into batches of 500
   /// (Firestore's per-batch limit) — the shared leaf-deletion primitive
@@ -1937,10 +2324,10 @@ class Database {
 
   /// Ends a student's membership in [groupId] — deletes their roster doc
   /// and every progress/attempts/reports document earned under this
-  /// group. The student's root profile and `groupHistory` are untouched
-  /// (callers handle clearing the student's root `groupId` separately,
-  /// e.g. group_navigation_screen.dart's _removeStudent; `groupHistory`
-  /// is only ever appended to by joinGroup, never read or written here).
+  /// group. The student's root profile is untouched (callers handle
+  /// clearing the student's root `groupId` separately, e.g.
+  /// group_navigation_screen.dart's _removeStudent) and the group stays in
+  /// the student's `groupHistory`.
   Future<void> leaveGroup({
     required String studentId,
     required String groupId,
@@ -1964,7 +2351,7 @@ class Database {
   }
 
   /// Every report ever generated for this student across every group
-  /// they've been in, past or present — reads the student's root
+  /// they've been in, past or present — reads the student's
   /// `groupHistory` to find each group, then reads that group's own
   /// `reports` subcollection directly. Used by screens that intentionally
   /// want full lifetime history (parent Reports, teacher's "All Units"
@@ -1974,19 +2361,49 @@ class Database {
     final snaps = await Future.wait([
       for (final groupId in groupIds) groupReports(groupId, studentId).get(),
     ]);
-    return [
+    final reports = [
       for (final snap in snaps)
         for (final doc in snap.docs)
           {'id': doc.id, ...doc.data() as Map<String, dynamic>},
     ];
+
+    // Reports sent before `activitiesAvgScore` was stored don't carry it,
+    // and the Progress Trend needs it: fill it in (in memory only) from the
+    // unit's completed activities' best scores, same formula as
+    // saveReportOnly.
+    if (reports.any((r) => r['activitiesAvgScore'] == null)) {
+      final sums = <String, int>{};
+      final counts = <String, int>{};
+      for (final p in await getAllProgressEver(studentId, groupIds: groupIds)) {
+        final unitId = p['unitId'] as String?;
+        if (unitId == null ||
+            p['type'] != 'activity' ||
+            p['isCompleted'] != true) {
+          continue;
+        }
+        sums[unitId] = (sums[unitId] ?? 0) + ((p['bestScore'] as num?)?.toInt() ?? 0);
+        counts[unitId] = (counts[unitId] ?? 0) + 1;
+      }
+      for (final r in reports) {
+        if (r['activitiesAvgScore'] != null) continue;
+        final unitId = (r['unitId'] ?? r['id']) as String;
+        final count = counts[unitId];
+        if (count == null || count == 0) continue;
+        r['activitiesAvgScore'] = (sums[unitId]! / count).round();
+      }
+    }
+    return reports;
   }
 
   /// Same idea as getAllReportsEver, for progress docs — used by
   /// aggregations that want a student's full lifetime activity/quiz
   /// history regardless of which group it was earned in (e.g. task-type
   /// insight stats), not current-group-only views.
-  Future<List<Map<String, dynamic>>> getAllProgressEver(String studentId) async {
-    final groupIds = await _groupHistoryIds(studentId);
+  Future<List<Map<String, dynamic>>> getAllProgressEver(
+    String studentId, {
+    List<String>? groupIds,
+  }) async {
+    groupIds ??= await _groupHistoryIds(studentId);
     final snaps = await Future.wait([
       for (final groupId in groupIds) groupProgress(groupId, studentId).get(),
     ]);
@@ -1997,11 +2414,17 @@ class Database {
     ];
   }
 
+  /// Every group the student has ever been in: the `groupHistory`
+  /// subcollection, plus the legacy `groupHistory` array on the root doc
+  /// (students not migrated yet — remove that part once they all are), plus
+  /// the current `groupId`.
   Future<List<String>> _groupHistoryIds(String studentId) async {
     final studentDoc = await _db.collection('students').doc(studentId).get();
-    final history = studentDoc.data()?['groupHistory'] as List? ?? [];
+    final historySnap = await studentGroupHistory(studentId).get();
+    final legacy = studentDoc.data()?['groupHistory'] as List? ?? [];
     final ids = <String>{
-      for (final entry in history)
+      for (final doc in historySnap.docs) doc.id,
+      for (final entry in legacy)
         if ((entry as Map)['groupId'] != null) entry['groupId'] as String,
     };
     final currentGroupId = studentDoc.data()?['groupId'] as String?;
@@ -2021,12 +2444,14 @@ class Database {
     for (final groupId in groupIds) {
       await _deleteGroupMembershipData(groupId, studentId);
     }
+    // Firestore doesn't delete subcollections along with their parent doc.
+    await _deleteAllDocs(studentGroupHistory(studentId));
     await students.doc(studentId).delete();
   }
 
   /// Fully deletes everything a teacher exclusively owns: their authored
-  /// content, media library categories/images, continue-bookmarks, league
-  /// campaign, and — unlike a parent's cascade, which only ever touches
+  /// content, media library categories/images, league campaign, and —
+  /// unlike a parent's cascade, which only ever touches
   /// their own children — every `teacherGroups/{groupId}` group they
   /// created, including every student's progress/reports/roster data
   /// earned under those groups. Student root profiles are never deleted
@@ -2045,9 +2470,6 @@ class Database {
       await _deleteAllDocs(categoryItems(teacherId, category.id));
       await category.reference.delete();
     }
-
-    await _deleteAllDocs(bookmarksFor(teacherId));
-    await _db.collection('teacherContinueBookmarks').doc(teacherId).delete();
 
     await leagueCampaigns.doc(teacherId).delete();
 
@@ -2080,6 +2502,70 @@ class Database {
 
   Future<DocumentSnapshot> getLeagueCampaign(String teacherId) =>
       leagueCampaigns.doc(teacherId).get();
+
+  /// Finished league seasons for [teacherId], newest first. Written by the
+  /// resetLeagueSeasons Cloud Function when a campaign ends. Sorted here
+  /// rather than with orderBy so no composite index is needed.
+  Future<List<Map<String, dynamic>>> getLeagueSeasonHistory(
+      String teacherId) async {
+    final snap = await _db
+        .collection('leagueSeasonHistory')
+        .where('teacherId', isEqualTo: teacherId)
+        .get();
+    final seasons = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    int millis(Object? ts) =>
+        ts is Timestamp ? ts.millisecondsSinceEpoch : 0;
+    seasons.sort((a, b) => millis(b['endDate']).compareTo(millis(a['endDate'])));
+    return seasons;
+  }
+
+  /// Whether a league campaign is currently active for [groupId] — i.e. one
+  /// exists, targets this group (scope 'all', or scope 'single' with a
+  /// matching groupId, mirroring student_league_screen.dart's `applies`
+  /// check), AND right now falls within its startDate/endDate window.
+  /// seasonXp should only accrue while this is true; a campaign whose
+  /// endDate has passed but whose doc hasn't been cleaned up yet by
+  /// resetLeagueSeasons.ts's daily cron must NOT count as active, which is
+  /// why the date-window check below (not just "does a doc exist") is what
+  /// gates the increment.
+  Future<bool> _isLeagueCampaignActiveForGroup(String groupId) async {
+    final groupDoc = await teacherGroups.doc(groupId).get();
+    final teacherId = (groupDoc.data() as Map<String, dynamic>?)?['teacherId']
+        as String?;
+    if (teacherId == null) return false;
+
+    final campaignDoc = await leagueCampaigns.doc(teacherId).get();
+    if (!campaignDoc.exists) return false;
+
+    final campaign = campaignDoc.data() as Map<String, dynamic>;
+    final campaignScope = (campaign['scope'] as String?) ?? 'all';
+    final campaignGroupId = campaign['groupId'] as String?;
+    if (campaignScope == 'single' && campaignGroupId != groupId) {
+      return false;
+    }
+    return isCampaignActiveNow(campaign);
+  }
+
+  /// Whether today falls inside [campaign]'s startDate/endDate window.
+  static bool isCampaignActiveNow(Map<String, dynamic> campaign) {
+    final startDate = (campaign['startDate'] as Timestamp?)?.toDate();
+    final endDate = (campaign['endDate'] as Timestamp?)?.toDate();
+    final now = DateTime.now();
+    if (startDate != null && now.isBefore(startDate)) return false;
+    if (endDate != null && now.isAfter(endDate)) return false;
+    return true;
+  }
+
+  /// [teacherId]'s campaign if it exists and is running today, else null.
+  /// Used by LeagueXpNotice to tell the teacher whether new XP will also
+  /// count toward the league (seasonXp) or only toward Total XP.
+  Future<Map<String, dynamic>?> getActiveLeagueCampaign(
+      String teacherId) async {
+    final doc = await getLeagueCampaign(teacherId);
+    if (!doc.exists) return null;
+    final campaign = doc.data() as Map<String, dynamic>;
+    return isCampaignActiveNow(campaign) ? campaign : null;
+  }
 
   Future<void> saveLeagueCampaign({
     required String teacherId,
@@ -2192,12 +2678,19 @@ class Database {
     required String quizId,
     required String title,
     required List<Map<String, dynamic>> questions,
-    required int passingScore,
     required int xpReward,
-    required int maxAttempts,
-    required String groupId,
+    // Unit Quiz (summative) only — required there, ignored for a Lesson
+    // Quiz (formative: ungraded, unlimited retries).
+    int? passingScore,
+    int? maxAttempts,
     String? lessonId,
   }) async {
+    final isUnitQuiz = lessonId == null;
+    if (isUnitQuiz && (passingScore == null || maxAttempts == null)) {
+      throw ArgumentError(
+          'A Unit Quiz requires passingScore and maxAttempts.');
+    }
+
     await _assertNoExistingQuiz(
       contentId: contentId,
       unitId: unitId,
@@ -2228,14 +2721,15 @@ class Database {
     batch.set(quizRef, {
       'contentId': contentId,
       'unitId': unitId,
-      'groupId': groupId,
       'title': title,
       'totalQuestions': questions.length,
-      'passingScore': passingScore,
       'xpReward': xpReward.clamp(0, maxXp),
-      'isGraded': lessonId == null,
-      'maxAttempts': maxAttempts,
       'createdAt': FieldValue.serverTimestamp(),
+      if (isUnitQuiz) ...{
+        'isGraded': true,
+        'passingScore': passingScore,
+        'maxAttempts': maxAttempts,
+      },
     });
 
     for (final q in questions) {
@@ -2256,25 +2750,42 @@ class Database {
     String? lessonId,
     required String quizId,
     required String title,
-    required int passingScore,
     required int xpReward,
-    required int maxAttempts,
     required List<Map<String, dynamic>> questions,
+    // Unit Quiz only — see createQuiz.
+    int? passingScore,
+    int? maxAttempts,
   }) async {
+    final isUnitQuiz = lessonId == null;
+    if (isUnitQuiz && (passingScore == null || maxAttempts == null)) {
+      throw ArgumentError(
+          'A Unit Quiz requires passingScore and maxAttempts.');
+    }
+
     final quizRef = quizzesCollection(
       contentId,
       unitId,
       lessonId: lessonId,
     ).doc(quizId);
-    final maxXp = lessonId == null ? 100 : 50;
+    final maxXp = isUnitQuiz ? 100 : 50;
 
+    // Also strips fields older docs still carry (groupId was always empty;
+    // Lesson Quizzes used to store placeholder grading fields), so editing
+    // a quiz brings it to the current schema without a migration.
     await quizRef.update({
       'title': title,
-      'passingScore': passingScore,
       'xpReward': xpReward.clamp(0, maxXp),
-      'maxAttempts': maxAttempts,
       'totalQuestions': questions.length,
       'updatedAt': FieldValue.serverTimestamp(),
+      'groupId': FieldValue.delete(),
+      if (isUnitQuiz) ...{
+        'passingScore': passingScore,
+        'maxAttempts': maxAttempts,
+      } else ...{
+        'passingScore': FieldValue.delete(),
+        'maxAttempts': FieldValue.delete(),
+        'isGraded': FieldValue.delete(),
+      },
     });
 
     final existingQuestions = await quizRef.collection('questions').get();
@@ -2481,6 +2992,14 @@ class Database {
     quizData['contentId'] = contentId;
     quizData['unitId'] = newUnitId;
     quizData['createdAt'] = FieldValue.serverTimestamp();
+    // Copies of older docs come out in the current schema (see updateQuiz).
+    quizData.remove('groupId');
+    if (newLessonId != null) {
+      quizData
+        ..remove('passingScore')
+        ..remove('maxAttempts')
+        ..remove('isGraded');
+    }
 
     final newQuizId = _newCloneId('quiz');
     final newQuizRef = quizzesCollection(
@@ -2567,144 +3086,4 @@ class Database {
 
     return newUnitId;
   }
-
-  // =========================
-  // CONTINUE-WHERE-YOU-LEFT-OFF BOOKMARKS
-  // =========================
-  //
-  // Multiple bookmarks per teacher, in a subcollection
-  // (teacherContinueBookmarks/{teacherId}/bookmarks/{bookmarkId}) -- a
-  // teacher can be mid-way through several different units/lessons/
-  // activities/tasks at once (possibly across different Content items)
-  // and wants to resume any of them independently, not just the single
-  // most recent one. Building content is a long multi-screen process, so
-  // a teacher taps the bookmark button on whichever CREATE form they're
-  // filling out (create_unit_screen.dart and siblings) to record exactly
-  // where they were, then picks any of them back up from the bookmark
-  // chip on My Content later.
-  //
-  // Bookmark IDs are DETERMINISTIC (derived from level + the ancestor
-  // IDs), not random -- re-bookmarking the same spot (e.g. tapping the
-  // button again after typing more into the same still-unsaved Lesson)
-  // overwrites that one entry instead of piling up duplicates for the
-  // same in-progress item.
-  //
-  // Not called "draft" anywhere in this feature's UI -- content only ever
-  // has an 'archived' bool (see setContentArchived above), and a
-  // Unit/Lesson/Activity/Task has no status field of its own at all. This
-  // is just a pointer to "where was I typing," unrelated to that.
-
-  CollectionReference bookmarksFor(String teacherId) => _db
-      .collection('teacherContinueBookmarks')
-      .doc(teacherId)
-      .collection('bookmarks');
-
-  String _bookmarkId({
-    required String level,
-    required String contentId,
-    String? unitId,
-    String? lessonId,
-    String? activityId,
-  }) => [
-    level,
-    contentId,
-    unitId,
-    lessonId,
-    activityId,
-  ].map((p) => p ?? '_').join('__');
-
-  /// Resolves display titles for whichever ancestor IDs are non-null, so
-  /// ContinueBookmarkButton (on the create/edit forms) doesn't need every
-  /// title threaded through as a widget constructor param -- it already
-  /// has the IDs on hand, this fills in the names with a few cheap reads
-  /// only when the teacher actually taps the bookmark button (not on
-  /// every build).
-  Future<Map<String, String>> resolveHierarchyTitles({
-    required String contentId,
-    String? unitId,
-    String? lessonId,
-    String? activityId,
-  }) async {
-    final result = <String, String>{};
-
-    final contentDoc = await personalizedContent.doc(contentId).get();
-    result['contentTitle'] =
-        (contentDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
-        'Content';
-
-    if (unitId != null) {
-      final unitDoc = await personalizedUnits(contentId).doc(unitId).get();
-      result['unitTitle'] =
-          (unitDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
-          'Unit';
-    }
-    if (unitId != null && lessonId != null) {
-      final lessonDoc = await personalizedLessons(
-        contentId,
-        unitId,
-      ).doc(lessonId).get();
-      result['lessonTitle'] =
-          (lessonDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
-          'Lesson';
-    }
-    if (unitId != null && lessonId != null && activityId != null) {
-      final activityDoc = await personalizedActivities(
-        contentId,
-        unitId,
-        lessonId,
-      ).doc(activityId).get();
-      result['activityTitle'] =
-          (activityDoc.data() as Map<String, dynamic>?)?['title'] as String? ??
-          'Activity';
-    }
-
-    return result;
-  }
-
-  Future<void> saveContinueBookmark({
-    required String teacherId,
-    required String level, // 'unit' | 'lesson' | 'activity' | 'task'
-    required String contentId,
-    required String contentTitle,
-    String? unitId,
-    String? unitTitle,
-    String? lessonId,
-    String? lessonTitle,
-    String? activityId,
-    String? activityTitle,
-    // Whatever the teacher had typed into the create form at save time
-    // (title, and level-specific fields like xpBase/turn-in dates for
-    // activities, or type/question/data for tasks) -- so "Continue" can
-    // reopen the SAME create form pre-filled, not just the parent list
-    // screen with the in-progress text lost.
-    Map<String, dynamic>? formData,
-  }) => bookmarksFor(teacherId)
-      .doc(
-        _bookmarkId(
-          level: level,
-          contentId: contentId,
-          unitId: unitId,
-          lessonId: lessonId,
-          activityId: activityId,
-        ),
-      )
-      .set({
-        'level': level,
-        'contentId': contentId,
-        'contentTitle': contentTitle,
-        'unitId': unitId,
-        'unitTitle': unitTitle,
-        'lessonId': lessonId,
-        'lessonTitle': lessonTitle,
-        'activityId': activityId,
-        'formData': formData,
-        'activityTitle': activityTitle,
-        'savedAt': FieldValue.serverTimestamp(),
-      });
-
-  Stream<QuerySnapshot> getContinueBookmarksStream(String teacherId) =>
-      bookmarksFor(teacherId).orderBy('savedAt', descending: true).snapshots();
-
-  Future<void> clearContinueBookmark(String teacherId, String bookmarkId) =>
-      bookmarksFor(teacherId).doc(bookmarkId).delete();
 }

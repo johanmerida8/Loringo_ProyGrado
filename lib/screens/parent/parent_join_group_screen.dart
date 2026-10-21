@@ -75,19 +75,37 @@ class _ParentJoinGroupScreenState extends State<ParentJoinGroupScreen> {
       final groupName = group['name'] as String;
       final studentId = widget.child['id'];
 
-      // If the student was already in a different group, mark that
-      // membership as left before switching — their XP/progress/reports
-      // stay exactly where they are under the old group, untouched. The
-      // student starts fresh under the new group.
+      // If the student was already in a different group, leave it before
+      // switching — their XP/progress/reports under the old group are
+      // deleted. The student starts fresh under the new group. If they are
+      // already in THIS group, switchGroup throws AlreadyInGroupException
+      // and nothing changes.
       final studentSnapshot =
           await firestoreInstance.collection('students').doc(studentId).get();
       final previousGroupId = studentSnapshot.data()?['groupId'] as String?;
 
-      await Database(firestore: firestoreInstance).switchGroup(
-        studentId: studentId,
-        oldGroupId: previousGroupId,
-        newGroupId: groupId,
-      );
+      try {
+        await Database(firestore: firestoreInstance).switchGroup(
+          studentId: studentId,
+          oldGroupId: previousGroupId,
+          newGroupId: groupId,
+        );
+      } on AlreadyInGroupException {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  'parent.parent_join_group_screen.childAlreadyInGroup'.tr(
+                      namedArgs: {
+                    'name': '${widget.child['names']}',
+                    'group': groupName,
+                  })),
+              backgroundColor: AppColors.warning,
+            ),
+          );
+        }
+        return;
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

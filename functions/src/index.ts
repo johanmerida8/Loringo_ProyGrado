@@ -20,7 +20,7 @@ setGlobalOptions({ maxInstances: 3 });
 export * from "./notifications";
 export * from "./email";
 export * from "./resetPassword";
-export * from "./moderateImage";
+export * from "./uploadModeratedImage";
 export * from "./deleteCloudinaryImage";
 export * from "./listCloudinaryAvatars";
 export * from "./groupCode";

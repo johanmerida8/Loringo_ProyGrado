@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/initials/confirm_reset_password_screen.dart';
 import 'package:loringo_app/screens/initials/otp_screen.dart';
 import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -75,7 +76,20 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => OTPScreen(email: email)),
+          MaterialPageRoute(
+            builder: (_) => OTPScreen(
+              email: email,
+              onVerified: (ctx, otp) => Navigator.pushReplacement(
+                ctx,
+                MaterialPageRoute(
+                  builder: (_) => ConfirmResetPasswordScreen(
+                    email: email,
+                    otp: otp,
+                  ),
+                ),
+              ),
+            ),
+          ),
         );
       }
     } catch (e) {

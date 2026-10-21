@@ -10,15 +10,16 @@ import 'package:loringo_app/components/notifications_badge.dart';
 import 'package:loringo_app/components/responsive_scaffold.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/shared/notifications_screen.dart';
-import 'package:loringo_app/screens/teacher/teacher_content_editor_screen.dart';
-import 'package:loringo_app/screens/teacher/teacher_image_screen.dart';
-import 'package:loringo_app/screens/teacher/archived_groups_screen.dart';
-import 'package:loringo_app/screens/teacher/teacher_league_screen.dart';
-import 'package:loringo_app/screens/teacher/widgets/group_card.dart';
+import 'package:loringo_app/screens/teacher/content/teacher_content_editor_screen.dart';
+import 'package:loringo_app/screens/teacher/media/teacher_image_screen.dart';
+import 'package:loringo_app/screens/teacher/groups/archived_groups_screen.dart';
+import 'package:loringo_app/screens/teacher/league/teacher_league_screen.dart';
+import 'package:loringo_app/screens/teacher/groups/widgets/group_card.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/connectivity_banner.dart';
 import 'package:loringo_app/widget/secured_screen.dart';
 
 class TeacherHomeScreen extends StatefulWidget {
@@ -239,7 +240,8 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
             style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
           ),
         ),
-        bodyBuilder: (context, isWide) => Builder(
+        bodyBuilder: (context, isWide) => ConnectivityBanner(
+          child: Builder(
           builder: (ctx) => CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
@@ -349,6 +351,7 @@ class _TeacherHomeScreenState extends State<TeacherHomeScreen>
               ),
             ],
           ),
+        ),
         ),
       ),
     );

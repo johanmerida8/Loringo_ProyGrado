@@ -395,7 +395,6 @@ class _ActivityPlayScreenState extends State<ActivityPlayScreen> {
           correctAnswers: correctAnswers,
           wrongAnswers: wrongAnswers,
           xpEarned: xpEarned,
-          isGraded: false,
         ),
       ),
     );

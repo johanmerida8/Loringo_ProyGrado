@@ -4,7 +4,7 @@
     "lint": "eslint --ext .js,.ts .",
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "test": "npm run build && node --test lib/groupCode.test.js",
+    "test": "npm run build && node --test lib/groupCode.test.js lib/unitCompletion.test.js lib/moderationPolicy.test.js",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",

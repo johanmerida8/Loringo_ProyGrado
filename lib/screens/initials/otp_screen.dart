@@ -4,13 +4,25 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
-import 'package:loringo_app/screens/initials/confirm_reset_password_screen.dart';
 import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class OTPScreen extends StatefulWidget {
   final String email;
-  const OTPScreen({super.key, required this.email});
+
+  /// Called once the code is verified, with the verified code itself
+  /// (some callers, like password reset, still need it for the next
+  /// step). This screen doesn't know or care what happens after --
+  /// password reset pushes ConfirmResetPasswordScreen, email-verification
+  /// at registration/login calls confirmEmailVerified and re-enters
+  /// AuthGate. Keeps this screen reusable for both.
+  final Future<void> Function(BuildContext context, String otp) onVerified;
+
+  const OTPScreen({
+    super.key,
+    required this.email,
+    required this.onVerified,
+  });
 
   @override
   State<OTPScreen> createState() => _OTPScreenState();
@@ -124,15 +136,13 @@ class _OTPScreenState extends State<OTPScreen> {
       if (isValid) {
         _snack('initials.otp_screen.codeVerified'.tr(), color: AppColors.success);
         if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ConfirmResetPasswordScreen(
-                email: widget.email,
-                otp: code,
-              ),
-            ),
-          );
+          try {
+            await widget.onVerified(context, code);
+          } catch (e) {
+            if (mounted) {
+              _snack('initials.otp_screen.verificationError'.tr(namedArgs: {'error': '$e'}));
+            }
+          }
         }
       } else {
         _snack('initials.otp_screen.invalidOrExpiredCode'.tr());

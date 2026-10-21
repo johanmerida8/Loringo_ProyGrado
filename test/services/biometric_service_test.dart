@@ -10,6 +10,9 @@
 // Deliberately not faked or skipped silently — excluded and documented,
 // same treatment as the other platform-channel-bound code in this suite
 // (permission_handler in notification_permission_service_test.dart).
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
@@ -89,8 +92,15 @@ void main() {
       // ACT
       final name = BiometricService.getBiometricTypeName(types);
 
-      // ASSERT
-      expect(name, 'Biometrics');
+      // ASSERT - the generic label is translated (common.biometricGeneric)
+      // rather than hard-coded. This plain unit test has no EasyLocalization
+      // loaded, so .tr() hands back the key itself; the English text that key
+      // resolves to in the app is checked straight from the translation file.
+      expect(name, 'common.biometricGeneric');
+      final en = json.decode(
+              File('assets/translations/en.json').readAsStringSync())
+          as Map<String, dynamic>;
+      expect((en['common'] as Map)['biometricGeneric'], 'Biometrics');
     });
   });
 }

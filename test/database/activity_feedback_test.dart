@@ -7,6 +7,7 @@
 // templates don't exist anywhere in lib/. What IS real is the persistence
 // step: Database.saveActivityFeedback/saveLessonQuizFeedback, tested here
 // against FakeFirebaseFirestore.
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -105,6 +106,65 @@ void main() {
           .doc('activity_2')
           .get();
       expect(doc.data()!['feedback'], 'Updated note');
+    });
+
+    DocumentReference<Map<String, dynamic>> progressDoc(String id) => fakeDb
+        .collection('teacherGroups')
+        .doc(groupId)
+        .collection('students')
+        .doc('student_1')
+        .collection('progress')
+        .doc(id);
+
+    test('ARRANGE-ACT-ASSERT: a tag alone (no written comment) is saved and marked parent-visible',
+        () async {
+      // ARRANGE - teacher picks only the quick rating, leaves the comment empty
+
+      // ACT
+      await database.saveActivityFeedback(
+        groupId: groupId,
+        studentId: 'student_1',
+        activityId: 'activity_3',
+        feedback: '',
+        feedbackTag: 'great_work',
+      );
+
+      // ASSERT
+      final data = (await progressDoc('activity_3').get()).data()!;
+      expect(data['feedbackTag'], 'great_work');
+      expect(data['feedback'], '');
+      expect(data['sharedWithParent'], true);
+    });
+
+    test('ARRANGE-ACT-ASSERT: lesson quiz feedback stores the tag, the comment and the parent-visible flag',
+        () async {
+      // ACT
+      await database.saveLessonQuizFeedback(
+        groupId: groupId,
+        studentId: 'student_1',
+        quizId: 'quiz_2',
+        feedback: 'Practice the colors again.',
+        feedbackTag: 'learning',
+      );
+
+      // ASSERT
+      final data = (await progressDoc('quiz_2').get()).data()!;
+      expect(data['feedbackTag'], 'learning');
+      expect(data['feedback'], 'Practice the colors again.');
+      expect(data['sharedWithParent'], true);
+    });
+
+    test('ARRANGE-ACT-ASSERT: a note saved before parent-visible feedback existed stays without the flag',
+        () async {
+      // ARRANGE - legacy note written as teacher-only (no sharedWithParent)
+      await progressDoc('activity_4').set({'feedback': 'Old private note'});
+
+      // ACT - nothing re-saves it
+
+      // ASSERT - the parent view (readOnly review screens) only shows notes
+      // with sharedWithParent == true, so this one stays hidden
+      final data = (await progressDoc('activity_4').get()).data()!;
+      expect(data.containsKey('sharedWithParent'), false);
     });
   });
 }

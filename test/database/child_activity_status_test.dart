@@ -149,5 +149,105 @@ void main() {
       // ASSERT
       expect(status['status'], 'due_today');
     });
+
+    // ── Quizzes in the parent's list (includeQuizzes) ──────────────────
+
+    Future<void> seedLessonQuiz() => fakeDb
+        .collection('content').doc('content_1')
+        .collection('units').doc('unit_1')
+        .collection('lessons').doc('lesson_1')
+        .collection('quizzes').doc('lq_1')
+        .set({'title': 'Lesson 1 — Lesson Quiz'});
+
+    Future<void> seedUnitQuiz() => fakeDb
+        .collection('content').doc('content_1')
+        .collection('units').doc('unit_1')
+        .collection('quizzes').doc('uq_1')
+        .set({'title': 'Unit 1 — Unit Test'});
+
+    Future<void> seedQuizProgress(String quizId, Map<String, dynamic> data) =>
+        fakeDb
+            .collection('teacherGroups').doc('group_1')
+            .collection('students').doc('student_1')
+            .collection('progress').doc(quizId)
+            .set({'type': 'quiz', ...data});
+
+    Future<Map<String, dynamic>> quizStatusFor(String quizId) async {
+      final list = await database.getChildActivityStatusList(
+          groupId: 'group_1', studentId: 'student_1', includeQuizzes: true);
+      return list.firstWhere((item) => item['quizId'] == quizId);
+    }
+
+    test('ARRANGE-ACT-ASSERT: without includeQuizzes the list stays activities-only (parent home counts unchanged)',
+        () async {
+      // ARRANGE
+      await database.createPersonalizedActivity(
+        groupId: 'group_1', contentId: 'content_1', unitId: 'unit_1',
+        lessonId: 'lesson_1', activityId: 'a1', title: 'A1', order: 1);
+      await seedLessonQuiz();
+      await seedUnitQuiz();
+
+      // ACT
+      final list = await database.getChildActivityStatusList(
+          groupId: 'group_1', studentId: 'student_1');
+
+      // ASSERT
+      expect(list.length, 1);
+      expect(list.single['type'], 'activity');
+    });
+
+    test('ARRANGE-ACT-ASSERT: a Lesson Quiz is locked until its lesson\'s activities are done, then open, then completed',
+        () async {
+      // ARRANGE
+      await database.createPersonalizedActivity(
+        groupId: 'group_1', contentId: 'content_1', unitId: 'unit_1',
+        lessonId: 'lesson_1', activityId: 'a1', title: 'A1', order: 1);
+      await seedLessonQuiz();
+
+      // ACT + ASSERT - activity not done yet: quiz locked
+      var status = await quizStatusFor('lq_1');
+      expect(status['type'], 'lesson_quiz');
+      expect(status['status'], 'not_open_yet');
+
+      // ACT + ASSERT - activity done: quiz open
+      await database.saveActivityCompletion(
+        studentId: 'student_1', activityId: 'a1', contentId: 'content_1',
+        unitId: 'unit_1', score: 100, correctAnswers: 5, wrongAnswers: 0,
+        xpBase: 100, bonusXP: 50);
+      status = await quizStatusFor('lq_1');
+      expect(status['status'], 'later');
+
+      // ACT + ASSERT - quiz finished: completed, with its stars
+      await seedQuizProgress('lq_1', {'isCompleted': true, 'stars': 2});
+      status = await quizStatusFor('lq_1');
+      expect(status['status'], 'completed');
+      expect(status['stars'], 2);
+    });
+
+    test('ARRANGE-ACT-ASSERT: a Unit Quiz that ran out of attempts counts as completed and reports whether the unit report was sent',
+        () async {
+      // ARRANGE - not passed (isCompleted false) but no attempts left
+      await seedUnitQuiz();
+      await seedQuizProgress('uq_1', {
+        'isCompleted': false,
+        'isClosedAfterAttempts': true,
+        'stars': 1,
+      });
+
+      // ACT + ASSERT - no report yet
+      var status = await quizStatusFor('uq_1');
+      expect(status['type'], 'unit_quiz');
+      expect(status['status'], 'completed');
+      expect(status['reportSent'], false);
+
+      // ACT + ASSERT - teacher sends the unit report (reports/{unitId})
+      await fakeDb
+          .collection('teacherGroups').doc('group_1')
+          .collection('students').doc('student_1')
+          .collection('reports').doc('unit_1')
+          .set({'reportType': 'unit', 'unitId': 'unit_1'});
+      status = await quizStatusFor('uq_1');
+      expect(status['reportSent'], true);
+    });
   });
 }

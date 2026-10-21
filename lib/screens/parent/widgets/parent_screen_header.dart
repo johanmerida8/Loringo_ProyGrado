@@ -19,6 +19,7 @@ class ParentScreenHeader extends StatelessWidget {
     this.leading,
     this.trailing,
     this.onBack,
+    this.showBack = true,
   });
 
   /// Main heading, e.g. "Join Group", "Luca's Path".
@@ -38,6 +39,10 @@ class ParentScreenHeader extends StatelessWidget {
   /// Defaults to Navigator.pop when not supplied.
   final VoidCallback? onBack;
 
+  /// false for root tabs (e.g. My Children in the parent's bottom nav),
+  /// which have nothing to go back to — the title then starts flush left.
+  final bool showBack;
+
   @override
   Widget build(BuildContext context) {
     // SafeArea(bottom: false): this header replaces Scaffold.appBar, which
@@ -54,22 +59,24 @@ class ParentScreenHeader extends StatelessWidget {
         ),
         child: Row(
           children: [
-            GestureDetector(
-              onTap: onBack ?? () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: AppColors.primarySoft(0.1),
-                  borderRadius: AppRadii.mdAll,
-                ),
-                child: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: AppColors.primary,
-                  size: 18,
+            if (showBack) ...[
+              GestureDetector(
+                onTap: onBack ?? () => Navigator.pop(context),
+                child: Container(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySoft(0.1),
+                    borderRadius: AppRadii.mdAll,
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: AppColors.primary,
+                    size: 18,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: AppSpacing.md),
+              const SizedBox(width: AppSpacing.md),
+            ],
             if (leading != null) ...[
               leading!,
               const SizedBox(width: AppSpacing.sm),

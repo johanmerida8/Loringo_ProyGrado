@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/admin/admin_view_images_screen.dart';
+import 'package:loringo_app/screens/admin/widgets/admin_screen_header.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/image_service.dart';
@@ -13,8 +14,12 @@ import 'package:loringo_app/utils/image_service.dart';
 class AdminImagesScreen extends StatelessWidget {
   const AdminImagesScreen({super.key});
 
-  Future<void> _showCreateDialog(BuildContext context) async {
-    final ctrl = TextEditingController();
+  // Create (categoryId == null) or rename an existing category. Renaming
+  // only changes displayName — see Database.updateCategory.
+  Future<void> _showCategoryDialog(BuildContext context,
+      {String? categoryId, String? ownerId, String? currentName}) async {
+    final isEdit = categoryId != null;
+    final ctrl = TextEditingController(text: currentName ?? '');
     final db   = Database();
     final uid  = FirebaseAuth.instance.currentUser!.uid;
 
@@ -29,11 +34,19 @@ class AdminImagesScreen extends StatelessWidget {
             decoration: BoxDecoration(
                 color: AppColors.primarySoft(0.1),
                 borderRadius: BorderRadius.circular(AppRadii.sm)),
-            child: const Icon(Icons.create_new_folder_rounded,
-                color: AppColors.primary, size: 22),
+            child: Icon(
+                isEdit
+                    ? Icons.drive_file_rename_outline_rounded
+                    : Icons.create_new_folder_rounded,
+                color: AppColors.primary,
+                size: 22),
           ),
           const SizedBox(width: AppSpacing.md),
-          Text('admin.admin_images_screen.newCategory'.tr(),
+          Text(
+              (isEdit
+                      ? 'admin.admin_images_screen.editCategory'
+                      : 'admin.admin_images_screen.newCategory')
+                  .tr(),
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         ]),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -70,18 +83,28 @@ class AdminImagesScreen extends StatelessWidget {
             onPressed: () async {
               final raw = ctrl.text.trim();
               if (raw.isEmpty) return;
-              // Shown to the user exactly as typed; Database.createCategory
-              // derives the folder-safe categoryName from it internally.
+              // Shown to the user exactly as typed; must still contain at
+              // least one letter or digit.
               if (Database.sanitizeCategoryName(raw).isEmpty) return;
               Navigator.pop(ctx);
+              if (isEdit && raw == currentName) return;
               try {
-                await db.createCategory(
-                    displayName: raw,
-                    ownerId: uid,
-                    ownerRole: 'image_manager');
+                if (isEdit) {
+                  await db.updateCategory(
+                      ownerId: ownerId ?? uid,
+                      categoryId: categoryId,
+                      displayName: raw);
+                } else {
+                  await db.createCategory(
+                      displayName: raw,
+                      ownerId: uid,
+                      ownerRole: 'image_manager');
+                }
                 if (context.mounted) {
                   _showSuccessSnackBar(context,
-                      'admin.admin_images_screen.categoryCreated'
+                      (isEdit
+                              ? 'admin.admin_images_screen.categoryUpdated'
+                              : 'admin.admin_images_screen.categoryCreated')
                           .tr(namedArgs: {'name': raw}));
                 }
               } catch (e) {
@@ -91,7 +114,7 @@ class AdminImagesScreen extends StatelessWidget {
                 }
               }
             },
-            child: Text('common.create'.tr(),
+            child: Text((isEdit ? 'common.save' : 'common.create').tr(),
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
@@ -228,7 +251,11 @@ class AdminImagesScreen extends StatelessWidget {
     final db = Database();
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      body: StreamBuilder<QuerySnapshot>(
+      body: Column(children: [
+        // Top-level tab: no back button (going back would leave the admin area).
+        AdminScreenHeader(
+            title: 'admin.admin_images_screen.title'.tr(), showBack: false),
+        Expanded(child: StreamBuilder<QuerySnapshot>(
         stream: db.getAdminCategoriesStream(),
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -239,7 +266,7 @@ class AdminImagesScreen extends StatelessWidget {
 
           if (docs.isEmpty) {
             return _EmptyCategories(
-                onTap: () => _showCreateDialog(context));
+                onTap: () => _showCategoryDialog(context));
           }
 
           return CustomScrollView(
@@ -248,11 +275,11 @@ class AdminImagesScreen extends StatelessWidget {
               SliverToBoxAdapter(
                 child: Container(
                   margin: const EdgeInsets.fromLTRB(
-                      AppSpacing.md, AppSpacing.md, AppSpacing.md,
-                      AppSpacing.sm),
+                      AppSpacing.md, AppSpacing.sm, AppSpacing.md,
+                      AppSpacing.xs),
                   padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.md,
-                      vertical: AppSpacing.md - 2),
+                      vertical: AppSpacing.sm),
                   decoration: BoxDecoration(
                     gradient: AppDecorations.primaryGradient,
                     borderRadius: BorderRadius.circular(AppRadii.md),
@@ -265,7 +292,7 @@ class AdminImagesScreen extends StatelessWidget {
                   ),
                   child: Row(children: [
                     const Icon(Icons.folder_special_rounded,
-                        color: AppColors.onPrimary, size: 28),
+                        color: AppColors.onPrimary, size: 24),
                     const SizedBox(width: AppSpacing.md),
                     Expanded(
                       child: Column(
@@ -288,7 +315,7 @@ class AdminImagesScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     GestureDetector(
-                      onTap: () => _showCreateDialog(context),
+                      onTap: () => _showCategoryDialog(context),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: AppSpacing.md - 2,
@@ -320,7 +347,7 @@ class AdminImagesScreen extends StatelessWidget {
               // ── Category list ──────────────────────────────────────────
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md, AppSpacing.xs, AppSpacing.md, 100),
+                    AppSpacing.md, AppSpacing.xs, AppSpacing.md, AppSpacing.lg),
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (ctx, i) {
@@ -447,23 +474,13 @@ class AdminImagesScreen extends StatelessWidget {
                                     },
                                   ),
                                 ])),
-                            GestureDetector(
-                              onTap: () => _deleteCategory(
+                            _CategoryActionsMenu(
+                              onEdit: () => _showCategoryDialog(context,
+                                  categoryId: docs[i].id,
+                                  ownerId: ownerId,
+                                  currentName: name),
+                              onDelete: () => _deleteCategory(
                                   context, db, ownerId, docs[i].id, name),
-                              child: Container(
-                                  padding: const EdgeInsets.all(
-                                      AppSpacing.sm),
-                                  margin: const EdgeInsets.only(
-                                      right: AppSpacing.xs),
-                                  decoration: BoxDecoration(
-                                      color: AppColors.danger
-                                          .withOpacity(0.06),
-                                      borderRadius:
-                                          BorderRadius.circular(
-                                              AppRadii.sm)),
-                                  child: Icon(Icons.delete_outline,
-                                      size: 18,
-                                      color: AppColors.danger)),
                             ),
                             Container(
                               margin: const EdgeInsets.only(
@@ -482,21 +499,55 @@ class AdminImagesScreen extends StatelessWidget {
             ],
           );
         },
-      ),
-      // ✅ heroTag único explícito — evita "multiple heroes share the same tag"
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'admin_categories_fab',
-        onPressed: () => _showCreateDialog(context),
-        backgroundColor: AppColors.primary,
-        elevation: 3,
-        icon: const Icon(Icons.create_new_folder_rounded,
-            color: AppColors.onPrimary),
-        label: Text('admin.admin_images_screen.newCategory'.tr(),
-            style: const TextStyle(
-                color: AppColors.onPrimary, fontWeight: FontWeight.bold)),
-      ),
+      )),
+      ]),
     );
   }
+}
+
+// ⋮ menu on each category card: Edit (rename) / Delete (asks to confirm).
+class _CategoryActionsMenu extends StatelessWidget {
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  const _CategoryActionsMenu({required this.onEdit, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<String>(
+        tooltip: '',
+        padding: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.md)),
+        onSelected: (v) => v == 'edit' ? onEdit() : onDelete(),
+        itemBuilder: (_) => [
+          PopupMenuItem(
+            value: 'edit',
+            child: Row(children: [
+              const Icon(Icons.edit_outlined,
+                  size: 18, color: AppColors.primary),
+              const SizedBox(width: AppSpacing.sm),
+              Text('common.edit'.tr()),
+            ]),
+          ),
+          PopupMenuItem(
+            value: 'delete',
+            child: Row(children: [
+              const Icon(Icons.delete_outline,
+                  size: 18, color: AppColors.danger),
+              const SizedBox(width: AppSpacing.sm),
+              Text('common.delete'.tr(),
+                  style: const TextStyle(color: AppColors.danger)),
+            ]),
+          ),
+        ],
+        child: Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            margin: const EdgeInsets.only(right: AppSpacing.xs),
+            decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(AppRadii.sm)),
+            child: Icon(Icons.more_vert_rounded,
+                size: 18, color: Colors.grey[600])),
+      );
 }
 
 class _EmptyCategories extends StatelessWidget {

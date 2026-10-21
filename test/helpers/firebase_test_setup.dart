@@ -24,7 +24,30 @@ import 'package:loringo_app/services/firebase_refs.dart';
   final firestore = FakeFirebaseFirestore();
   authInstance = auth;
   firestoreInstance = firestore;
+  findGroupByCodeCall = (code) => _fakeFindGroupByCode(firestore, code);
   return (auth: auth, firestore: firestore);
+}
+
+/// Stand-in for the `findGroupByCode` Cloud Function: same lookup the
+/// function's legacy path does (plaintext `groupCode` field, which is what
+/// seedTeacherGroup writes) and the same return shape, so screens that join
+/// groups can be tested end-to-end against FakeFirebaseFirestore.
+Future<Map<String, dynamic>?> _fakeFindGroupByCode(
+    FakeFirebaseFirestore db, String code) async {
+  final snap = await db
+      .collection('teacherGroups')
+      .where('groupCode', isEqualTo: code.trim().toUpperCase())
+      .limit(1)
+      .get();
+  if (snap.docs.isEmpty) return null;
+  final doc = snap.docs.first;
+  final data = doc.data();
+  return {
+    'groupId': doc.id,
+    'name': data['name'] ?? '',
+    'archived': data['archived'] == true,
+    'teacherId': data['teacherId'] ?? '',
+  };
 }
 
 /// Resets the global refs to fresh, empty fakes — deliberately NOT the real
@@ -34,4 +57,5 @@ import 'package:loringo_app/services/firebase_refs.dart';
 void tearDownMockedFirebase() {
   authInstance = MockFirebaseAuth();
   firestoreInstance = FakeFirebaseFirestore();
+  findGroupByCodeCall = (_) async => null;
 }

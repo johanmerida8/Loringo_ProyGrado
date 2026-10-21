@@ -1,13 +1,16 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:loringo_app/screens/admin/admin_navigation_screen.dart';
+import 'package:loringo_app/screens/initials/otp_screen.dart';
 import 'package:loringo_app/screens/teacher/teacher_home_screen.dart';
 import 'package:loringo_app/screens/parent/parent_navigation_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
 import 'package:loringo_app/screens/student/student_main_screen.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
+import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/services/auth/student_auth_service.dart';
 import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/services/notifications/one_signal_service.dart';
@@ -127,6 +130,19 @@ class _FirebaseAuthGate extends StatelessWidget {
               _initializeNotificationsForRole(uid, role!);
             }
 
+            // Teacher/Parent must have verified their email (OTP, same
+            // infra as password reset) before reaching the app -- this
+            // re-checks on every login, not just right after
+            // registration, so closing the app before verifying doesn't
+            // let it slip through. Admin (image_manager) is out of scope.
+            if ((role == 'teacher' || role == 'parent') &&
+                userData['emailVerified'] != true) {
+              final email = authSnapshot.data!.email;
+              if (email != null) {
+                return _EmailVerificationGate(email: email);
+              }
+            }
+
             switch (role) {
               case 'image_manager':
                 return AdminNavigationScreen();
@@ -185,6 +201,51 @@ class _FirebaseAuthGate extends StatelessWidget {
   }
 }
 
+// Sends a fresh OTP once (OTPService's own cooldown logic already
+// prevents spam if the app is reopened repeatedly before verifying) and
+// shows the same OTPScreen used at registration and password reset.
+// Reached whenever a signed-in Teacher/Parent's users/{uid}.emailVerified
+// is still false -- covers both right after registration (in case the
+// app was closed before finishing there) and any later login.
+class _EmailVerificationGate extends StatefulWidget {
+  const _EmailVerificationGate({required this.email});
+  final String email;
+
+  @override
+  State<_EmailVerificationGate> createState() =>
+      _EmailVerificationGateState();
+}
+
+class _EmailVerificationGateState extends State<_EmailVerificationGate> {
+  @override
+  void initState() {
+    super.initState();
+    OTPService().sendOTPToEmail(widget.email).catchError((_) {
+      // Cooldown/daily-limit errors are expected here (e.g. the code from
+      // registration is still valid) -- OTPScreen's own "Resend" lets the
+      // user request a fresh one once the cooldown clears.
+      return false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OTPScreen(
+      email: widget.email,
+      onVerified: (ctx, otp) async {
+        await FirebaseFunctions.instance
+            .httpsCallable('confirmEmailVerified')
+            .call();
+        if (!ctx.mounted) return;
+        Navigator.of(ctx).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthGate()),
+          (r) => false,
+        );
+      },
+    );
+  }
+}
+
 // Parent router - checks if parent has children
 class _ParentRouter extends StatefulWidget {
   final String parentId;
@@ -220,7 +281,7 @@ class _ParentRouterState extends State<_ParentRouter> with AutomaticKeepAliveCli
           .where('parentId', isEqualTo: widget.parentId)
           .limit(1)
           .get();
-      
+
       if (mounted) {
         setState(() {
           _hasChildren = snapshot.docs.isNotEmpty;
@@ -242,7 +303,7 @@ class _ParentRouterState extends State<_ParentRouter> with AutomaticKeepAliveCli
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    
+
     if (_isLoading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),

@@ -17,6 +17,8 @@ class AdminScreenHeader extends StatelessWidget {
     this.subtitle,
     this.color = AppColors.primary,
     this.onBack,
+    this.trailing,
+    this.showBack = true,
   });
 
   final String title;
@@ -25,6 +27,12 @@ class AdminScreenHeader extends StatelessWidget {
 
   /// Defaults to Navigator.pop when not supplied.
   final VoidCallback? onBack;
+
+  /// Optional action shown at the right end of the header row.
+  final Widget? trailing;
+
+  /// False for top-level tabs, where going back would leave the admin area.
+  final bool showBack;
 
   @override
   Widget build(BuildContext context) {
@@ -39,18 +47,20 @@ class AdminScreenHeader extends StatelessWidget {
         ),
         child: Row(
           children: [
-            GestureDetector(
-              onTap: onBack ?? () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: AppColors.primarySoft(0.1),
-                  borderRadius: BorderRadius.circular(AppRadii.md),
+            if (showBack) ...[
+              GestureDetector(
+                onTap: onBack ?? () => Navigator.pop(context),
+                child: Container(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySoft(0.1),
+                    borderRadius: BorderRadius.circular(AppRadii.md),
+                  ),
+                  child: Icon(Icons.arrow_back_rounded, color: color, size: 22),
                 ),
-                child: Icon(Icons.arrow_back_rounded, color: color, size: 22),
               ),
-            ),
-            const SizedBox(width: AppSpacing.md),
+              const SizedBox(width: AppSpacing.md),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -69,6 +79,10 @@ class AdminScreenHeader extends StatelessWidget {
                 ],
               ),
             ),
+            if (trailing != null) ...[
+              const SizedBox(width: AppSpacing.sm),
+              trailing!,
+            ],
           ],
         ),
       ),

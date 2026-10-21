@@ -166,6 +166,10 @@ class _ScreenTenState extends State<ScreenTen>
         isCorrect: result.isCorrect,
         captureError: false,
         spokenText: result.recognizedText,
+        missedWords: result.isImperfect ? result.missedWords : const [],
+        approximateWords:
+            result.isImperfect ? result.approximateWords : const [],
+        lowConfidence: result.isLowConfidence,
       );
     };
 
@@ -255,7 +259,7 @@ class _ScreenTenState extends State<ScreenTen>
       if (!granted) return;
     }
 
-    await _speechService.startListening(targetPhrase: _phrase);
+    await _speechService.startListening(targetPhrase: _phrase, patient: true);
   }
 
   void _stopRecording() => _speechService.stopListening();
@@ -265,6 +269,9 @@ class _ScreenTenState extends State<ScreenTen>
     required bool captureError,
     String? errorMessage,
     String spokenText = '',
+    List<String> missedWords = const [],
+    List<String> approximateWords = const [],
+    bool lowConfidence = false,
   }) {
     if (_isResultSheetOpen) return;
 
@@ -288,14 +295,32 @@ class _ScreenTenState extends State<ScreenTen>
 
     TaskFeedback.fire(isCorrect);
 
+    // Passed, but with a word missing or only approximately said: still
+    // correct, but not "perfect".
+    final practiceWords = [...missedWords, ...approximateWords];
+    final isPartial = isCorrect && practiceWords.isNotEmpty;
+    // Exact text, but the recognizer wasn't confident (it may have
+    // corrected a mispronounced word): not "perfect" either, though there
+    // is no specific word to point at.
+    final isUnclear = isCorrect && !isPartial && lowConfidence;
+
     final message = captureError
         ? (errorMessage ?? 'initials.screen_nine.couldntCaptureVoice'.tr())
         : isCorrect
-            ? 'initials.screen_ten.perfectRepeated'.tr()
+            ? (isPartial
+                ? (missedWords.isNotEmpty
+                    ? 'initials.task_result_sheet.almostPerfectMissedWord'.tr()
+                    : 'initials.task_result_sheet.almostPerfectPronunciation'
+                        .tr())
+                : isUnclear
+                    ? 'initials.task_result_sheet.almostPerfectClarity'.tr()
+                    : 'initials.screen_ten.perfectRepeated'.tr())
             : 'initials.screen_ten.almostThereListenAgain'.tr();
 
     final messageColor = isCorrect
-        ? const Color(0xFF2E7D32)
+        ? ((isPartial || isUnclear)
+            ? const Color(0xFFE65100)
+            : const Color(0xFF2E7D32))
         : captureError
             ? Colors.grey.shade700
             : const Color(0xFFE65100);
@@ -306,8 +331,13 @@ class _ScreenTenState extends State<ScreenTen>
       isPracticeRound: widget.isPracticeRound,
       message: message,
       messageColor: messageColor,
-      extraContent: spokenText.isNotEmpty
-          ? TaskResultSpokenTextBox(spokenText: spokenText, showLabel: true)
+      // The phrase with each word marked — never the raw microphone text,
+      // which may contain words the student didn't say.
+      extraContent: (isPartial || (!isCorrect && spokenText.isNotEmpty))
+          ? TaskResultPhraseCheck(
+              targetPhrase: _phrase,
+              spokenText: spokenText,
+            )
           : null,
       onContinue: () {
         _isResultSheetOpen = false;
@@ -328,6 +358,10 @@ class _ScreenTenState extends State<ScreenTen>
             'type': 'listen_and_speak',
             'targetPhrase': _phrase,
             'recognizedText': spokenText,
+            if (missedWords.isNotEmpty) 'missedWords': missedWords,
+            if (approximateWords.isNotEmpty)
+              'approximateWords': approximateWords,
+            if (isUnclear) 'lowConfidence': true,
           });
         }
       },

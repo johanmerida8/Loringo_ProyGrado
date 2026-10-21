@@ -3,12 +3,15 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/admin/admin_profile_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   final String name;
-  const AdminDashboardScreen({super.key, required this.name});
+  final bool isWide;
+  const AdminDashboardScreen(
+      {super.key, required this.name, this.isWide = false});
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
@@ -46,6 +49,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Profile icon ─────────────────────────────────────────────
+            if (!widget.isWide)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const AdminProfileScreen(showBackButton: true),
+                    ),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.person_rounded,
+                        color: AppColors.primary, size: 24),
+                  ),
+                ),
+              ),
+            if (!widget.isWide) const SizedBox(height: AppSpacing.sm),
+
             // ── Hero welcome card ─────────────────────────────────────────
             Container(
               width: double.infinity,

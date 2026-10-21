@@ -31,7 +31,12 @@ void main() {
       setUpMockedFirebase(signedInUser: MockUser(uid: 'parent_1'));
       await pumpApp(tester, const ParentRegisterChildScreen());
 
-      // ACT
+      // ACT - the Register button stays disabled until the data-consent box
+      // is ticked, so tick it first; the name field is left empty
+      final consentCheckbox = find.byType(Checkbox);
+      await tester.ensureVisible(consentCheckbox);
+      await tester.tap(consentCheckbox);
+      await tester.pump();
       final registerButton = find.widgetWithText(ElevatedButton, 'Register Child');
       await tester.ensureVisible(registerButton);
       await tester.tap(registerButton);
@@ -72,8 +77,9 @@ void main() {
       // is always 64 characters.
       expect(student.containsKey('accessCode'), false);
       expect((student['accessCodeHash'] as String).length, 64);
-      expect(student['childDataConsentAcceptedAt'], isNotNull);
-      expect(student['childDataConsentVersion'], isNotEmpty);
+      // The child-data consent is only a gate; it is not stored on the student.
+      expect(student.containsKey('childDataConsentAcceptedAt'), false);
+      expect(student.containsKey('childDataConsentVersion'), false);
     });
 
     testWidgets('ARRANGE-ACT-ASSERT: an 9th child registration is rejected once 8 already exist',

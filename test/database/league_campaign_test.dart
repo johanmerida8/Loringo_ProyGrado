@@ -4,7 +4,7 @@
 // own private `LeagueSystem` class (league tiers, XP-to-next-league math)
 // that has no counterpart anywhere in lib/ — the real league tier/XP
 // thresholds live in lib/screens/student/student_league_screen.dart and
-// lib/screens/teacher/teacher_league_screen.dart as UI-only rendering
+// lib/screens/teacher/league/teacher_league_screen.dart as UI-only rendering
 // logic, not a reusable class, and the actual persisted business rule is
 // Database.saveLeagueCampaign/getLeagueCampaign (the per-teacher reward
 // campaign config), tested here for real against FakeFirebaseFirestore.

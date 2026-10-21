@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 
 /// Small seed builders for the Firestore document shapes Database expects,
@@ -69,6 +70,28 @@ Future<void> seedTeacherGroup(
     'teacherId': teacherId,
     'groupCode': groupCode,
     'name': name,
+  });
+}
+
+/// Seeds a leagueCampaigns/{teacherId} doc — see
+/// Database.saveLeagueCampaign in lib/services/database/database.dart for
+/// the real shape. Used to test seasonXp's active-campaign gating in
+/// Database.saveActivityCompletion/saveQuizCompletion.
+Future<void> seedLeagueCampaign(
+  FakeFirebaseFirestore db, {
+  required String teacherId,
+  String scope = 'all', // 'single' | 'all'
+  String? groupId,
+  DateTime? startDate,
+  DateTime? endDate,
+  Map<String, String> rewards = const {},
+}) {
+  return db.collection('leagueCampaigns').doc(teacherId).set({
+    'scope': scope,
+    if (groupId != null) 'groupId': groupId,
+    if (startDate != null) 'startDate': Timestamp.fromDate(startDate),
+    if (endDate != null) 'endDate': Timestamp.fromDate(endDate),
+    'rewards': rewards,
   });
 }
 

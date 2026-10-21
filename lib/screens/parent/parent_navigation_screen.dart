@@ -19,6 +19,7 @@ import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/identity_confirmation.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/connectivity_banner.dart';
 
 class ParentNavigationScreen extends StatefulWidget {
   const ParentNavigationScreen({super.key});
@@ -297,7 +298,8 @@ class _ParentNavigationScreenState extends State<ParentNavigationScreen> {
             AppNavItem(icon: Icons.description_rounded, label: _navLabels[2]),
           ],
         ),
-        bodyBuilder: (context, isWide) => isLoading
+        bodyBuilder: (context, isWide) => ConnectivityBanner(
+          child: isLoading
             ? const AppLoadingIndicator()
             : IndexedStack(
                 index: _currentIndex,
@@ -329,6 +331,7 @@ class _ParentNavigationScreenState extends State<ParentNavigationScreen> {
                   ),
                 ],
               ),
+        ),
       ),
     );
   }

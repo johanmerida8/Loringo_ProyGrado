@@ -73,10 +73,30 @@ void main() {
         () {
       // ARRANGE & ACT & ASSERT - exercises the actual production list, not
       // a hand-copied one, so this test keeps working if the list changes.
-      for (final term in kidsafeModerationBlockedTerms) {
+      for (final term in {
+        ...kidsafeModerationBlockedTerms,
+        ...kidsafeModerationBlockedWords,
+      }) {
         final isBlocked = imageService.checkImageNameForBlockedTerms('$term.png');
         expect(isBlocked, true, reason: 'Expected "$term.png" to be blocked');
       }
+    });
+
+    test('ARRANGE-ACT-ASSERT: short blocked words only match a whole word, not part of a longer one',
+        () {
+      // ARRANGE & ACT & ASSERT
+      for (final harmless in [
+        'method.png',
+        'cracker.png',
+        'essex.png',
+        'breaststroke.png',
+        'penetrate.png',
+      ]) {
+        expect(imageService.checkImageNameForBlockedTerms(harmless), false,
+            reason: 'Expected "$harmless" to pass');
+      }
+      expect(imageService.checkImageNameForBlockedTerms('sex-scene.png'), true);
+      expect(imageService.checkImageNameForBlockedTerms('drug deal 1.png'), true);
     });
   });
 }

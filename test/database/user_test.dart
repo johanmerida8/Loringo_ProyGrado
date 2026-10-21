@@ -2,9 +2,14 @@
 //
 // Replaces test/admin_validation_test.dart, which reimplemented its own
 // `AdminManager` class with a hand-picked MAX_ADMINS = 3 rule that doesn't
-// match the real app: Database.createUser (lib/services/database/database.dart)
-// only allows exactly ONE 'image_manager' account — a stricter, different
-// rule than the fake test asserted. Tested here for real against
+// match the real app.
+//
+// Note on naming: the app has no "administrator" role. `image_manager` is
+// an elevated role that only curates the educational image library.
+// Database.createUser never auto-promotes based on the name argument —
+// public self-registration can only create 'teacher'/'parent' accounts;
+// image_manager accounts are not created through this app's sign-up flow
+// at all (see register_screen.dart). Tested here for real against
 // FakeFirebaseFirestore.
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -56,7 +61,7 @@ void main() {
       database = Database(firestore: fakeDb);
     });
 
-    test('ARRANGE-ACT-ASSERT: a user named "admin" is promoted to the image_manager role',
+    test('ARRANGE-ACT-ASSERT: a user named "admin" keeps the requested role — no name-based promotion',
         () async {
       // ARRANGE & ACT
       await database.createUser(
@@ -67,13 +72,13 @@ void main() {
         privacyPolicyAccepted: true,
       );
 
-      // ASSERT - name-based promotion overrides the requested role
+      // ASSERT - the name "admin" no longer has any special meaning
       final doc = await database.getUser('uid_1');
       final data = doc.data() as Map<String, dynamic>;
-      expect(data['role'], 'image_manager');
+      expect(data['role'], 'teacher');
     });
 
-    test('ARRANGE-ACT-ASSERT: "administrador" (Spanish) is also recognized as the admin name',
+    test('ARRANGE-ACT-ASSERT: a user named "administrador" (Spanish) also keeps the requested role',
         () async {
       // ARRANGE & ACT
       await database.createUser(
@@ -86,47 +91,49 @@ void main() {
 
       // ASSERT
       final doc = await database.getUser('uid_2');
-      expect((doc.data() as Map<String, dynamic>)['role'], 'image_manager');
+      expect((doc.data() as Map<String, dynamic>)['role'], 'parent');
     });
 
-    test('ARRANGE-ACT-ASSERT: a second admin-named signup is rejected once one image_manager exists',
+    test('ARRANGE-ACT-ASSERT: createUser can still create an image_manager account when role is passed explicitly',
         () async {
-      // ARRANGE - a first admin account already exists
+      // ARRANGE & ACT - only reachable by a caller other than RegisterScreen
+      // (e.g. a manual/back-office flow), since the public sign-up form
+      // never offers or sends role: 'image_manager'
       await database.createUser(
-        uid: 'uid_1',
-        name: 'admin',
-        email: 'admin@loringo.app',
-        role: 'teacher',
-        privacyPolicyAccepted: true,
-      );
-
-      // ACT & ASSERT - the real limit is exactly 1, not 3 (unlike the old
-      // fake test's assumption)
-      expect(
-        () => database.createUser(
-          uid: 'uid_3',
-          name: 'admin',
-          email: 'admin2@loringo.app',
-          role: 'teacher',
-          privacyPolicyAccepted: true,
-        ),
-        throwsA(isA<Exception>()),
-      );
-    });
-
-    test('ARRANGE-ACT-ASSERT: a non-admin name keeps the requested role', () async {
-      // ARRANGE & ACT
-      await database.createUser(
-        uid: 'uid_4',
-        name: 'Maria Teacher',
+        uid: 'uid_3',
+        name: 'Maria',
         email: 'maria@loringo.app',
-        role: 'teacher',
+        role: 'image_manager',
         privacyPolicyAccepted: true,
       );
 
       // ASSERT
-      final doc = await database.getUser('uid_4');
-      expect((doc.data() as Map<String, dynamic>)['role'], 'teacher');
+      final doc = await database.getUser('uid_3');
+      expect((doc.data() as Map<String, dynamic>)['role'], 'image_manager');
+    });
+
+    test('ARRANGE-ACT-ASSERT: a second explicit image_manager creation is rejected once one exists',
+        () async {
+      // ARRANGE - a first image_manager account already exists
+      await database.createUser(
+        uid: 'uid_3',
+        name: 'Maria',
+        email: 'maria@loringo.app',
+        role: 'image_manager',
+        privacyPolicyAccepted: true,
+      );
+
+      // ACT & ASSERT - the cap is exactly 1
+      expect(
+        () => database.createUser(
+          uid: 'uid_8',
+          name: 'Pedro',
+          email: 'pedro@loringo.app',
+          role: 'image_manager',
+          privacyPolicyAccepted: true,
+        ),
+        throwsA(isA<Exception>()),
+      );
     });
 
     test('ARRANGE-ACT-ASSERT: createUser does not persist privacy policy consent fields', () async {

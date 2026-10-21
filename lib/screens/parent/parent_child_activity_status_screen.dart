@@ -5,6 +5,9 @@ import 'package:provider/provider.dart';
 import 'package:loringo_app/components/app_loading_indicator.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
+import 'package:loringo_app/screens/teacher/progress/activity_review_screen.dart';
+import 'package:loringo_app/screens/teacher/progress/lesson_quiz_review_screen.dart';
+import 'package:loringo_app/screens/teacher/progress/unit_quiz_review_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -49,13 +52,68 @@ class _ParentChildActivityStatusScreenState
     _future = _db.getChildActivityStatusList(
       groupId: widget.child['groupId'] as String,
       studentId: widget.child['id'] as String,
+      // Lesson Quizzes and Unit Quizzes too, so the parent sees everything
+      // the child works on, not just activities.
+      includeQuizzes: true,
     );
+  }
+
+  /// Eye button on a completed row: opens the SAME review screen the
+  /// teacher uses (answers, score, task detail), in readOnly mode — the
+  /// parent sees the teacher's feedback but can't edit anything.
+  void _openResult(Map<String, dynamic> item) {
+    final groupId = widget.child['groupId'] as String;
+    final studentId = widget.child['id'] as String;
+    final type = item['type'] as String? ?? 'activity';
+    final Widget screen;
+    switch (type) {
+      case 'lesson_quiz':
+        screen = LessonQuizReviewScreen(
+          studentId: studentId,
+          studentName: _childName,
+          groupId: groupId,
+          contentId: item['contentId'] as String,
+          unitId: item['unitId'] as String,
+          lessonId: item['lessonId'] as String,
+          quizId: item['quizId'] as String,
+          quizTitle: item['title'] as String,
+          readOnly: true,
+        );
+      case 'unit_quiz':
+        screen = UnitQuizReviewScreen(
+          studentId: studentId,
+          studentName: _childName,
+          groupId: groupId,
+          quizId: item['quizId'] as String,
+          quizTitle: item['title'] as String,
+          unitId: item['unitId'] as String,
+          contentId: item['contentId'] as String,
+          readOnly: true,
+        );
+      default:
+        screen = ActivityReviewScreen(
+          studentId: studentId,
+          studentName: _childName,
+          groupId: groupId,
+          activityId: item['activityId'] as String,
+          activityTitle: item['title'] as String,
+          readOnly: true,
+        );
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
   /// Maps the richer per-activity `status` onto one of the three top-level
   /// filter buckets. 'not_open_yet' items count as Upcoming — they're not
   /// done and not overdue, just not reachable yet.
-  bool _matchesFilter(String status) {
+  ///
+  /// Quizzes (Lesson/Unit) only ever show under Completed: Upcoming and
+  /// Past Due are about turn-in dates, and quizzes have none — what a
+  /// parent needs from a quiz is the finished result (eye button).
+  bool _matchesFilter(Map<String, dynamic> item) {
+    final status = item['status'] as String;
+    final type = item['type'] as String? ?? 'activity';
+    if (type != 'activity') return _filter == 'completed' && status == 'completed';
     switch (_filter) {
       case 'past_due':
         return status == 'past_due';
@@ -125,9 +183,18 @@ class _ParentChildActivityStatusScreenState
     switch (status) {
       case 'completed':
         final stars = item['stars'] as int? ?? 0;
-        return stars > 0
+        final done = stars > 0
             ? '$ns.completedWithStars'.tr(namedArgs: {'stars': '$stars'})
             : '$ns.pillCompleted'.tr();
+        // A Unit Quiz is "completed" as soon as the child finishes it;
+        // the teacher's report may come later, so say which it is.
+        if (item['type'] == 'unit_quiz') {
+          final report = item['reportSent'] == true
+              ? '$ns.reportSent'.tr()
+              : '$ns.reportPending'.tr();
+          return '$done · $report';
+        }
+        return done;
       case 'past_due':
         if (close != null && close.isBefore(DateTime.now())) {
           return '$ns.windowClosed'.tr();
@@ -158,6 +225,10 @@ class _ParentChildActivityStatusScreenState
         }
         return '${_dateLabel(item)} ${_formatDate(relevant)}';
       case 'later':
+        // Quizzes have no dates — "later" just means it's open now.
+        if (item['type'] == 'lesson_quiz' || item['type'] == 'unit_quiz') {
+          return '$ns.quizAvailableNow'.tr();
+        }
         final relevant = _relevantDate(item);
         return relevant == null
             ? '$ns.noDueDate'.tr()
@@ -258,7 +329,7 @@ class _ParentChildActivityStatusScreenState
                 // most time-sensitive activity surfaces first regardless
                 // of which unit/lesson it belongs to.
                 final filtered = all
-                    .where((item) => _matchesFilter(item['status'] as String))
+                    .where(_matchesFilter)
                     .toList();
                 if (_filter == 'upcoming') {
                   filtered.sort(
@@ -287,6 +358,9 @@ class _ParentChildActivityStatusScreenState
                       subtitle: _subtitleFor(item),
                       iconFor: _iconFor,
                       pillLabel: _pillLabel,
+                      onView: item['status'] == 'completed'
+                          ? () => _openResult(item)
+                          : null,
                     );
                   },
                 );
@@ -352,12 +426,16 @@ class _ActivityCard extends StatelessWidget {
   final String subtitle;
   final ({IconData icon, Color color}) Function(String status) iconFor;
   final String Function(String status) pillLabel;
+  // Non-null only for completed rows: shows the eye button that opens the
+  // read-only review (results + teacher feedback).
+  final VoidCallback? onView;
 
   const _ActivityCard({
     required this.item,
     required this.subtitle,
     required this.iconFor,
     required this.pillLabel,
+    this.onView,
   });
 
   @override
@@ -366,6 +444,20 @@ class _ActivityCard extends StatelessWidget {
     final status = item['status'] as String;
     final visuals = iconFor(status);
     final unitTitle = item['unitTitle'] as String? ?? '';
+    final type = item['type'] as String? ?? 'activity';
+    const ns = 'parent.parent_child_activity_status_screen';
+    // Every row gets a type tag so activities, Lesson Quizzes and Unit
+    // Tests are told apart at a glance.
+    final String typeLabel = switch (type) {
+      'lesson_quiz' => '$ns.lessonQuizBadge'.tr(),
+      'unit_quiz' => '$ns.unitQuizBadge'.tr(),
+      _ => '$ns.activityBadge'.tr(),
+    };
+    final Color typeColor = switch (type) {
+      'lesson_quiz' => AppColors.primaryLight,
+      'unit_quiz' => AppColors.primaryDark,
+      _ => const Color(0xFF00897B), // teal — distinct from both quiz tags
+    };
 
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -406,6 +498,25 @@ class _ActivityCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: typeColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadii.sm),
+                  ),
+                  child: Text(
+                    typeLabel,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: typeColor,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
@@ -433,6 +544,14 @@ class _ActivityCard extends StatelessWidget {
               ),
             ),
           ),
+          if (onView != null)
+            IconButton(
+              tooltip: '$ns.viewResult'.tr(),
+              icon: const Icon(Icons.visibility_rounded),
+              color: AppColors.primary,
+              visualDensity: VisualDensity.compact,
+              onPressed: onView,
+            ),
         ],
       ),
     );

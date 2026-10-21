@@ -14,7 +14,9 @@ import 'package:loringo_app/theme/app_theme.dart';
 /// Plays the celebration sound and shows the ascension card. Fire this
 /// after confirming (by comparing tierForXp before/after) that the
 /// student's tier actually went up — this function itself doesn't check.
-Future<void> showLeagueAscensionDialog(
+/// Resolves to true when the student tapped "Continue" (caller then opens
+/// the League tab), null/false if they dismissed it by tapping outside.
+Future<bool?> showLeagueAscensionDialog(
   BuildContext context, {
   required String leagueName,
   required String? leagueImage,
@@ -24,7 +26,7 @@ Future<void> showLeagueAscensionDialog(
     'assets/sound/level-up.mp3',
     volume: 0.6,
   );
-  return showDialog(
+  return showDialog<bool>(
     context: context,
     barrierDismissible: true,
     barrierColor: Colors.black54,
@@ -99,7 +101,7 @@ class _LeagueAscensionCard extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(context).pop(true),
               style: ElevatedButton.styleFrom(
                 backgroundColor: leagueColor,
                 foregroundColor: AppColors.onPrimary,

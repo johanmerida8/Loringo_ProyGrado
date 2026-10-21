@@ -1,12 +1,12 @@
 // functions/src/scheduledNotifications.ts
 //
-// Hourly cron (see notifyScheduledActivities's own doc comment below for
-// why hourly, not daily) that finds activities whose `scheduledDate`
-// falls in the current hour and pushes a notification to the parent of
+// Every-3-hours cron (see notifyScheduledActivities's own doc comment below
+// for why not daily) that finds activities whose `scheduledDate`
+// has passed and pushes a notification to the parent of
 // every student who now has access to that newly-unlocked content.
 //
 // This file also exports notifyClosingSoonActivities: a second,
-// separately-scoped hourly function that warns a parent when an
+// separately-scoped every-3-hours function that warns a parent when an
 // activity's `closeDate` (the hard turn-in cutoff, turn_in_widget.dart)
 // is coming up within the next day and the work is still incomplete —
 // kept in this file rather than notifyOverdueActivities.ts since it's a
@@ -130,8 +130,8 @@ function formatCloseTime(d: Date): string {
 }
 
 /**
- * Runs once every hour, on the hour. Firestore Cloud Scheduler cron
- * syntax: "0 * * * *" = minute 0 of every hour, in the function's
+ * Runs every 3 hours, on the hour (was hourly; cut to save Cloud
+ * Functions CPU quota). Cron: minute 0, every 3rd hour, in the function's
  * configured timeZone.
  *
  * Catches every activity whose scheduledDate has passed and hasn't been
@@ -152,7 +152,7 @@ function formatCloseTime(d: Date): string {
  */
 export const notifyScheduledActivities = onSchedule(
   {
-    schedule: "0 * * * *",
+    schedule: "0 */3 * * *",
     timeZone: "America/La_Paz",
     secrets: [ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY],
   },
@@ -320,21 +320,21 @@ export const notifyScheduledActivities = onSchedule(
 );
 
 /**
- * Runs hourly, same cadence as notifyScheduledActivities above and for
+ * Runs every 3 hours, same cadence as notifyScheduledActivities above and for
  * the same reason (closeDate carries a specific time-of-day). Looks
  * ahead 24 hours for activities whose `closeDate` is coming up and that
  * are still incomplete, and warns the parent before the window shuts —
  * complementing notifyOverdueActivities.ts's after-the-fact "window
- * closed" wording with a heads-up beforehand. Dedup marker
- * (`closingSoonNotifiedAt`, on the student's progress doc, same pattern
- * as notifyOverdueActivities.ts's `overdueNotifiedAt`) keeps this to one
+ * closed" wording with a heads-up beforehand. Dedup (a `dedupKeys` entry
+ * on the notification doc itself, keyed by student + activity + closeDate,
+ * same pattern as notifyOverdueActivities.ts) keeps this to one
  * notification per student/activity pair even though a fixed closeDate
  * stays inside the rolling 24h lookahead window across many consecutive
- * hourly runs.
+ * runs. The 24h lookahead is far wider than the 3h gap between runs, so the warning still lands well before the close.
  */
 export const notifyClosingSoonActivities = onSchedule(
   {
-    schedule: "0 * * * *",
+    schedule: "0 */3 * * *",
     timeZone: "America/La_Paz",
     secrets: [ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY],
   },
@@ -364,6 +364,9 @@ export const notifyClosingSoonActivities = onSchedule(
     // parentId -> Set of "childName: activityTitle" pairs, same
     // one-push-per-parent aggregation as the other two functions.
     const parentsToNotify = new Map<string, Set<string>>();
+    // parentId -> dedup keys of the pairs that parent's notification
+    // summarizes (stored on the notification doc, see the dedup check below).
+    const parentKeys = new Map<string, string[]>();
 
     for (const activityDoc of closingSoonSnap.docs) {
       const activityId = activityDoc.id;
@@ -373,6 +376,7 @@ export const notifyClosingSoonActivities = onSchedule(
       // "2:30 PM" -- always defined here since this query already
       // filters to closeDate within the next 24h.
       const closeTimestamp = activityDoc.data().closeDate as Timestamp;
+      const closeMillis = closeTimestamp.toMillis();
       const closeTimeLabel = formatCloseTime(closeTimestamp.toDate());
 
       const contentDoc = await db.collection("content").doc(contentId).get();
@@ -411,9 +415,22 @@ export const notifyClosingSoonActivities = onSchedule(
         const isCompleted = progressDoc.exists && progressDoc.data()?.isCompleted === true;
         if (isCompleted) continue;
 
+        // closingSoonNotifiedAt on the progress doc is the legacy marker,
+        // still honored until old ones are cleaned up. The current record
+        // lives on the notification docs (`dedupKeys`) — a marker on the
+        // progress doc created one for students who never started the
+        // activity. The key carries the close date, so moving it re-arms
+        // the warning.
         if (progressDoc.exists && progressDoc.data()?.closingSoonNotifiedAt) {
           continue;
         }
+        const dedupKey = `${studentId}_${activityId}_closing_${closeMillis}`;
+        const alreadyNotified = await db
+          .collection("notifications")
+          .where("dedupKeys", "array-contains", dedupKey)
+          .limit(1)
+          .get();
+        if (!alreadyNotified.empty) continue;
 
         const studentDoc = await db.collection("students").doc(studentId).get();
         if (!studentDoc.exists) continue;
@@ -427,11 +444,7 @@ export const notifyClosingSoonActivities = onSchedule(
         parentsToNotify.get(parentId)!.add(
           `${childName}: ${activityTitle} closes at ${closeTimeLabel}`
         );
-
-        await progressDoc.ref.set(
-          { closingSoonNotifiedAt: Timestamp.now() },
-          { merge: true }
-        );
+        parentKeys.set(parentId, [...(parentKeys.get(parentId) ?? []), dedupKey]);
       }
     }
 
@@ -460,6 +473,7 @@ export const notifyClosingSoonActivities = onSchedule(
             message: body,
             isRead: false,
             createdAt: Timestamp.now(),
+            dedupKeys: parentKeys.get(parentId) ?? [],
           })
           .then(() => undefined)
       );

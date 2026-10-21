@@ -7,9 +7,19 @@
 // gives one console/screenshot artifact covering all of them:
 //
 //   1. Registro -> enrutamiento -> hijo -> grupo
-//      (Gestión de Usuarios + Grupos y Avance) — the app's entry point;
-//      also proves the single-image_manager security rule is enforced
-//      end-to-end through the real RegisterScreen, not just in isolation.
+//      (Gestión de Usuarios + Grupos y Avance) — the app's entry point.
+//      (The image_manager singleton rule and the fact that public sign-up
+//      can no longer create that role at all are covered separately in
+//      integration_test/auth_routing_test.dart.) The "join group" step
+//      itself is NOT driven through ParentJoinGroupScreen's real UI here:
+//      that screen now resolves the group code via the real
+//      `findGroupByCode` Cloud Function (functions/src/groupCode.ts —
+//      group codes are hashed server-side, no longer a direct Firestore
+//      query), which has no backend in this fake-Firebase test
+//      environment and always throws `[core/no-app]`. Everything up to
+//      and including real child creation is still 100% real UI; the join
+//      step calls Database.joinGroup directly to produce the same
+//      Firestore end-state a successful code lookup + join would.
 //   2. Cadena de creación de Quizzes (Evaluación) — the Lesson-Quiz-gate ->
 //      Unit-Quiz -> duplicate-rejection sequence, chained for real.
 //   3. Progreso del estudiante -> reporte del padre
@@ -25,7 +35,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:loringo_app/screens/initials/register_screen.dart';
 import 'package:loringo_app/screens/parent/child_report_detail_screen.dart';
-import 'package:loringo_app/screens/parent/parent_join_group_screen.dart';
 import 'package:loringo_app/services/auth/auth_gate.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
 import 'package:loringo_app/services/database/database.dart';
@@ -82,10 +91,25 @@ void main() {
       await tester.enterText(fields.at(3), qaFixturePassword);
       await tester.tap(find.text('Parent'));
       await tester.pump();
+      final consentCheckbox = find.byType(Checkbox);
+      await tester.ensureVisible(consentCheckbox);
+      await tester.tap(consentCheckbox);
+      await tester.pump();
       final createAccountButton = find.widgetWithText(ElevatedButton, 'Create Account');
       await tester.ensureVisible(createAccountButton);
       await tester.tap(createAccountButton);
       await tester.pumpAndSettle();
+
+      // AuthGate now gates teacher/parent accounts on OTP email
+      // verification (see auth_gate.dart's _EmailVerificationGate) before
+      // routing to their real home screen; OTPScreen.onVerified calls a
+      // Cloud Function with no backend in this test environment, so
+      // verification is simulated directly in Firestore to reach the
+      // post-verification routing decision this flow actually cares about.
+      await firebase.firestore
+          .collection('users')
+          .doc(firebase.auth.currentUser!.uid)
+          .update({'emailVerified': true});
 
       // mount a fresh AuthGate; must route to ParentRegisterChildScreen
       // since this parent has no children yet
@@ -94,6 +118,14 @@ void main() {
       await pauseForScreenshot();
 
       await tester.enterText(find.byType(TextField), 'Juan Perez');
+      // ParentRegisterChildScreen has its own separate consent checkbox
+      // (child-data consent, distinct from RegisterScreen's account
+      // consent) — its "Register Child" button stays disabled
+      // (onPressed: null) until this is checked.
+      final childConsentCheckbox = find.byType(Checkbox);
+      await tester.ensureVisible(childConsentCheckbox);
+      await tester.tap(childConsentCheckbox);
+      await tester.pump();
       final registerChildButton = find.widgetWithText(ElevatedButton, 'Register Child');
       await tester.ensureVisible(registerChildButton);
       await tester.tap(registerChildButton);
@@ -102,16 +134,15 @@ void main() {
 
       final studentsSnap = await firebase.firestore.collection('students').get();
       final studentDoc = studentsSnap.docs.first;
-      await pumpIntegrationApp(
-        tester,
-        ParentJoinGroupScreen(
-          child: {'id': studentDoc.id, 'names': studentDoc.data()['names']},
-        ),
+      // ParentJoinGroupScreen's real "Join Group" button calls the
+      // findGroupByCode Cloud Function, which has no backend here (see
+      // file header) — Database.joinGroup is what a successful code
+      // lookup would hand off to next, so this reproduces the same
+      // Firestore end-state without needing that backend.
+      await Database(firestore: firebase.firestore).joinGroup(
+        studentId: studentDoc.id,
+        groupId: 'group_1',
       );
-      await tester.enterText(find.byType(TextField), 'ABC123');
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Join Group'));
-      await tester.pumpAndSettle();
-      await pauseForScreenshot();
 
       // ASSERT - a real Firebase Auth user + Firestore profile exist, the
       // gate routed correctly, the child was created for this parent, and
@@ -161,10 +192,10 @@ void main() {
         await database.createQuiz(
             contentId: 'content_1', unitId: 'unit_1', quizId: quizId,
             title: title, questions: const [],
-            passingScore: scope == 'unit' ? 60 : 0,
+            passingScore: scope == 'unit' ? 60 : null,
             xpReward: scope == 'unit' ? 100 : 10,
-            maxAttempts: scope == 'unit' ? 1 : 3,
-            groupId: 'group_1', lessonId: lessonId);
+            maxAttempts: scope == 'unit' ? 1 : null,
+            lessonId: lessonId);
       }
       Future<bool> rejected(Future<void> attempt) async {
         try {

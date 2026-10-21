@@ -58,10 +58,7 @@ void main() {
           quizId: 'lesson_quiz_$i',
           title: 'Lesson Quiz $i',
           questions: const [],
-          passingScore: 0,
           xpReward: 10,
-          maxAttempts: 3,
-          groupId: 'group_1',
           lessonId: 'lesson_$i',
         );
       }
@@ -83,10 +80,7 @@ void main() {
         questions: [
           {'question': 'Q1', 'options': ['A', 'B'], 'correctIndex': 0, 'order': 1},
         ],
-        passingScore: 0,
         xpReward: 999, // way over the lesson-scope max
-        maxAttempts: 3,
-        groupId: 'group_1',
         lessonId: 'lesson_1',
       );
 
@@ -94,10 +88,13 @@ void main() {
       final doc = await quizDoc('content_1', 'unit_1', 'quiz_1', lessonId: 'lesson_1').get();
       final data = doc.data() as Map<String, dynamic>;
       expect(data['xpReward'], 50);
-      expect(data['isGraded'], false);
       expect(data['totalQuestions'], 1);
       expect(data.containsKey('scope'), false);
       expect(data.containsKey('lessonId'), false);
+      // Formative schema: no groupId and no grading fields.
+      expect(data.keys.toSet(), {
+        'contentId', 'createdAt', 'title', 'totalQuestions', 'unitId', 'xpReward',
+      });
     });
 
     test('ARRANGE-ACT-ASSERT: a Unit Quiz is rejected until the unit has at least 3 Lesson Quizzes',
@@ -116,7 +113,6 @@ void main() {
           passingScore: 60,
           xpReward: 100,
           maxAttempts: 1,
-          groupId: 'group_1',
         ),
         throwsA(isA<Exception>()),
       );
@@ -137,7 +133,6 @@ void main() {
         passingScore: 60,
         xpReward: 500, // way over the unit-scope max
         maxAttempts: 1,
-        groupId: 'group_1',
       );
 
       // ASSERT
@@ -145,6 +140,71 @@ void main() {
       final data = doc.data() as Map<String, dynamic>;
       expect(data['xpReward'], 100);
       expect(data['isGraded'], true);
+      // Summative schema: the lesson fields plus the 3 grading fields,
+      // and no groupId.
+      expect(data.keys.toSet(), {
+        'contentId', 'createdAt', 'title', 'totalQuestions', 'unitId', 'xpReward',
+        'isGraded', 'maxAttempts', 'passingScore',
+      });
+      expect(data['passingScore'], 60);
+      expect(data['maxAttempts'], 1);
+    });
+
+    test('ARRANGE-ACT-ASSERT: a Unit Quiz without passingScore/maxAttempts is rejected',
+        () async {
+      // ARRANGE
+      await seedLessonQuizzes(3);
+
+      // ACT & ASSERT
+      expect(
+        () => database.createQuiz(
+          contentId: 'content_1',
+          unitId: 'unit_1',
+          quizId: 'unit_quiz_1',
+          title: 'Unit Exam',
+          questions: const [],
+          xpReward: 100,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('ARRANGE-ACT-ASSERT: updateQuiz strips the stale groupId and '
+        'grading fields an older Lesson Quiz doc still carries',
+        () async {
+      // ARRANGE - a Lesson Quiz saved with the old schema
+      await quizDoc('content_1', 'unit_1', 'old_lq', lessonId: 'lesson_1').set({
+        'contentId': 'content_1',
+        'unitId': 'unit_1',
+        'groupId': '',
+        'title': 'Old Lesson Quiz',
+        'totalQuestions': 0,
+        'passingScore': 0,
+        'xpReward': 10,
+        'isGraded': false,
+        'maxAttempts': 99,
+        'createdAt': DateTime(2026),
+      });
+
+      // ACT
+      await database.updateQuiz(
+        contentId: 'content_1',
+        unitId: 'unit_1',
+        lessonId: 'lesson_1',
+        quizId: 'old_lq',
+        title: 'Old Lesson Quiz',
+        xpReward: 10,
+        questions: const [],
+      );
+
+      // ASSERT
+      final data = (await quizDoc('content_1', 'unit_1', 'old_lq',
+                  lessonId: 'lesson_1')
+              .get())
+          .data() as Map<String, dynamic>;
+      for (final removed in ['groupId', 'passingScore', 'isGraded', 'maxAttempts']) {
+        expect(data.containsKey(removed), false, reason: removed);
+      }
     });
 
     test('ARRANGE-ACT-ASSERT: creating a second Unit Quiz for the same unit is rejected',
@@ -160,7 +220,6 @@ void main() {
         passingScore: 60,
         xpReward: 100,
         maxAttempts: 1,
-        groupId: 'group_1',
       );
 
       // ACT & ASSERT
@@ -174,7 +233,6 @@ void main() {
           passingScore: 60,
           xpReward: 100,
           maxAttempts: 1,
-          groupId: 'group_1',
         ),
         throwsA(isA<Exception>()),
       );
@@ -187,13 +245,13 @@ void main() {
       await database.personalizedLessons('content_1', 'unit_1').doc('lesson_b').set({'title': 'B', 'order': 2});
       await database.createQuiz(
         contentId: 'content_1', unitId: 'unit_1', quizId: 'lq_a',
-        title: 'Lesson A Quiz', questions: const [], passingScore: 0,
-        xpReward: 10, maxAttempts: 3, groupId: 'g',
+        title: 'Lesson A Quiz', questions: const [],
+        xpReward: 10,
         lessonId: 'lesson_a');
       await database.createQuiz(
         contentId: 'content_1', unitId: 'unit_1', quizId: 'lq_b',
-        title: 'Lesson B Quiz', questions: const [], passingScore: 0,
-        xpReward: 10, maxAttempts: 3, groupId: 'g',
+        title: 'Lesson B Quiz', questions: const [],
+        xpReward: 10,
         lessonId: 'lesson_b');
 
       // ASSERT
@@ -212,8 +270,8 @@ void main() {
         contentId: 'content_1', unitId: 'unit_1', quizId: 'quiz_1',
         title: 'Original', questions: [
           {'question': 'Old Q', 'options': ['A'], 'correctIndex': 0, 'order': 9},
-        ], passingScore: 0, xpReward: 20, maxAttempts: 3,
-        groupId: 'g', lessonId: 'lesson_1');
+        ], xpReward: 20,
+        lessonId: 'lesson_1');
 
       // ACT
       await database.updateQuiz(
@@ -222,9 +280,7 @@ void main() {
         lessonId: 'lesson_1',
         quizId: 'quiz_1',
         title: 'Updated',
-        passingScore: 0,
         xpReward: 999,
-        maxAttempts: 5,
         questions: [
           {'question': 'New Q1', 'options': ['A', 'B'], 'correctIndex': 1, 'order': 1},
           {'question': 'New Q2', 'options': ['A', 'B'], 'correctIndex': 0, 'order': 2},

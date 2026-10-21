@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:easy_localization/easy_localization.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
 import 'package:loringo_app/providers/locale_provider.dart';
@@ -33,6 +37,16 @@ const String qaFixturePassword = 'Fx7' 'z@Qa' 'Test';
   MockUser? signedInUser,
 }) {
   SharedPreferences.setMockInitialValues({});
+  // The real app loads secrets from .env in main.dart before anything else
+  // runs; this test binary never does, so any code path touching
+  // dotenv.env (e.g. Database.createStudent's access-code hashing/
+  // encryption, which needs ACCESS_CODE_PEPPER/ACCESS_CODE_KEY) throws
+  // NotInitializedError the first time it's read. These are throwaway
+  // fake values, generated fresh here, never the real .env secrets — good
+  // enough for the crypto math to run without touching a real key.
+  dotenv.loadFromString(envString:
+      'ACCESS_CODE_PEPPER=test-pepper\n'
+      'ACCESS_CODE_KEY=${base64Encode(Uint8List(32))}\n');
   final auth = MockFirebaseAuth(signedIn: signedInUser != null, mockUser: signedInUser);
   final firestore = FakeFirebaseFirestore();
   authInstance = auth;
@@ -44,6 +58,23 @@ const String qaFixturePassword = 'Fx7' 'z@Qa' 'Test';
 /// the test surface to a tall phone-like viewport so real screens (e.g.
 /// AuthLayout's mobile layout) don't overflow flutter_test's default
 /// 800x600 — see test/helpers/pump_app.dart for the same reasoning.
+///
+/// IMPORTANT: the root `EasyLocalization` widget below carries a fresh
+/// `UniqueKey()` on every call. Without it, calling this function a second
+/// time within the same test (e.g. mount RegisterScreen, drive it, then
+/// mount a fresh AuthGate to see where the session routes) does NOT
+/// replace the previous screen: every level down to `MaterialApp` is the
+/// same widget TYPE both times, so Flutter reconciles in place and
+/// reuses the existing `Navigator` instead of tearing it down — the new
+/// `home` just gets pushed as another route on top of the old
+/// `Navigator`'s history. The old screen (e.g. RegisterScreen) stays the
+/// active/opaque route and keeps showing; the new one (e.g. AuthGate)
+/// does get built with the right state (confirmed via debugDumpApp() —
+/// it's really there, correctly, just buried under an inactive
+/// `_ModalScopeStatus`), but `find.byType()`'s default `skipOffstage:
+/// true` never sees it since it's never actually painted. A unique key
+/// forces Flutter to unmount the old element tree (Navigator included)
+/// and mount a genuinely new one each time this is called.
 Future<void> pumpIntegrationApp(WidgetTester tester, Widget child) async {
   final originalSize = tester.view.physicalSize;
   final originalRatio = tester.view.devicePixelRatio;
@@ -58,6 +89,7 @@ Future<void> pumpIntegrationApp(WidgetTester tester, Widget child) async {
 
   await tester.pumpWidget(
     EasyLocalization(
+      key: UniqueKey(),
       supportedLocales: const [Locale('en'), Locale('es')],
       path: 'assets/translations',
       fallbackLocale: const Locale('en'),

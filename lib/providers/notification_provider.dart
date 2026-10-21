@@ -140,6 +140,17 @@ class NotificationProvider extends ChangeNotifier {
     }
   }
 
+  /// Clears the cached user on logout so the next account's initialize()
+  /// isn't skipped by the `_userId == userId` early return and the toggle
+  /// state doesn't stay tied to the previous user.
+  void reset() {
+    _userId = null;
+    _isEnabled = false;
+    _isLoading = true;
+    _isPermanentlyDenied = false;
+    notifyListeners();
+  }
+
   Future<void> refresh() async {
     await _loadNotificationStatus();
     notifyListeners();

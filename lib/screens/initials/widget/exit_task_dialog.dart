@@ -1,4 +1,5 @@
 // lib/screens/initials/widget/exit_task_dialog.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 /// Shared "are you sure you want to quit?" sheet shown whenever a student
@@ -9,7 +10,18 @@ import 'package:flutter/material.dart';
 ///
 /// Returns `true` if the student confirmed they want to quit (the caller
 /// should then pop the task screen), or `false` if they chose to stay.
-Future<bool> confirmExitTask(BuildContext context) async {
+///
+/// [title]/[subtitle]/[stayLabel] let a non-task caller (e.g.
+/// QuizPlayScreen, which is a lesson/unit quiz, not a task) override the
+/// default "activity" wording with something that matches what's actually
+/// being exited — default to the shared activity copy when omitted, so
+/// none of the 12 task screens need to change.
+Future<bool> confirmExitTask(
+  BuildContext context, {
+  String? title,
+  String? subtitle,
+  String? stayLabel,
+}) async {
   final result = await showModalBottomSheet<bool>(
     context: context,
     backgroundColor: Colors.transparent,
@@ -60,15 +72,15 @@ Future<bool> confirmExitTask(BuildContext context) async {
                   size: 40, color: Colors.orange),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Quit this activity?',
+            Text(
+              title ?? 'initials.exit_task_dialog.title'.tr(),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                   fontSize: 19, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
             const SizedBox(height: 8),
             Text(
-              'Your progress on this task will not be saved.',
+              subtitle ?? 'initials.exit_task_dialog.subtitle'.tr(),
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey.shade600, height: 1.4),
             ),
@@ -83,9 +95,9 @@ Future<bool> confirmExitTask(BuildContext context) async {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   elevation: 0,
                 ),
-                child: const Text(
-                  'STAY ON ACTIVITY',
-                  style: TextStyle(
+                child: Text(
+                  stayLabel ?? 'initials.exit_task_dialog.stay'.tr(),
+                  style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -102,7 +114,7 @@ Future<bool> confirmExitTask(BuildContext context) async {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 child: Text(
-                  'QUIT',
+                  'initials.exit_task_dialog.quit'.tr(),
                   style: TextStyle(
                       color: Colors.grey.shade500,
                       fontSize: 15,

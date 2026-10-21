@@ -1,9 +1,14 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/student/student_main_screen.dart';
 import 'package:loringo_app/services/auth/student_auth_service.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/access_code_hasher.dart';
 
 class StudentCodeScreen extends StatefulWidget {
   const StudentCodeScreen({super.key});
@@ -54,7 +59,7 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
     if (_codeCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please enter your access code'),
+          content: Text('common.studentAccessCodeMsg'.tr()),
           backgroundColor: AppColors.warning,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
@@ -65,17 +70,12 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('students')
-          .where('accessCode', isEqualTo: _codeCtrl.text.trim().toUpperCase())
-          .limit(1)
-          .get();
+      final data = await Database(firestore: firestoreInstance)
+          .findStudentByAccessCode(_codeCtrl.text.trim());
 
-      if (snap.docs.isEmpty) throw Exception('Invalid');
+      if (data == null) throw Exception('Invalid');
 
-      final doc = snap.docs.first;
-      final data = doc.data();
-      final studentId = doc.id;
+      final studentId = data['id'] as String;
       final studentName = data['names'] as String;
       final avatar = data['avatar'] as String?;
 
@@ -98,11 +98,14 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
+      // ignore: avoid_print
+      print('[STUDENT LOGIN] typed="${_codeCtrl.text.trim()}" '
+          'hash=${AccessCodeHasher.hash(_codeCtrl.text.trim())} failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Incorrect access code. Please try again.'),
+            content: Text('student.student_code_screen.incorrectAccessCodeMsg'.tr()),
             backgroundColor: AppColors.danger,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
@@ -116,6 +119,7 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return AuthLayout(
       mobileHeroFraction: 0.46,
       onBack: () => Navigator.pop(context),
@@ -125,8 +129,8 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
         height: 150,
         fit: BoxFit.contain,
       ),
-      title: 'Hello, Student!',
-      subtitle: 'Enter your access code to get started',
+      title: 'common.helloStudent'.tr(),
+      subtitle: 'student.student_code_screen.subtitle'.tr(),
       form: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -187,8 +191,8 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: AppColors.onPrimary),
                   )
-                : const Text('Enter',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                : Text('common.enter'.tr(),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -211,7 +215,7 @@ class _StudentCodeScreenState extends State<StudentCodeScreen> {
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Text(
-                "Don't have a code? Ask your parent.",
+                'common.askParent'.tr(),
                 style: TextStyle(
                   fontSize: 12,
                   color: Colors.grey.shade700,

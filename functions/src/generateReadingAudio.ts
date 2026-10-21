@@ -1,161 +1,133 @@
 // functions/src/generateReadingAudio.ts
 //
 // Firebase Cloud Function (2nd gen, callable) that turns page text into
-// natural, expressive audio via Gemini TTS, and hands the raw audio bytes
-// straight back to the caller — nothing is written to Cloudinary, Storage,
-// or any other persistent store. This is intentional: the app calls this
-// on-demand each time a student (or teacher, in the reading_task.dart
-// preview) wants to hear a given page, so the same page can be re-recorded
-// for free any time the teacher edits its text, and there's no audio-file
-// lifecycle to manage or clean up.
+// narrated audio via Google Cloud Text-to-Speech, plus per-word timing (via
+// SSML <mark> timepointing) so the Flutter client can highlight the word
+// currently being spoken -- see reading_tts_service.dart / screen_seven.dart.
 //
-// SECURITY: the Gemini API key lives ONLY here, as a Firebase secret. It is
-// never sent to or embedded in the Flutter client — if it were, anyone
-// could pull it out of the APK/IPA and burn your quota. The client calls
-// this function by name (via callable-functions auth, already tied to
-// Firebase Auth), not the Gemini API directly.
+// HISTORY: this used to be client-side flutter_edge_tts (Microsoft Edge
+// neural voices over a raw dart:io WebSocket) -- worked on mobile/desktop
+// only, since dart:io sockets don't exist on Flutter Web. Moving synthesis
+// server-side (a plain callable, same mechanism as moderateImage) makes it
+// work identically on every platform, web included.
 //
-// COST NOTE: every call is a live Gemini TTS generation — there is no
-// caching on the backend. The Flutter side is expected to cache the
-// decoded audio bytes in memory for the lifetime of the screen (see
-// gemini_tts_service.dart) so re-tapping "play" on the same page within a
-// session doesn't re-trigger a paid call. Caching across sessions/devices
-// was explicitly ruled out per instruction not to persist audio.
+// SECURITY: the API key lives ONLY here, as a Firebase secret. It is never
+// sent to or embedded in the Flutter client.
+//
+// CACHING: server-side, in Firestore's `ttsCache` collection -- shared with
+// generateTaskAudio.ts's task-audio cache, since both are the same thing (a
+// synthesis result cache keyed by what was synthesized) -- keyed by a hash
+// of (voice, speed, text). A page's text is fixed content authored once and
+// read by every student who reaches it, so only the first synthesis of a
+// given (voice, speed, text) anywhere pays for Cloud TTS; every later read
+// is a free Firestore lookup. The audio itself lives in Cloudinary (see
+// ttsCacheStorage.ts), not in the Firestore document.
+//
+// PRE-WARMING: prewarmTtsCache.ts synthesizes and caches reading-page audio
+// the moment a teacher saves it (for the default voice/both speeds), so in
+// the common case this function is just a cache hit -- a single Firestore
+// read. On a genuine miss (brand-new content the trigger hasn't finished
+// yet, or a non-default voice), this responds with a data: URI right after
+// Cloud TTS finishes rather than also waiting on a Cloudinary upload --
+// queueUploadForCache hands that off to processTtsUploadQueue.ts to finish
+// in the background, so the student isn't stuck waiting on it. The Flutter
+// side additionally caches (audioUrl, words) per voice+speed+text in memory
+// for the lifetime of the app session (see reading_tts_service.dart's
+// _cache) so re-tapping "play" on the same page doesn't even round-trip to
+// Firestore.
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
-import * as logger from "firebase-functions/logger";
-
-// Set with: firebase functions:secrets:set GEMINI_API_KEY
-const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
-
-const MODEL = "gemini-3.1-flash-tts-preview";
-const GEMINI_ENDPOINT =
-  `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-
-// Warm, enthusiastic, storyteller-for-kids voice — matches the "cálido,
-// entusiasta, para niños" direction. Achird is one of the 30 prebuilt
-// voices; swap here if you want to try others (Kore, Puck, Aoede, etc.)
-// without touching the Flutter side, since the voice is chosen
-// server-side.
-const VOICE_NAME = "Achird";
-
-// Character ceiling per call — Gemini TTS has no hard published limit, but
-// very long single calls increase latency and the chance of a partial/cut
-// response. Reading pages already have their own 300-word soft warning in
-// reading_task.dart's editor, so this is just a hard backstop well above
-// that in case a teacher ignores the warning.
-const MAX_CHARS = 4000;
+import { getFirestore } from "firebase-admin/firestore";
+import {
+  CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET,
+  lookupCachedAudio,
+  queueUploadForCache,
+  readingCacheKeyFor,
+} from "./ttsCacheStorage";
+import {
+  GOOGLE_TTS_API_KEY,
+  READING_DEFAULT_VOICE_KEY,
+  READING_MAX_CHARS,
+  READING_VOICE_MAP,
+  resolveVoiceKey,
+  synthesizeReadingAudio,
+  WordTimingPayload,
+} from "./ttsSynthesis";
 
 interface GenerateReadingAudioRequest {
   text?: string;
+  voice?: string; // ReadingVoice.edgeId
+  speed?: "slow" | "normal";
 }
 
 interface GenerateReadingAudioResponse {
-  audioBase64: string;
+  audioUrl: string;
   mimeType: string;
-}
-
-/**
- * Wraps the requested text in a natural-language style instruction, since
- * Gemini TTS follows the prompt's own instructions on tone/pace rather than
- * taking a separate "style" parameter — "how to say it" is expressed as
- * part of the text sent to the model, not a config field.
- *
- * @param {string} text The raw page text to be narrated.
- * @return {string} The full prompt to send to Gemini TTS, with the style
- *   instruction prepended.
- */
-function buildStyledPrompt(text: string): string {
-  return "Say the following in a warm, cheerful, enthusiastic storyteller " +
-    "voice for young children, ages 5 to 9. Speak clearly at a gentle, " +
-    "easy-to-follow pace, with playful energy and natural pauses between " +
-    `sentences:\n\n${text}`;
+  words: WordTimingPayload[];
 }
 
 export const generateReadingAudio = onCall<
   GenerateReadingAudioRequest,
   Promise<GenerateReadingAudioResponse>
 >(
-  { secrets: [GEMINI_API_KEY], region: "us-central1", timeoutSeconds: 30 },
+  {
+    secrets: [GOOGLE_TTS_API_KEY, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET],
+    region: "us-central1",
+    timeoutSeconds: 30,
+  },
   async (request) => {
-    // Require an authenticated app user — mirrors the access pattern of
-    // every other callable in this app (see email.ts, resetPassword.ts,
-    // etc.); anonymous/unauthenticated callers are rejected before we
-    // spend any Gemini quota.
-    if (!request.auth) {
-      throw new HttpsError("unauthenticated", "Sign-in required.");
-    }
-
+    // No request.auth check here, deliberately: students (the primary
+    // caller of this function, via reading_tts_service.dart /
+    // screen_seven.dart) never sign into Firebase Auth at all — they log
+    // in with a locally-stored access code only (see
+    // student_auth_service.dart, which is plain SharedPreferences, no
+    // signInAnonymously). Requiring request.auth here silently broke
+    // narration for every student while only ever working for a teacher
+    // previewing (who IS Firebase-authenticated) — matches moderateImage.ts,
+    // the other student-reachable callable in this app, which also has no
+    // auth gate. MAX_CHARS below is the abuse backstop instead.
     const text = (request.data?.text ?? "").trim();
     if (!text) {
       throw new HttpsError("invalid-argument", "text is required.");
     }
-    if (text.length > MAX_CHARS) {
+    if (text.length > READING_MAX_CHARS) {
       throw new HttpsError(
         "invalid-argument",
-        `text exceeds ${MAX_CHARS} characters.`,
+        `text exceeds ${READING_MAX_CHARS} characters.`
       );
     }
 
-    const apiKey = GEMINI_API_KEY.value();
+    const voiceKey = resolveVoiceKey(READING_VOICE_MAP, request.data?.voice, READING_DEFAULT_VOICE_KEY);
+    const speed = request.data?.speed === "slow" ? "slow" : "normal";
 
-    const body = {
-      contents: [{ parts: [{ text: buildStyledPrompt(text) }] }],
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: VOICE_NAME },
-          },
-        },
-      },
-    };
+    const db = getFirestore();
+    const cacheKey = readingCacheKeyFor(voiceKey, speed, text);
 
-    let response: Response;
-    try {
-      response = await fetch(GEMINI_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      logger.error("Gemini TTS network error", err);
-      throw new HttpsError("unavailable", "Could not reach Gemini TTS.");
+    const cached = await lookupCachedAudio(db, cacheKey);
+    if (cached) {
+      return {
+        audioUrl: cached.url,
+        mimeType: "audio/mpeg",
+        words: (cached.words ?? []) as WordTimingPayload[],
+      };
     }
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      logger.error("Gemini TTS error response", {
-        status: response.status,
-        body: errText,
-      });
-      throw new HttpsError(
-        "internal",
-        `Gemini TTS request failed (${response.status}).`,
-      );
-    }
+    const { audioBase64, words } = await synthesizeReadingAudio(text, voiceKey, speed);
 
-    const json = await response.json();
-    const part = json?.candidates?.[0]?.content?.parts?.[0];
-    const audioData: string | undefined = part?.inlineData?.data;
-    const mimeType: string = part?.inlineData?.mimeType || "audio/wav";
+    // Await the queue write (a single fast Firestore write) but not the
+    // Cloudinary upload itself -- that happens in the background via
+    // processTtsUploadQueue.ts. Awaiting the queue write (rather than
+    // firing it and returning immediately) matters here: once this
+    // function's response is sent, the Cloud Run instance can be frozen
+    // at any point, so an un-awaited write could get cut off before it
+    // ever reaches Firestore.
+    await queueUploadForCache(db, cacheKey, audioBase64, "reading", { words });
 
-    if (!audioData) {
-      logger.error("Gemini TTS response missing audio data", json);
-      throw new HttpsError("internal", "No audio returned by Gemini TTS.");
-    }
-
-    // audioData is already base64 — pass it straight through. The client
-    // decodes it and, since Gemini TTS returns raw PCM (no WAV header),
-    // wraps it in a WAV header before handing it to the audio player. See
-    // gemini_tts_service.dart's _pcmToWav for that step.
     return {
-      audioBase64: audioData,
-      mimeType,
+      audioUrl: `data:audio/mpeg;base64,${audioBase64}`,
+      mimeType: "audio/mpeg",
+      words,
     };
-  },
+  }
 );

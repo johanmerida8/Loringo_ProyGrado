@@ -1,6 +1,9 @@
 // screen_nine.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
@@ -14,6 +17,7 @@ import 'package:loringo_app/services/audio/task_feedback.dart';
 import 'package:loringo_app/screens/initials/widget/highlight_text.dart';
 import 'package:loringo_app/screens/initials/widget/exit_task_dialog.dart';
 import 'package:loringo_app/screens/initials/widget/task_callbacks.dart';
+import 'package:loringo_app/services/speech_to_text/phrase_matcher.dart';
 import 'package:loringo_app/services/speech_to_text/speech_permissions.dart';
 import 'package:loringo_app/services/speech_to_text/speech_to_text_service.dart';
 import 'package:loringo_app/services/speech_to_text/speech_recognition_result.dart';
@@ -207,7 +211,14 @@ class _ScreenNineState extends State<ScreenNine>
         _isVolumeLow = false;
         _updateHighlightWords(result.recognizedText);
       });
-      _showResultSheet(isCorrect: result.isCorrect, captureError: false);
+      _showResultSheet(
+        isCorrect: result.isCorrect,
+        captureError: false,
+        missedWords: result.isImperfect ? result.missedWords : const [],
+        approximateWords:
+            result.isImperfect ? result.approximateWords : const [],
+        lowConfidence: result.isLowConfidence,
+      );
     };
 
     _speechService.onError = (error) {
@@ -222,36 +233,35 @@ class _ScreenNineState extends State<ScreenNine>
         isCorrect: false,
         captureError: isNoSpeech,
         errorMessage: isNoSpeech
-            ? "Couldn't capture your voice.\nPlease try again."
-            : "Microphone error.\nPlease try again.",
+            ? 'initials.screen_nine.couldntCaptureVoice'.tr()
+            : 'initials.screen_nine.microphoneError'.tr(),
       );
     };
   }
 
   // ── Word highlighting ─────────────────────────────────────────────────────
 
+  // Same tolerant rule as the pass/fail verdict (PhraseMatcher): a word
+  // lights up once it's heard ~70% right, so the highlighting never
+  // disagrees with the final result. Matches each phrase word on its own
+  // (not the whole phrase) so it lines up with _phraseWords' display
+  // tokens even when a word has punctuation attached ("dress.").
   void _updateHighlightWords(String spokenText) {
     if (_phraseWords.isEmpty) return;
-    final spokenWords = _normalizeText(spokenText).split(' ');
+    final spokenWords = PhraseMatcher.words(spokenText);
     final List<String> matched = [];
     int si = 0;
     for (int i = 0; i < _phraseWords.length && si < spokenWords.length; i++) {
-      if (_normalizeWord(_phraseWords[i]) == _normalizeWord(spokenWords[si])) {
-        matched.add(_phraseWords[i]);
-        si++;
+      for (int k = si; k < spokenWords.length; k++) {
+        if (PhraseMatcher.wordsMatch(spokenWords[k], _phraseWords[i])) {
+          matched.add(_phraseWords[i]);
+          si = k + 1;
+          break;
+        }
       }
     }
     setState(() => _highlightWordsList = matched);
   }
-
-  String _normalizeText(String text) => text
-      .toLowerCase()
-      .trim()
-      .replaceAll(RegExp(r'[^\w\s]'), '')
-      .replaceAll(RegExp(r'\s+'), ' ');
-
-  String _normalizeWord(String word) =>
-      word.toLowerCase().trim().replaceAll(RegExp(r'[^\w]'), '');
 
   void _initializeHighlightWords() {
     _phraseWords = _phrase.split(' ');
@@ -312,6 +322,7 @@ class _ScreenNineState extends State<ScreenNine>
           _isLoading = false;
         });
         _initializeHighlightWords();
+        TaskTtsService.prefetch([_phrase], voice: TtsVoiceDefaults.defaultEnglish);
         // Fresh attempt budget for this task instance — mirrors what
         // every other RetryableTask screen does on load, and matters
         // in particular for the review round, where ActivityPlayScreen
@@ -352,7 +363,7 @@ class _ScreenNineState extends State<ScreenNine>
       final granted = await SpeechPermissions.showPermissionDialog(context);
       if (!granted) return;
     }
-    await _speechService.startListening(targetPhrase: _phrase);
+    await _speechService.startListening(targetPhrase: _phrase, patient: true);
   }
 
   void _stopRecording() => _speechService.stopListening();
@@ -363,6 +374,9 @@ class _ScreenNineState extends State<ScreenNine>
     required bool isCorrect,
     required bool captureError,
     String? errorMessage,
+    List<String> missedWords = const [],
+    List<String> approximateWords = const [],
+    bool lowConfidence = false,
   }) {
     if (_isResultSheetOpen) return;
 
@@ -390,14 +404,32 @@ class _ScreenNineState extends State<ScreenNine>
 
     TaskFeedback.fire(isCorrect);
 
+    // Passed, but with a word missing or only approximately said: still
+    // correct, but not "perfect".
+    final practiceWords = [...missedWords, ...approximateWords];
+    final isPartial = isCorrect && practiceWords.isNotEmpty;
+    // Exact text, but the recognizer wasn't confident (it may have
+    // corrected a mispronounced word): not "perfect" either, though there
+    // is no specific word to point at.
+    final isUnclear = isCorrect && !isPartial && lowConfidence;
+
     final message = captureError
-        ? (errorMessage ?? "Couldn't capture your voice.\nPlease try again.")
+        ? (errorMessage ?? 'initials.screen_nine.couldntCaptureVoice'.tr())
         : isCorrect
-            ? '¡Excellent! Perfect pronunciation!'
-            : 'Almost there! Give it another try.';
+            ? (isPartial
+                ? (missedWords.isNotEmpty
+                    ? 'initials.task_result_sheet.almostPerfectMissedWord'.tr()
+                    : 'initials.task_result_sheet.almostPerfectPronunciation'
+                        .tr())
+                : isUnclear
+                    ? 'initials.task_result_sheet.almostPerfectClarity'.tr()
+                    : 'initials.screen_nine.excellentPronunciation'.tr())
+            : 'initials.screen_nine.almostThereTryAgain'.tr();
 
     final messageColor = isCorrect
-        ? const Color(0xFF2E7D32)
+        ? ((isPartial || isUnclear)
+            ? const Color(0xFFE65100)
+            : const Color(0xFF2E7D32))
         : captureError
             ? Colors.grey.shade700
             : const Color(0xFFE65100);
@@ -408,8 +440,14 @@ class _ScreenNineState extends State<ScreenNine>
       isPracticeRound: widget.isPracticeRound,
       message: message,
       messageColor: messageColor,
-      extraContent: (!isCorrect && !captureError && _recognizedText.isNotEmpty)
-          ? TaskResultSpokenTextBox(spokenText: _recognizedText)
+      // The phrase with each word marked — never the raw microphone text,
+      // which may contain words the student didn't say.
+      extraContent: (isPartial ||
+              (!isCorrect && !captureError && _recognizedText.isNotEmpty))
+          ? TaskResultPhraseCheck(
+              targetPhrase: _phrase,
+              spokenText: _recognizedText,
+            )
           : null,
       onContinue: () {
         _isResultSheetOpen = false;
@@ -436,6 +474,10 @@ class _ScreenNineState extends State<ScreenNine>
             'type': 'repeat_after_me',
             'targetPhrase': _phrase,
             'recognizedText': _recognizedText,
+            if (missedWords.isNotEmpty) 'missedWords': missedWords,
+            if (approximateWords.isNotEmpty)
+              'approximateWords': approximateWords,
+            if (isUnclear) 'lowConfidence': true,
           });
         }
       },
@@ -461,6 +503,7 @@ class _ScreenNineState extends State<ScreenNine>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
 
     return TaskExitGuard(
@@ -511,9 +554,9 @@ class _ScreenNineState extends State<ScreenNine>
 
                       const SizedBox(height: 8),
 
-                      const Text(
-                        'Repeat after me',
-                        style: TextStyle(
+                      Text(
+                        'initials.screen_nine.repeatAfterMe'.tr(),
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Colors.black45,
                           fontWeight: FontWeight.w500,
@@ -538,7 +581,7 @@ class _ScreenNineState extends State<ScreenNine>
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 12, vertical: 4),
                             child: Text(
-                              'REVEAL',
+                              'initials.screen_nine.reveal'.tr(),
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w800,
@@ -641,8 +684,8 @@ class _ScreenNineState extends State<ScreenNine>
                                     const SizedBox(width: 8),
                                     Text(
                                       _isSpeaking
-                                          ? 'Playing…'
-                                          : 'Listen to pronunciation',
+                                          ? 'initials.screen_nine.playing'.tr()
+                                          : 'initials.screen_nine.listenToPronunciation'.tr(),
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -675,7 +718,10 @@ class _ScreenNineState extends State<ScreenNine>
                                   size: 13, color: _green),
                               const SizedBox(width: 5),
                               Text(
-                                '${_highlightWordsList.length} / ${_phraseWords.length} words',
+                                'initials.screen_nine.wordsProgress'.tr(namedArgs: {
+                                  'matched': '${_highlightWordsList.length}',
+                                  'total': '${_phraseWords.length}',
+                                }),
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: _green,
@@ -710,7 +756,7 @@ class _ScreenNineState extends State<ScreenNine>
                                   size: 16, color: Colors.orange.shade700),
                               const SizedBox(width: 8),
                               Text(
-                                'Speak louder — we can barely hear you',
+                                'initials.screen_nine.speakLouder'.tr(),
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
@@ -792,7 +838,9 @@ class _ScreenNineState extends State<ScreenNine>
                       const SizedBox(height: 8),
 
                       Text(
-                        _isListening ? 'Listening… speak now' : 'Tap to speak',
+                        _isListening
+                            ? 'initials.screen_nine.listeningSpeakNow'.tr()
+                            : 'initials.screen_nine.tapToSpeak'.tr(),
                         style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey.shade600,

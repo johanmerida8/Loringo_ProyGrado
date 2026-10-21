@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class WinnerBanner extends StatelessWidget {
   final String leagueName;
@@ -16,6 +19,7 @@ class WinnerBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -51,7 +55,8 @@ class WinnerBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'You\'re #1 in $leagueName!',
+                  'student.winner_banner.numberOneIn'
+                      .tr(namedArgs: {'league': leagueName}),
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
@@ -61,9 +66,9 @@ class WinnerBanner extends StatelessWidget {
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    const Text(
-                      'Prize: ',
-                      style: TextStyle(
+                    Text(
+                      'student.winner_banner.prizeLabel'.tr(),
+                      style: const TextStyle(
                         fontSize: 13,
                         color: Colors.grey,
                         fontWeight: FontWeight.w500,

@@ -2,7 +2,10 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -68,6 +71,13 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
   int _currentTurn = 0;
   String _selectedReply = '';
   final List<Map<String, dynamic>> _history = [];
+  // True once the current turn has been checked and moved into _history,
+  // until the student moves on. While true the current turn's bubble,
+  // reply options and Check button are hidden — otherwise, after "Finish"
+  // on the last turn (while ActivityPlayScreen saves progress before
+  // opening ActivityCompleteScreen), the already-answered turn was shown
+  // again as if it still needed a reply.
+  bool _turnAnswered = false;
   int _correctCount = 0;
   int _wrongCount = 0;
   bool _isLoading = true;
@@ -136,6 +146,13 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
 
       setState(() => _isLoading = false);
 
+      // Warm every turn's bubble now so later turns speak instantly
+      // instead of waiting on the Cloud Function when reached.
+      TaskTtsService.prefetch(
+        _turns.map((t) => t.bubbleEn),
+        voice: TtsVoiceDefaults.defaultEnglish,
+      );
+
       if (_turns.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _speak(_turns[_currentTurn].bubbleEn);
@@ -172,10 +189,13 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
     if (correct) _correctCount++; else _wrongCount++;
     resetAttempts();
 
-    _history.add({
-      'bubbleEn': turn.bubbleEn,
-      'chosenReply': _selectedReply,
-      'correct': correct,
+    setState(() {
+      _history.add({
+        'bubbleEn': turn.bubbleEn,
+        'chosenReply': _selectedReply,
+        'correct': correct,
+      });
+      _turnAnswered = true;
     });
 
     final isLastTurn = _currentTurn == _turns.length - 1;
@@ -184,7 +204,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
       context,
       isCorrect: correct,
       isPracticeRound: widget.isPracticeRound,
-      buttonLabel: isLastTurn ? 'Finish' : 'Continue',
+      buttonLabel: isLastTurn ? 'common.finish'.tr() : 'common.continue'.tr(),
       onContinue: () {
         if (isLastTurn) {
           final overallCorrect = _correctCount > _wrongCount;
@@ -195,12 +215,22 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
           // recomputed.
           widget.onTaskComplete(overallCorrect, {
             'type': 'complete_the_chat',
-            'turns': _history,
+            // Copy: _history is cleared below on a review-round restart,
+            // and the parent keeps this map.
+            'turns': List<Map<String, dynamic>>.from(_history),
           });
+          // In the review round a failed task is NOT advanced —
+          // ActivityPlayScreen keeps this same State mounted (same key)
+          // and expects the screen to reset itself. Without this the
+          // student was left on the last turn with nothing to answer.
+          if (widget.isPracticeRound && !overallCorrect && mounted) {
+            _restartConversation();
+          }
         } else {
           setState(() {
             _currentTurn++;
             _selectedReply = '';
+            _turnAnswered = false;
           });
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _speak(_turns[_currentTurn].bubbleEn);
@@ -208,6 +238,22 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
         }
       },
     );
+  }
+
+  /// Back to a clean first turn, as if the task were opened fresh.
+  void _restartConversation() {
+    setState(() {
+      _currentTurn = 0;
+      _selectedReply = '';
+      _turnAnswered = false;
+      _history.clear();
+      _correctCount = 0;
+      _wrongCount = 0;
+    });
+    resetAttempts();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _turns.isNotEmpty) _speak(_turns[0].bubbleEn);
+    });
   }
 
   Widget _buildHistory() {
@@ -326,6 +372,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     const grad = BoxDecoration(
       gradient: LinearGradient(colors: [Color(0xFFE8F5E9), Colors.white], begin: Alignment.topCenter, end: Alignment.bottomCenter),
     );
@@ -335,7 +382,7 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
     }
 
     if (_turns.isEmpty) {
-      return const Scaffold(body: Center(child: Text('No conversation data')));
+      return Scaffold(body: Center(child: Text('common.noConversationData'.tr())));
     }
 
     final currentTurnData = _turns[_currentTurn];
@@ -379,15 +426,16 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       _buildHistory(),
+                      if (!_turnAnswered) ...[
                       _buildBubble(currentTurnData.bubbleEn),
                       const SizedBox(height: 20),
-              
+
                       Row(children: [
                         Expanded(child: Divider(color: Colors.grey.shade300)),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Text(
-                            'Your reply',
+                            'common.yourReply'.tr(),
                             style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
                           ),
                         ),
@@ -399,8 +447,9 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
                         padding: const EdgeInsets.only(bottom: 10),
                         child: _buildReplyOption(opt['textEn'] as String),
                       )),
-              
+
                       const SizedBox(height: 8),
+                      ],
                     ]),
                   ),
                 ),
@@ -410,15 +459,17 @@ class _ScreenTwoState extends State<ScreenTwo> with RetryableTask {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _selectedReply.isEmpty ? null : _checkCurrentTurn,
+                      onPressed: (_selectedReply.isEmpty || _turnAnswered)
+                          ? null
+                          : _checkCurrentTurn,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _green,
                         padding: const EdgeInsets.symmetric(vertical: 17),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      child: const Text(
-                        'Check',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                      child: Text(
+                        'common.check'.tr(),
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
                       ),
                     ),
                   ),

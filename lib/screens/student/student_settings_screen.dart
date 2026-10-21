@@ -1,7 +1,10 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:loringo_app/components/avatar_image.dart';
 import 'package:loringo_app/components/avatar_selector.dart';
 import 'package:loringo_app/providers/biometric_provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/services/auth/login_or_register.dart';
 import 'package:loringo_app/services/auth/student_auth_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -11,6 +14,7 @@ class StudentSettingsTab extends StatefulWidget {
   final String studentName;
   final String studentAvatar;
   final bool showBackButton;
+  final ValueChanged<String>? onAvatarUpdated;
 
   const StudentSettingsTab({
     super.key,
@@ -18,6 +22,7 @@ class StudentSettingsTab extends StatefulWidget {
     required this.studentName,
     required this.studentAvatar,
     this.showBackButton = false,
+    this.onAvatarUpdated,
   });
 
   static Future<void> showAvatarSelectorFor({
@@ -39,10 +44,10 @@ class StudentSettingsTab extends StatefulWidget {
             onUpdated(avatar);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ Avatar updated successfully!'),
+                SnackBar(
+                  content: Text('student.student_settings_screen.avatarUpdated'.tr()),
                   backgroundColor: AppColors.success,
-                  duration: Duration(seconds: 2),
+                  duration: const Duration(seconds: 2),
                 ),
               );
             }
@@ -50,7 +55,7 @@ class StudentSettingsTab extends StatefulWidget {
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Error updating avatar: $e'),
+                  content: Text('common.errorWithMessage'.tr(namedArgs: {'error': '$e'})),
                   backgroundColor: AppColors.danger,
                 ),
               );
@@ -96,7 +101,10 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
       context: context,
       studentId: widget.studentId,
       currentAvatar: currentAvatar,
-      onUpdated: (avatar) => setState(() => currentAvatar = avatar),
+      onUpdated: (avatar) {
+        setState(() => currentAvatar = avatar);
+        widget.onAvatarUpdated?.call(avatar);
+      },
     );
   }
 
@@ -109,7 +117,7 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
     return Row(children: [
       if (widget.showBackButton) ...[
         GestureDetector(
-          onTap: () => Navigator.pop(context),
+          onTap: () => Navigator.pop(context, currentAvatar),
           child: Container(
             padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
@@ -128,9 +136,10 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final biometricProvider = context.watch<BiometricProvider>();
 
-    return Scaffold(
+    final scaffold = Scaffold(
       backgroundColor: const Color(0xFFE8F5E9),
       body: Container(
         decoration: const BoxDecoration(
@@ -140,13 +149,15 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
             end: Alignment.bottomCenter,
           ),
         ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(context, 'Settings'),
+        child: Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(context, 'common.settings'.tr()),
                 const SizedBox(height: 30),
                 _buildAvatarSection(),
                 const SizedBox(height: 24),
@@ -172,13 +183,14 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
                       ),
                     ),
                     title: Text(
-                      '${biometricProvider.biometricTypeName} Login',
+                      'student.student_settings_screen.biometricLoginTitle'
+                          .tr(namedArgs: {'type': biometricProvider.biometricTypeName}),
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    subtitle: const Text('Quick and secure login'),
+                    subtitle: Text('common.quickSecure'.tr()),
                     trailing: Switch(
                       value: biometricProvider.isEnabled,
                       onChanged: _toggleBiometric,
@@ -188,10 +200,25 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
                 const SizedBox(height: 16),
                 _buildLogoutTile(),
               ],
+              ),
             ),
           ),
         ),
       ),
+    );
+
+    if (!widget.showBackButton) return scaffold;
+
+    // Ensures the avatar update also reaches the caller (via the pushed
+    // route's pop result) when the user leaves via the Android system
+    // back gesture/button, not just the in-app back arrow — otherwise
+    // that path pops with a null result and the change never propagates.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) Navigator.pop(context, currentAvatar);
+      },
+      child: scaffold,
     );
   }
 
@@ -214,16 +241,9 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
                     boxShadow: AppShadows.card,
                   ),
                   child: ClipOval(
-                    child: Image.asset(
-                      currentAvatar,
+                    child: AvatarImage(
+                      avatar: currentAvatar,
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Icon(
-                          Icons.person,
-                          color: AppColors.muted,
-                          size: 56,
-                        );
-                      },
                     ),
                   ),
                 ),
@@ -247,7 +267,8 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
               ],
             ),
             const SizedBox(height: 12),
-            Text('Tap to change avatar', style: AppText.caption),
+            Text('student.student_settings_screen.tapToChangeAvatar'.tr(),
+                style: AppText.caption),
           ],
         ),
       ),
@@ -264,25 +285,25 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
         ),
         child: const Icon(Icons.logout_rounded, color: AppColors.danger),
       ),
-      title: const Text(
-        'Logout',
-        style: TextStyle(
+      title: Text(
+        'common.logout'.tr(),
+        style: const TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.w600,
           color: AppColors.danger,
         ),
       ),
-      subtitle: const Text('Return to login screen'),
+      subtitle: Text('common.returnLogin'.tr()),
       onTap: () {
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Logout'),
-            content: const Text('Are you sure you want to logout?'),
+            title: Text('common.logout'.tr()),
+            content: Text('common.confirmLogout'.tr()),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
+                child: Text('common.cancel'.tr()),
               ),
               TextButton(
                 onPressed: () async {
@@ -298,9 +319,9 @@ class _StudentSettingsTabState extends State<StudentSettingsTab> {
                     );
                   }
                 },
-                child: const Text(
-                  'Logout',
-                  style: TextStyle(color: AppColors.danger),
+                child: Text(
+                  'common.logout'.tr(),
+                  style: const TextStyle(color: AppColors.danger),
                 ),
               ),
             ],

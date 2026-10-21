@@ -33,6 +33,7 @@ class TeacherScreenHeader extends StatelessWidget {
     this.subtitle,
     this.color = AppColors.primary,
     this.onBack,
+    this.trailing,
   });
 
   /// Main heading, e.g. the unit/lesson/activity title.
@@ -49,6 +50,13 @@ class TeacherScreenHeader extends StatelessWidget {
 
   /// Defaults to Navigator.pop when not supplied.
   final VoidCallback? onBack;
+
+  /// Optional widget shown at the end of the header row, e.g. the
+  /// Evaluaciones quiz icon on the Content Structure screen. Kept generic
+  /// (plain Widget) for the same reason HierarchyListCard.trailingChip is
+  /// generic — a dumb primitive shared across every screen that uses this
+  /// header.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +105,47 @@ class TeacherScreenHeader extends StatelessWidget {
                 ],
               ),
             ),
+            ?trailing,
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── TeacherHeaderIconButton ─────────────────────────────────────────────
+// A trailing header action (e.g. the Evaluaciones quiz icon, the Mi
+// Contenido archive icon) styled to match the header's own back-button box
+// exactly -- same soft-tint container, same padding/radius/icon size --
+// instead of a plain Material IconButton, so every icon on this header
+// reads as one consistent family.
+class TeacherHeaderIconButton extends StatelessWidget {
+  const TeacherHeaderIconButton({
+    super.key,
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onPressed,
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: AppColors.primarySoft(0.1),
+            borderRadius: BorderRadius.circular(AppRadii.md),
+          ),
+          child: Icon(icon, color: color, size: 22),
         ),
       ),
     );

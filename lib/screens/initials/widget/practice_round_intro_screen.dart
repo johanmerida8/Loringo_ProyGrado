@@ -11,7 +11,10 @@
 
 import 'dart:math';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 
 class PracticeRoundIntroScreen extends StatelessWidget {
   final VoidCallback onContinue;
@@ -32,8 +35,8 @@ class PracticeRoundIntroScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final parrotAsset = _parrotAssets[Random().nextInt(_parrotAssets.length)];
-    final taskWord = taskCount == 1 ? 'task' : 'tasks';
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -50,10 +53,10 @@ class PracticeRoundIntroScreen extends StatelessWidget {
                 fit: BoxFit.contain,
               ),
               const SizedBox(height: 32),
-              const Text(
-                "Let's try those again!",
+              Text(
+                'initials.practice_round_intro_screen.title'.tr(),
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.bold,
                   color: Colors.black87,
@@ -61,10 +64,7 @@ class PracticeRoundIntroScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                "You're just repeating $taskCount $taskWord you already saw, "
-                "so you can do a little better next time. Getting something "
-                "wrong doesn't mean you're not smart — it means you're "
-                "learning!",
+                'initials.practice_round_intro_screen.body'.plural(taskCount),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
@@ -86,9 +86,9 @@ class PracticeRoundIntroScreen extends StatelessWidget {
                     ),
                     elevation: 3,
                   ),
-                  child: const Text(
-                    "Let's go!",
-                    style: TextStyle(
+                  child: Text(
+                    'initials.practice_round_intro_screen.letsGo'.tr(),
+                    style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.2,

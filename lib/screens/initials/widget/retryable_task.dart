@@ -73,6 +73,7 @@
 // (callers only invoke offerRetry on a wrong answer, but it's harmless
 // either way) or because attempts are exhausted.
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 mixin RetryableTask<T extends StatefulWidget> on State<T> {
@@ -121,7 +122,8 @@ mixin RetryableTask<T extends StatefulWidget> on State<T> {
 
     _showRetryPromptSheet(
       context: context,
-      message: retryMessage ?? "Not quite — give it one more try!",
+      message: retryMessage ??
+          'initials.retryable_task.defaultRetryMessage'.tr(),
       onRetry: onRetry,
     );
     return true;
@@ -203,9 +205,9 @@ mixin RetryableTask<T extends StatefulWidget> on State<T> {
                       elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text(
-                      'Try Again',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                    child: Text(
+                      'initials.retryable_task.tryAgainButton'.tr(),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2),
                     ),
                   ),
                 ),

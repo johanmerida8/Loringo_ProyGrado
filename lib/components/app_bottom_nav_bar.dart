@@ -18,6 +18,7 @@ class AppBottomNavBar extends StatelessWidget {
     required this.currentIndex,
     required this.onTap,
     this.color = AppColors.primary,
+    this.showLabels = true,
   });
 
   final List<AppNavItem> items;
@@ -26,6 +27,10 @@ class AppBottomNavBar extends StatelessWidget {
 
   /// Background fill colour of the pill. Defaults to [AppColors.primary].
   final Color color;
+
+  /// Whether the selected tab shows its label under the icon. Defaults to
+  /// true (existing behavior). Set false for an icon-only bar.
+  final bool showLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +57,7 @@ class AppBottomNavBar extends StatelessWidget {
               item: items[i],
               isSelected: i == currentIndex,
               onTap: () => onTap(i),
+              showLabel: showLabels,
             ),
         ],
       ),
@@ -64,11 +70,13 @@ class _NavItemView extends StatelessWidget {
     required this.item,
     required this.isSelected,
     required this.onTap,
+    this.showLabel = true,
   });
 
   final AppNavItem item;
   final bool isSelected;
   final VoidCallback onTap;
+  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +102,7 @@ class _NavItemView extends StatelessWidget {
               color: Colors.white,
               size: isSelected ? 28 : 24,
             ),
-            if (isSelected) ...[
+            if (isSelected && showLabel) ...[
               const SizedBox(height: 2),
               Text(
                 item.label,

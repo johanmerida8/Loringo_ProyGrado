@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 // ── League tiers ─────────────────────────────────────────────────────────────
@@ -72,9 +73,33 @@ const List<Map<String, dynamic>> kLeagueTiers = [
   },
 ];
 
+// The 'name' field above stays the stable English key used across
+// screens/collections; this maps it to the translated display label.
+// Mirrors taskTypeLabel() in task_type_option.dart.
+String tierLabel(String key) => 'common.leagueTierNames.$key'.tr();
+
 Map<String, dynamic> tierForXp(int xp) {
   for (final t in kLeagueTiers) {
     if (xp >= (t['min'] as int) && xp < (t['max'] as int)) return t;
   }
   return kLeagueTiers.last;
+}
+
+// ── Shared leaderboard row data ─────────────────────────────────────────────
+// Used by both teacher_league_screen.dart (all tiers, teacher-side ranking)
+// and student_league_screen.dart (current tier only, student-facing
+// leaderboard) so the two screens build the same shape from the same
+// students+roster-xp query pattern.
+class LeagueStudentEntry {
+  final String id;
+  final String name;
+  final int    xp;
+  final String groupId;
+
+  const LeagueStudentEntry({
+    required this.id,
+    required this.name,
+    required this.xp,
+    required this.groupId,
+  });
 }

@@ -1,8 +1,13 @@
 // screen_seven.dart
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -214,11 +219,11 @@ class _ScreenSevenState extends State<ScreenSeven>
 
     if (result == SpeakResult.failed) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-              "Couldn't play narration -- check your connection and try again."),
+              'initials.screen_seven.couldntPlayNarration'.tr()),
           behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 2),
         ),
       );
       return;
@@ -249,8 +254,6 @@ class _ScreenSevenState extends State<ScreenSeven>
         ? _title
         : (_currentPage - 1 < _pages.length ? _pages[_currentPage - 1] : '');
     if (currentText.isNotEmpty) _speak(currentText);
-
-    ReadingTtsService.prefetchPages(_pages);
   }
 
   Future<void> _handleClose() async {
@@ -276,12 +279,17 @@ class _ScreenSevenState extends State<ScreenSeven>
         });
 
         if (_pages.isNotEmpty && _phase == _Phase.reading) {
+          // Warm every page's audio up front (title + all pages) so
+          // flipping through an 8-10 page story doesn't wait on synthesis
+          // page by page -- by the time the student reaches a later page,
+          // its audio is already cached or already in flight.
+          ReadingTtsService.prefetchPages([_title, ..._pages]);
+
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _phase == _Phase.reading && _currentPage == 0) {
               _speak(_title);
             }
           });
-          ReadingTtsService.prefetchPages(_pages);
         }
       }
     } catch (_) {
@@ -289,14 +297,34 @@ class _ScreenSevenState extends State<ScreenSeven>
     }
   }
 
-  List<String> get _pages {
+  // Normalizes 'pages' into {text, image} regardless of whether the
+  // document stores the legacy List<String> shape or the current
+  // List<{text, image}> shape (image optional, added for illustrated
+  // stories). Single source of truth for _pages/_pageImages below.
+  List<Map<String, String>> get _pagesData {
     final data = _taskData?['data'] as Map<String, dynamic>?;
     final pagesRaw = data?['pages'] as List<dynamic>?;
     if (pagesRaw != null && pagesRaw.isNotEmpty) {
-      return pagesRaw.cast<String>().where((p) => p.trim().isNotEmpty).toList();
+      return pagesRaw
+          .map((p) => p is Map
+              ? {
+                  'text': (p['text'] as String?) ?? '',
+                  'image': (p['image'] as String?) ?? '',
+                }
+              : {'text': (p as String?) ?? '', 'image': ''})
+          .where((p) => p['text']!.trim().isNotEmpty)
+          .toList();
     }
     final passage = data?['passage'] as String? ?? '';
-    return passage.trim().isNotEmpty ? [passage] : [];
+    return passage.trim().isNotEmpty ? [{'text': passage, 'image': ''}] : [];
+  }
+
+  List<String> get _pages => _pagesData.map((p) => p['text']!).toList();
+  List<String> get _pageImages => _pagesData.map((p) => p['image']!).toList();
+
+  String get _coverImage {
+    final data = _taskData?['data'] as Map<String, dynamic>?;
+    return data?['coverImage'] as String? ?? '';
   }
 
   String get _currentPageText =>
@@ -310,7 +338,7 @@ class _ScreenSevenState extends State<ScreenSeven>
     if (dataTitle != null && dataTitle.trim().isNotEmpty) return dataTitle;
     final legacyTitle = _taskData?['question'] as String?;
     if (legacyTitle != null && legacyTitle.trim().isNotEmpty) return legacyTitle;
-    return 'Reading Passage';
+    return 'initials.screen_seven.readingPassageFallback'.tr();
   }
 
   List<Map<String, dynamic>> get _questions {
@@ -400,7 +428,9 @@ class _ScreenSevenState extends State<ScreenSeven>
       // it's never true in practice for 'reading' once wrongTaskIds
       // stops collecting it — see _continueToNextQuestion.
       isPracticeRound: false,
-      buttonLabel: _currentQ < _questions.length - 1 ? 'CONTINUE' : 'FINISH',
+      buttonLabel: _currentQ < _questions.length - 1
+          ? 'initials.screen_seven.continueLabel'.tr()
+          : 'initials.screen_seven.finishLabel'.tr(),
       onContinue: _continueToNextQuestion,
     );
   }
@@ -429,10 +459,11 @@ class _ScreenSevenState extends State<ScreenSeven>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (_loading) {
       return const Scaffold(
           backgroundColor: Color(0xFFF3FBF3),
-          body: Center(child: CircularProgressIndicator(color: _green)));
+          body: AppLoadingIndicator());
     }
     if (_pages.isEmpty) {
       return Scaffold(
@@ -441,13 +472,13 @@ class _ScreenSevenState extends State<ScreenSeven>
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Icon(Icons.menu_book_rounded, size: 80, color: Colors.grey.shade300),
             const SizedBox(height: 16),
-            Text('No reading content found', style: TextStyle(color: Colors.grey.shade500, fontSize: 16)),
+            Text('initials.screen_seven.noReadingContent'.tr(), style: TextStyle(color: Colors.grey.shade500, fontSize: 16)),
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () => widget.onTaskComplete(false, 0, 0, const []),
               style: ElevatedButton.styleFrom(backgroundColor: _green, foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              child: const Text('Continue'),
+              child: Text('common.continue'.tr()),
             ),
           ]),
         )),
@@ -527,7 +558,9 @@ class _ScreenSevenState extends State<ScreenSeven>
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  ReadingTtsService.speed == ReadingSpeed.slow ? 'Slow' : 'Normal',
+                  ReadingTtsService.speed == ReadingSpeed.slow
+                      ? 'initials.screen_seven.slow'.tr()
+                      : 'initials.screen_seven.normal'.tr(),
                   style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _green),
                 ),
               ]),
@@ -597,6 +630,18 @@ class _ScreenSevenState extends State<ScreenSeven>
     final int contentIdx = pageIndex - 1;
     final bool hasContent = !isTitlePage && contentIdx < _pages.length;
     final String pageText = hasContent ? _pages[contentIdx] : '';
+    final String pageImage = hasContent ? _pageImages[contentIdx] : '';
+
+    // Illustrations should read as a real part of the story, not a
+    // thumbnail -- target ~500px wide (the page's own horizontal padding
+    // is 32px per side, so this is screen width minus that padding,
+    // capped at 500 so it doesn't take over on a wide desktop window).
+    // Width-only (no forced height) so CachedNetworkImage scales to fit
+    // that width using the image's own aspect ratio -- landscape stays
+    // landscape, portrait stays portrait, nothing gets cropped into a
+    // square. Same target used for both the cover and page illustrations
+    // so they feel consistent with each other.
+    final storyImageWidth = (MediaQuery.of(context).size.width - 64).clamp(0.0, 500.0);
 
     return Container(
       color: Colors.white,
@@ -609,28 +654,55 @@ class _ScreenSevenState extends State<ScreenSeven>
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 if (isTitlePage) ...[
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(color: _green.withOpacity(0.1), shape: BoxShape.circle),
-                    child: const Icon(Icons.menu_book_rounded, size: 80, color: _green),
-                  ),
-                  const SizedBox(height: 40),
+                  // Cover image represents the whole story when the
+                  // teacher added one; falls back to the plain book icon
+                  // for stories without a cover so this still works fine
+                  // with no images at all.
+                  if (_coverImage.trim().isNotEmpty)
+                    _buildStoryImage(
+                      imageUrl: _coverImage,
+                      targetWidth: storyImageWidth,
+                      borderRadius: 20,
+                      errorFallback: Icon(Icons.menu_book_rounded, size: 80, color: _green),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(color: _green.withOpacity(0.1), shape: BoxShape.circle),
+                      child: const Icon(Icons.menu_book_rounded, size: 80, color: _green),
+                    ),
+                  const SizedBox(height: 24),
                   _buildHighlightedText(_title),
                   const SizedBox(height: 20),
                   Container(width: 60, height: 3,
                       decoration: BoxDecoration(color: _green, borderRadius: BorderRadius.circular(2))),
                   const SizedBox(height: 16),
-                  Text('Listen -- the story starts automatically',
+                  Text('initials.screen_seven.listenAutoStart'.tr(),
                       style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
                 ] else ...[
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                         color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-                    child: Text('Page ${contentIdx + 1} of ${_pages.length}',
+                    child: Text(
+                        'initials.screen_seven.pageOf'.tr(namedArgs: {
+                          'page': '${contentIdx + 1}',
+                          'total': '${_pages.length}',
+                        }),
                         style: const TextStyle(fontSize: 14, color: _green, fontWeight: FontWeight.w600)),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 20),
+                  // Page illustration is purely a creative touch -- pages
+                  // without one render exactly as before.
+                  if (pageImage.trim().isNotEmpty) ...[
+                    _buildStoryImage(
+                      imageUrl: pageImage,
+                      targetWidth: storyImageWidth,
+                      borderRadius: 16,
+                      errorFallback: const SizedBox.shrink(),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
                   _buildHighlightedText(pageText),
                 ],
               ],
@@ -647,9 +719,9 @@ class _ScreenSevenState extends State<ScreenSeven>
                 color: Colors.black87,
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Text(
-                'Preparing narration...',
-                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+              child: Text(
+                'initials.screen_seven.preparingNarration'.tr(),
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
               ),
             ),
           ),
@@ -723,17 +795,50 @@ class _ScreenSevenState extends State<ScreenSeven>
                     boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1),
                         blurRadius: 8, offset: const Offset(0, 2))],
                   ),
-                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.quiz_rounded, color: _green, size: 18),
-                    SizedBox(width: 6),
-                    Text('Answer Questions',
-                        style: TextStyle(color: _green, fontWeight: FontWeight.bold, fontSize: 14)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.quiz_rounded, color: _green, size: 18),
+                    const SizedBox(width: 6),
+                    Text('initials.screen_seven.answerQuestions'.tr(),
+                        style: const TextStyle(color: _green, fontWeight: FontWeight.bold, fontSize: 14)),
                   ]),
                 ),
               ),
             ),
           ),
       ]),
+    );
+  }
+
+  /// Shared cover/page-illustration renderer. Deliberately sets only a
+  /// `width` (never `height`) on the image itself -- combined with
+  /// BoxFit.contain and unbounded height, this scales the image to that
+  /// width while preserving its own aspect ratio, so a landscape
+  /// illustration stays landscape and a portrait one stays portrait
+  /// instead of being cropped into a square. This is purely a display
+  /// size -- the stored image itself is untouched.
+  Widget _buildStoryImage({
+    required String imageUrl,
+    required double targetWidth,
+    required double borderRadius,
+    required Widget errorFallback,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: CachedNetworkImage(
+        imageUrl: imageUrl,
+        width: targetWidth,
+        fit: BoxFit.contain,
+        placeholder: (_, __) => SizedBox(
+          width: targetWidth,
+          height: targetWidth * 0.75,
+          child: const Center(child: CircularProgressIndicator(color: _green)),
+        ),
+        errorWidget: (_, __, ___) => SizedBox(
+          width: targetWidth,
+          height: targetWidth * 0.75,
+          child: Center(child: errorFallback),
+        ),
+      ),
     );
   }
 
@@ -769,7 +874,11 @@ class _ScreenSevenState extends State<ScreenSeven>
         ),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Task ${widget.currentTaskNumber + 1} of ${widget.totalTasks}',
+          Text(
+              'initials.screen_seven.taskOf'.tr(namedArgs: {
+                'current': '${widget.currentTaskNumber + 1}',
+                'total': '${widget.totalTasks}',
+              }),
               style: const TextStyle(color: Colors.white70, fontSize: 10)),
           const SizedBox(height: 4),
           ClipRRect(
@@ -789,7 +898,11 @@ class _ScreenSevenState extends State<ScreenSeven>
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             const Icon(Icons.quiz_rounded, size: 12, color: Colors.white),
             const SizedBox(width: 4),
-            Text('Q ${_currentQ + 1} / ${_questions.length}',
+            Text(
+                'initials.screen_seven.questionCounter'.tr(namedArgs: {
+                  'current': '${_currentQ + 1}',
+                  'total': '${_questions.length}',
+                }),
                 style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
           ]),
         ),
@@ -908,7 +1021,9 @@ class _ScreenSevenState extends State<ScreenSeven>
                     elevation: 2,
                   ),
                   child: Text(
-                    _answered ? 'Answered' : 'Check',
+                    _answered
+                        ? 'initials.screen_seven.answered'.tr()
+                        : 'common.check'.tr(),
                     style: const TextStyle(color: Colors.white, fontSize: 16,
                         fontWeight: FontWeight.bold, letterSpacing: 1),
                   ),

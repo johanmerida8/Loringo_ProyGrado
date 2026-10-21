@@ -1,42 +1,26 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/avatar_image.dart';
 import 'package:loringo_app/components/avatar_selector.dart';
+import 'package:loringo_app/components/policy_consent_checkbox.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/parent/parent_navigation_screen.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/theme/app_theme.dart';
-import 'dart:math';
 
-/// Parent Register Child Screen
-/// After parent registers, they must register their child
-///
-/// COLOR MIGRATION: previously used a standalone warm palette (peach/
-/// cream — 0xFFFAEDCA, 0xFFFFCFB3, 0xFFB7E0FF/0xFF4A90E2, 0xFFFE5D26,
-/// 0xFFA2CA71, 0xFF387F39, 0xFFF6E96B, 0xFFE67E22) with no tokens of
-/// its own. Same migration as ParentJoinGroupScreen — every raw Color
-/// below is replaced with the nearest AppColors token, matching the
-/// rest of the parent flow (ParentProfileScreen, ParentJoinGroupScreen)
-/// rather than keeping this screen's one-off identity.
-///
-/// HEADER CHANGE: the old `Scaffold(backgroundColor: ...)` with no
-/// AppBar at all is replaced with the same inline header pattern
-/// ParentProfileScreen uses — a circular back button + large title
-/// directly in the body, no solid-color AppBar strip. This screen is
-/// only ever pushed (never a tab root), so it needs its own back
-/// affordance; ParentProfileScreen's _buildHeader() is the established
-/// precedent for how a pushed parent screen should look.
-///
-/// CHILD LIMIT: added a hard cap of 8 children per parent, mirroring
-/// the existing 3-admin cap in Database.createUser(). No legitimate
-/// family needs more than 8 student accounts under one parent login —
-/// even a large or blended family with multiple children under one
-/// guardian's care fits comfortably under this; beyond that, additional
-/// "children" are far more likely to be account spam than real use. The
-/// limit is enforced with a plain count query before allowing another
-/// Firestore write here — same shape as the admin check, no override
-/// path.
 class ParentRegisterChildScreen extends StatefulWidget {
-  const ParentRegisterChildScreen({super.key});
+  /// True when this screen is being shown as the forced first-run step
+  /// (auth_gate.dart's _ParentRouter, for a parent with zero children) —
+  /// rendered at the root of the Navigator with nothing to pop back to,
+  /// as opposed to being pushed from parent_children_screen.dart's "Add
+  /// Child" button (normal back-navigation applies there instead). Swaps
+  /// the header's back button for a "Skip for now" action.
+  final bool isInitialSetup;
+
+  const ParentRegisterChildScreen({super.key, this.isInitialSetup = false});
 
   @override
   State<ParentRegisterChildScreen> createState() =>
@@ -44,13 +28,12 @@ class ParentRegisterChildScreen extends StatefulWidget {
 }
 
 class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
-  static const int _maxChildrenPerParent = 8;
-
   final childNameController = TextEditingController();
   String? generatedAccessCode;
   bool isRegistered = false;
   String? selectedAvatar;
   bool _isSubmitting = false;
+  bool _consentGiven = false;
 
   @override
   void dispose() {
@@ -58,22 +41,19 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
     super.dispose();
   }
 
-  /// Generate unique 6-character access code
-  String _generateAccessCode() {
-    const chars =
-        'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No O, 0, I, 1 to avoid confusion
-    final random = Random();
-    return List.generate(
-      6,
-      (index) => chars[random.nextInt(chars.length)],
-    ).join();
-  }
-
   /// Register child and go to parent home
   void _registerChild() async {
     if (childNameController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your child\'s name')),
+        SnackBar(content: Text('common.enterChildName'.tr())),
+      );
+      return;
+    }
+    if (!_consentGiven) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                'parent.parent_register_child_screen.consentRequired'.tr())),
       );
       return;
     }
@@ -82,54 +62,21 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
 
     try {
       // Get parent auth user
-      final parentAuthUser = FirebaseAuth.instance.currentUser;
+      final parentAuthUser = authInstance.currentUser;
 
       if (parentAuthUser == null) {
-        throw Exception('No authenticated user found');
+        throw Exception('parent.parent_register_child_screen.noAuthUser'.tr());
       }
 
-      final parentUserId = parentAuthUser.uid;
-
-      // FEATURE: enforce the 5-child cap before writing anything. Same
-      // pattern as Database.createUser()'s 3-admin check — count first,
-      // throw before the write if at/over the limit. Checked here
-      // (rather than added as a Database method) since student
-      // documents are created directly against Firestore in this
-      // screen already, with no Database.createStudent()-style method
-      // to hook into.
-      final existingChildrenCount = await FirebaseFirestore.instance
-          .collection('students')
-          .where('parentId', isEqualTo: parentUserId)
-          .count()
-          .get();
-      final currentCount = existingChildrenCount.count ?? 0;
-      if (currentCount >= _maxChildrenPerParent) {
-        throw Exception(
-            'Maximum number of children ($_maxChildrenPerParent) reached');
-      }
-
-      // Generate unique access code
-      final accessCode = _generateAccessCode();
-
-      // Create student data map
-      final newStudentData = {
-        'parentId': parentUserId,
-        'names': childNameController.text.trim(),
-        'accessCode': accessCode,
-        'avatar': selectedAvatar ?? 'assets/avatars/parrot.png',
-        'state': 1,
-        'xp': 0,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
-
-      // Insert to Firebase. Access code lives only as a field (queried by
-      // student_code_screen.dart's `.where('accessCode', ...)` at login) —
-      // it's not a stable, safe choice for a document ID (regenerating/
-      // rotating a code would mean recreating the whole document), so the
-      // student doc gets an auto-generated ID like every other collection.
-      await FirebaseFirestore.instance
-          .collection('students')
-          .add(newStudentData);
+      // The raw access code is never stored — Database.createStudent hashes
+      // it before writing and hands back the plaintext just this once, for
+      // the one-time display below.
+      final accessCode = await Database(firestore: firestoreInstance).createStudent(
+        parentId: parentAuthUser.uid,
+        names: childNameController.text.trim(),
+        avatar: selectedAvatar ?? kAvatarFallbackAsset,
+        childDataConsentAccepted: _consentGiven,
+      );
 
       if (mounted) {
         setState(() {
@@ -138,10 +85,14 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
         });
       }
     } catch (e) {
+      final message = e.toString().contains('max_children_reached')
+          ? 'parent.parent_register_child_screen.maxChildrenReached'
+              .tr(namedArgs: {'max': '${Database.maxChildrenPerParent}'})
+          : '${'common.errRegisterChild'.tr()}: $e';
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error registering child: $e'),
+            content: Text(message),
             backgroundColor: AppColors.danger,
           ),
         );
@@ -156,8 +107,8 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
     if (generatedAccessCode != null) {
       Clipboard.setData(ClipboardData(text: generatedAccessCode!));
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Code copied to clipboard'),
+        SnackBar(
+          content: Text('common.codeCopiedClipboard'.tr()),
           backgroundColor: AppColors.success,
           duration: Duration(seconds: 2),
         ),
@@ -172,6 +123,24 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       context,
       MaterialPageRoute(builder: (context) => const ParentNavigationScreen()),
     );
+  }
+
+  /// "Skip for now" — only shown for the forced first-run setup
+  /// (isInitialSetup). Persists the choice (Database.skipChildRegistration)
+  /// so auth_gate.dart stops forcing this screen on future launches, then
+  /// continues into the normal app exactly like a completed registration
+  /// would — the parent can still add a child later from the empty-state
+  /// "Add Child" button.
+  Future<void> _skipForNow() async {
+    final uid = authInstance.currentUser?.uid;
+    if (uid != null) {
+      try {
+        await Database(firestore: firestoreInstance).skipChildRegistration(uid);
+      } catch (_) {
+        // Non-fatal — worst case they're asked again next launch.
+      }
+    }
+    if (mounted) _goToHome();
   }
 
   /// Show avatar selector
@@ -191,6 +160,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
       body: SafeArea(
@@ -230,20 +200,29 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding: const EdgeInsets.all(AppSpacing.sm),
-              decoration: BoxDecoration(
-                color: AppColors.primarySoft(0.1),
-                borderRadius: AppRadii.mdAll,
+          if (widget.isInitialSetup)
+            Expanded(child: Text('common.registerChildSimple'.tr(), style: AppText.h1))
+          else ...[
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: AppColors.primarySoft(0.1),
+                  borderRadius: AppRadii.mdAll,
+                ),
+                child: const Icon(Icons.arrow_back_ios_new_rounded,
+                    color: AppColors.primary, size: 18),
               ),
-              child: const Icon(Icons.arrow_back_ios_new_rounded,
-                  color: AppColors.primary, size: 18),
             ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          const Text('Register Child', style: AppText.h1),
+            const SizedBox(width: AppSpacing.md),
+            Text('common.registerChildSimple'.tr(), style: AppText.h1),
+          ],
+          if (widget.isInitialSetup)
+            TextButton(
+              onPressed: _skipForNow,
+              child: Text('parent.parent_register_child_screen.skipForNow'.tr()),
+            ),
         ],
       ),
     );
@@ -273,9 +252,9 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
 
         const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
 
-        const Text(
-          'Register Your Child!',
-          style: TextStyle(
+        Text(
+          'common.registerChildParent'.tr(),
+          style: const TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
             color: AppColors.primaryDark,
@@ -285,7 +264,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
         const SizedBox(height: AppSpacing.sm + 4),
 
         Text(
-          'To continue, we need your child\'s name',
+          'common.registerChildSub'.tr(),
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 16, color: Colors.grey[700]),
         ),
@@ -296,7 +275,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
         TextField(
           controller: childNameController,
           decoration: InputDecoration(
-            labelText: 'Child\'s full name',
+            labelText: 'common.childFullname'.tr(),
             hintText: 'E.g.: Juan Pérez',
             prefixIcon: const Icon(
               Icons.child_care_rounded,
@@ -348,16 +327,9 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                   child: selectedAvatar != null
                       ? ClipRRect(
                           borderRadius: AppRadii.mdAll,
-                          child: Image.asset(
-                            selectedAvatar!,
+                          child: AvatarImage(
+                            avatar: selectedAvatar,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Icon(
-                                Icons.face_rounded,
-                                color: Colors.grey[400],
-                                size: 32,
-                              );
-                            },
                           ),
                         )
                       : Icon(
@@ -371,9 +343,9 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Your child\'s avatar',
-                        style: TextStyle(
+                      Text(
+                        'common.childAvatar'.tr(),
+                        style: const TextStyle(
                           fontSize: 14,
                           color: Colors.black54,
                           fontWeight: FontWeight.w500,
@@ -382,8 +354,8 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                       const SizedBox(height: AppSpacing.xs),
                       Text(
                         selectedAvatar != null
-                            ? 'Avatar selected ✓'
-                            : 'Tap to choose an avatar',
+                            ? '${'common.avatarSelected1'.tr()} ✓'
+                            : 'common.avatarSelected2'.tr(),
                         style: TextStyle(
                           fontSize: 16,
                           color: selectedAvatar != null
@@ -405,13 +377,21 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
         ),
 
-        const SizedBox(height: AppSpacing.xl + AppSpacing.sm),
+        const SizedBox(height: AppSpacing.md),
+
+        PolicyConsentCheckbox(
+          value: _consentGiven,
+          onChanged: (v) => setState(() => _consentGiven = v),
+          label: 'parent.parent_register_child_screen.consentLabel'.tr(),
+        ),
+
+        const SizedBox(height: AppSpacing.md),
 
         // Register button
         SizedBox(
           width: double.infinity,
           child: ElevatedButton(
-            onPressed: _isSubmitting ? null : _registerChild,
+            onPressed: (_isSubmitting || !_consentGiven) ? null : _registerChild,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: AppColors.onPrimary,
@@ -429,7 +409,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                       color: AppColors.onPrimary,
                     ),
                   )
-                : const Text('Register Child', style: AppText.button),
+                : Text('common.registerChildSimple'.tr(), style: AppText.button),
           ),
         ),
 
@@ -461,9 +441,9 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
 
         const SizedBox(height: AppSpacing.xl - 2),
 
-        const Text(
-          'Child Registered!',
-          style: TextStyle(
+        Text(
+          'common.childRegistered'.tr(),
+          style: const TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
             color: AppColors.primaryDark,
@@ -503,10 +483,10 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
               const Icon(Icons.key_rounded,
                   size: 48, color: AppColors.onPrimary),
               const SizedBox(height: AppSpacing.md),
-              const Text(
-                'Student Access Code',
+              Text(
+                'common.studentAccessCode'.tr(),
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 16,
                   color: AppColors.onPrimary,
                   fontWeight: FontWeight.w600,
@@ -545,9 +525,9 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
                   shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
                 ),
                 icon: const Icon(Icons.copy_rounded),
-                label: const Text(
-                  'Copy Code',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                label: Text(
+                  'common.copyCode'.tr(),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
@@ -566,18 +546,18 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
           ),
           child: Column(
             children: [
-              const Row(
+              Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.warning_amber_rounded,
                     color: AppColors.warning,
                     size: 28,
                   ),
-                  SizedBox(width: AppSpacing.md - 4),
+                  const SizedBox(width: AppSpacing.md - 4),
                   Expanded(
                     child: Text(
-                      'Important!',
-                      style: TextStyle(
+                      'common.important'.tr(),
+                      style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: AppColors.warning,
@@ -588,7 +568,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
               ),
               const SizedBox(height: AppSpacing.md - 4),
               Text(
-                'Save this code. Your child will need it to log in to the app for the first time.',
+                'common.importantMsgParent'.tr(),
                 style: TextStyle(
                   fontSize: 15,
                   color: Colors.grey[800],
@@ -613,7 +593,7 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
               shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
               elevation: 3,
             ),
-            child: const Text('Continue', style: AppText.button),
+            child: Text('common.continue'.tr(), style: AppText.button),
           ),
         ),
 
@@ -639,9 +619,9 @@ class _ParentRegisterChildScreenState extends State<ParentRegisterChildScreen> {
               shape: RoundedRectangleBorder(borderRadius: AppRadii.mdAll),
             ),
             icon: const Icon(Icons.add),
-            label: const Text(
-              'Register Another Child',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            label: Text(
+              'common.registerAnotherChild'.tr(),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),
         ),

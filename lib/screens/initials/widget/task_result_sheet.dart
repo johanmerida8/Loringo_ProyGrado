@@ -52,8 +52,12 @@
 // v1 wrapped the content in a DraggableScrollableSheet with a fixed
 // initialChildSize. v2 sizes the sheet to its actual content instead.
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/services/speech_to_text/phrase_matcher.dart';
 
 class TaskResultSheet extends StatelessWidget {
   /// Whether the answer was correct. Drives the animation, color, and
@@ -144,6 +148,7 @@ class TaskResultSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final showPracticeNote = isPracticeRound && !isCorrect;
 
     // PopScope here, not just on the calling screen: this sheet is its
@@ -230,7 +235,7 @@ class TaskResultSheet extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          "This is a practice round — it won't count against your score. Take another look and try again!",
+                          'initials.task_result_sheet.practiceRoundNote'.tr(),
                           style: TextStyle(
                             fontSize: 13,
                             color: Colors.orange.shade800,
@@ -270,7 +275,7 @@ class TaskResultSheet extends StatelessWidget {
                   child: Text(
                     // Both correct and wrong now read "Continue" by
                     // default — see v3 note at the top of this file.
-                    buttonLabel ?? 'Continue',
+                    buttonLabel ?? 'common.continue'.tr(),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 18,
@@ -326,60 +331,65 @@ class TaskResultHintBox extends StatelessWidget {
   }
 }
 
-/// Small reusable "you said: ..." content, matching screen_nine and
-/// screen_ten's recognized-speech display. Pass as `extraContent`.
-class TaskResultSpokenTextBox extends StatelessWidget {
+/// Result content for the speech tasks (repeat_after_me, listen_and_speak):
+/// the TARGET phrase word by word, each word marked by how it was said.
+/// Words the recognizer added or heard differently are not shown — only
+/// the words of the phrase — so a microphone mistake (an "in" the student
+/// never said) never looks like the student's mistake.
+///   - said right          -> dark green
+///   - approximate/missed  -> orange (words to practice)
+class TaskResultPhraseCheck extends StatelessWidget {
+  final String targetPhrase;
   final String spokenText;
-  /// screen_nine shows it as a bare italic line; screen_ten wraps it in a
-  /// "You said:" labeled card. Toggle to match.
-  final bool showLabel;
 
-  const TaskResultSpokenTextBox({
+  const TaskResultPhraseCheck({
     super.key,
+    required this.targetPhrase,
     required this.spokenText,
-    this.showLabel = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (!showLabel) {
-      return Text(
-        '"$spokenText"',
-        textAlign: TextAlign.center,
+    context.watch<LocaleProvider>();
+    final match = PhraseMatcher.match(spokenText, targetPhrase);
+    final normalized = PhraseMatcher.words(targetPhrase);
+    // Show the phrase as written (capitals, punctuation) when its tokens
+    // line up with the matcher's; otherwise (contractions and digits expand
+    // into more words) fall back to the normalized words.
+    final original = targetPhrase.trim().split(RegExp(r'\s+'));
+    final shown = original.length == normalized.length ? original : normalized;
+
+    final spans = <InlineSpan>[];
+    var anyPractice = false;
+    for (var i = 0; i < shown.length; i++) {
+      final ok = match.matchedTargetIndexes.contains(i) &&
+          !match.approximateIndexes.contains(i);
+      if (!ok) anyPractice = true;
+      spans.add(TextSpan(
+        text: i == shown.length - 1 ? shown[i] : '${shown[i]} ',
         style: TextStyle(
-          fontSize: 13,
-          color: Colors.grey.shade500,
-          fontStyle: FontStyle.italic,
+          color: ok ? const Color(0xFF2E7D32) : Colors.orange.shade800,
+          fontWeight: ok ? FontWeight.w500 : FontWeight.w800,
         ),
-      );
+      ));
     }
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          const Text(
-            'You said:',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: Colors.grey),
-          ),
-          const SizedBox(height: 4),
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text.rich(
+          TextSpan(children: spans, style: const TextStyle(fontSize: 18)),
+          textAlign: TextAlign.center,
+        ),
+        if (anyPractice) ...[
+          const SizedBox(height: 6),
           Text(
-            '"$spokenText"',
+            'initials.task_result_sheet.practiceInOrange'.tr(),
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey.shade700,
-              fontStyle: FontStyle.italic,
-            ),
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
           ),
         ],
-      ),
+      ],
     );
   }
 }

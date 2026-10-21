@@ -1,6 +1,9 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
 import 'package:loringo_app/components/my_textfield.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/login_screen.dart';
 import 'package:loringo_app/services/auth/otp_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -65,17 +68,19 @@ class _ConfirmResetPasswordScreenState
     final confirmPwd = _confirmPassCtrl.text.trim();
 
     if (newPwd.isEmpty) {
-      _snack('Please enter a new password');
+      _snack('initials.confirm_reset_password_screen.enterNewPassword'.tr());
       return;
     }
     if (newPwd != confirmPwd) {
-      _snack('Passwords don\'t match');
+      _snack('common.passwordMatch'.tr());
       return;
     }
     if (!PasswordUtils.isPasswordValid(newPwd)) {
-      final requirements = PasswordUtils.getPasswordRequirements(newPwd);
+      final requirements = PasswordUtils.getPasswordRequirements(newPwd)
+          .map(passwordRequirementLabel);
       _snack(
-        'Password must include:\n• ${requirements.join('\n• ')}',
+        'initials.confirm_reset_password_screen.passwordMustInclude'
+            .tr(namedArgs: {'requirements': requirements.join('\n• ')}),
         color: AppColors.warning,
       );
       return;
@@ -88,7 +93,8 @@ class _ConfirmResetPasswordScreenState
         otp: widget.otp,
         newPassword: newPwd,
       );
-      _snack('Password reset successfully!', color: AppColors.success);
+      _snack('initials.confirm_reset_password_screen.passwordResetSuccess'.tr(),
+          color: AppColors.success);
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
@@ -97,7 +103,8 @@ class _ConfirmResetPasswordScreenState
         );
       }
     } catch (e) {
-      _snack('Error resetting password: $e');
+      _snack('initials.confirm_reset_password_screen.errorResetting'
+          .tr(namedArgs: {'error': '$e'}));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -105,6 +112,7 @@ class _ConfirmResetPasswordScreenState
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final password = _newPassCtrl.text;
     final confirmPassword = _confirmPassCtrl.text;
     final mismatch = confirmPassword.isNotEmpty && password != confirmPassword;
@@ -117,14 +125,14 @@ class _ConfirmResetPasswordScreenState
         height: 135,
         fit: BoxFit.contain,
       ),
-      title: 'New Password',
+      title: 'initials.confirm_reset_password_screen.newPasswordTitle'.tr(),
       subtitle: widget.email,
       form: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           MyTextField(
             controller: _newPassCtrl,
-            hintText: 'New password',
+            hintText: 'initials.confirm_reset_password_screen.newPasswordHint'.tr(),
             obscureText: true,
             isEnabled: true,
           ),
@@ -135,7 +143,7 @@ class _ConfirmResetPasswordScreenState
           const SizedBox(height: AppSpacing.md),
           MyTextField(
             controller: _confirmPassCtrl,
-            hintText: 'Confirm password',
+            hintText: 'initials.confirm_reset_password_screen.confirmPasswordHint'.tr(),
             obscureText: true,
             isEnabled: true,
           ),
@@ -146,7 +154,7 @@ class _ConfirmResetPasswordScreenState
                 Icon(Icons.warning_amber_rounded, size: 15, color: AppColors.warning),
                 const SizedBox(width: 6),
                 Text(
-                  'Passwords don\'t match',
+                  'common.passwordMatch'.tr(),
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.warning,
@@ -175,7 +183,7 @@ class _ConfirmResetPasswordScreenState
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Colors.white),
                   )
-                : const Text('Reset Password', style: AppText.button),
+                : Text('common.resetPassword'.tr(), style: AppText.button),
           ),
         ],
       ),
@@ -189,6 +197,7 @@ class _PasswordStrengthPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final strength = PasswordUtils.getPasswordStrength(password);
     final color = PasswordUtils.getPasswordStrengthColor(password);
     final missing = PasswordUtils.getPasswordRequirements(password);
@@ -206,10 +215,10 @@ class _PasswordStrengthPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('Strength: ',
+              Text('initials.confirm_reset_password_screen.strengthLabel'.tr(),
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               Text(
-                strength,
+                passwordStrengthLabel(strength),
                 style: TextStyle(
                     fontSize: 12, fontWeight: FontWeight.bold, color: color),
               ),
@@ -239,7 +248,7 @@ class _PasswordStrengthPanel extends StatelessWidget {
                       const Icon(Icons.cancel_outlined,
                           size: 13, color: AppColors.danger),
                       const SizedBox(width: 6),
-                      Text(req,
+                      Text(passwordRequirementLabel(req),
                           style: const TextStyle(
                               fontSize: 11, color: AppColors.textSecondary)),
                     ],
@@ -248,11 +257,11 @@ class _PasswordStrengthPanel extends StatelessWidget {
           ] else ...[
             const SizedBox(height: 6),
             Row(
-              children: const [
-                Icon(Icons.check_circle_rounded, size: 13, color: AppColors.success),
-                SizedBox(width: 6),
-                Text('Password meets all requirements',
-                    style: TextStyle(fontSize: 11, color: AppColors.success)),
+              children: [
+                const Icon(Icons.check_circle_rounded, size: 13, color: AppColors.success),
+                const SizedBox(width: 6),
+                Text('initials.confirm_reset_password_screen.meetsAllRequirements'.tr(),
+                    style: const TextStyle(fontSize: 11, color: AppColors.success)),
               ],
             ),
           ],

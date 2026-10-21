@@ -1,5 +1,9 @@
 // parent_reports_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/avatar_image.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/parent/child_report_detail_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -21,15 +25,16 @@ class ParentReportsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 20, 20, 4),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
             child: Text(
-              'Reports',
-              style: TextStyle(
+              'common.reports'.tr(),
+              style: const TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 color: AppColors.primary,
@@ -40,8 +45,8 @@ class ParentReportsScreen extends StatelessWidget {
           if (myChildren.isEmpty)
             _emptyState(
               icon: Icons.description_rounded,
-              message: 'No children registered yet',
-              sub: 'Register a child first to see reports',
+              message: 'common.noChildRegistered'.tr(),
+              sub: 'common.reportsSubMsg'.tr(),
             )
           else
             ...myChildren.map((child) => Padding(
@@ -109,15 +114,16 @@ class ParentReportsScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        child['names'] ?? 'Child',
+                        child['names'] ?? 'parent.parent_reports_screen.childFallback'.tr(),
                         style: const TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         reports.isEmpty
-                            ? 'No reports yet'
-                            : '${reports.length} report${reports.length != 1 ? 's' : ''}',
+                            ? 'common.noReports'.tr()
+                            : 'parent.parent_reports_screen.reportCount'
+                                .plural(reports.length),
                         style: TextStyle(
                           fontSize: 13,
                           color: Colors.grey[500],
@@ -146,7 +152,7 @@ class ParentReportsScreen extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          'latest',
+                          'parent.parent_reports_screen.latest'.tr(),
                           style: TextStyle(
                             fontSize: 10,
                             color: scoreColor,
@@ -193,7 +199,11 @@ class ParentReportsScreen extends StatelessWidget {
   Widget _childAvatar(Map<String, dynamic> child, {required double radius}) {
     final avatar = child['avatar'] as String?;
     if (avatar != null && avatar.isNotEmpty) {
-      return CircleAvatar(radius: radius, backgroundImage: AssetImage(avatar));
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: avatarImageProvider(avatar),
+        onBackgroundImageError: (_, __) {},
+      );
     }
     return CircleAvatar(
       radius: radius,

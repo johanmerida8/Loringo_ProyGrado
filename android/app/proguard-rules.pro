@@ -6,32 +6,13 @@
 -keep class io.flutter.**  { *; }
 -keep class io.flutter.plugins.**  { *; }
 
-# Keep ML Kit classes
--keep class com.google.mlkit.** { *; }
--dontnote com.google.mlkit.**
--dontwarn com.google.mlkit.**
-
 # Keep Firebase classes
 -keep class com.google.firebase.** { *; }
 -dontwarn com.google.firebase.**
 
-# Keep ML Kit text recognition classes
--keep class com.google.mlkit.vision.text.** { *; }
--keep class com.google.mlkit.vision.text.chinese.** { *; }
--keep class com.google.mlkit.vision.text.devanagari.** { *; }
--keep class com.google.mlkit.vision.text.japanese.** { *; }
--keep class com.google.mlkit.vision.text.korean.** { *; }
-
 # Keep Firebase Instance ID
 -keep class com.google.firebase.iid.** { *; }
 -dontwarn com.google.firebase.iid.**
-
-# Keep translation
--keep class com.google.mlkit.translate.** { *; }
-
-# Keep all model classes
--keep class com.google.mlkit.common.model.** { *; }
--keep class com.google.mlkit.linkfirebase.** { *; }
 
 # Ignore Play Core missing classes (Flutter deferred components)
 -dontwarn com.google.android.play.core.**

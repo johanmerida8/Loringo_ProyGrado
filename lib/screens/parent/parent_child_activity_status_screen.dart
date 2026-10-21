@@ -1,5 +1,13 @@
 // parent_child_activity_status_screen.dart
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/components/app_loading_indicator.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
+import 'package:loringo_app/screens/teacher/progress/activity_review_screen.dart';
+import 'package:loringo_app/screens/teacher/progress/lesson_quiz_review_screen.dart';
+import 'package:loringo_app/screens/teacher/progress/unit_quiz_review_screen.dart';
 import 'package:loringo_app/services/database/database.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
@@ -35,7 +43,8 @@ class _ParentChildActivityStatusScreenState
   // in on their child most likely wants to see first.
   String _filter = 'upcoming';
 
-  String get _childName => widget.child['names'] as String? ?? 'Student';
+  String get _childName =>
+      widget.child['names'] as String? ?? 'common.student'.tr();
 
   @override
   void initState() {
@@ -43,13 +52,68 @@ class _ParentChildActivityStatusScreenState
     _future = _db.getChildActivityStatusList(
       groupId: widget.child['groupId'] as String,
       studentId: widget.child['id'] as String,
+      // Lesson Quizzes and Unit Quizzes too, so the parent sees everything
+      // the child works on, not just activities.
+      includeQuizzes: true,
     );
+  }
+
+  /// Eye button on a completed row: opens the SAME review screen the
+  /// teacher uses (answers, score, task detail), in readOnly mode — the
+  /// parent sees the teacher's feedback but can't edit anything.
+  void _openResult(Map<String, dynamic> item) {
+    final groupId = widget.child['groupId'] as String;
+    final studentId = widget.child['id'] as String;
+    final type = item['type'] as String? ?? 'activity';
+    final Widget screen;
+    switch (type) {
+      case 'lesson_quiz':
+        screen = LessonQuizReviewScreen(
+          studentId: studentId,
+          studentName: _childName,
+          groupId: groupId,
+          contentId: item['contentId'] as String,
+          unitId: item['unitId'] as String,
+          lessonId: item['lessonId'] as String,
+          quizId: item['quizId'] as String,
+          quizTitle: item['title'] as String,
+          readOnly: true,
+        );
+      case 'unit_quiz':
+        screen = UnitQuizReviewScreen(
+          studentId: studentId,
+          studentName: _childName,
+          groupId: groupId,
+          quizId: item['quizId'] as String,
+          quizTitle: item['title'] as String,
+          unitId: item['unitId'] as String,
+          contentId: item['contentId'] as String,
+          readOnly: true,
+        );
+      default:
+        screen = ActivityReviewScreen(
+          studentId: studentId,
+          studentName: _childName,
+          groupId: groupId,
+          activityId: item['activityId'] as String,
+          activityTitle: item['title'] as String,
+          readOnly: true,
+        );
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
   /// Maps the richer per-activity `status` onto one of the three top-level
   /// filter buckets. 'not_open_yet' items count as Upcoming — they're not
   /// done and not overdue, just not reachable yet.
-  bool _matchesFilter(String status) {
+  ///
+  /// Quizzes (Lesson/Unit) only ever show under Completed: Upcoming and
+  /// Past Due are about turn-in dates, and quizzes have none — what a
+  /// parent needs from a quiz is the finished result (eye button).
+  bool _matchesFilter(Map<String, dynamic> item) {
+    final status = item['status'] as String;
+    final type = item['type'] as String? ?? 'activity';
+    if (type != 'activity') return _filter == 'completed' && status == 'completed';
     switch (_filter) {
       case 'past_due':
         return status == 'past_due';
@@ -83,39 +147,92 @@ class _ParentChildActivityStatusScreenState
   }
 
   String _formatDate(DateTime d) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    final months = [
+      'common.monthJan'.tr(),
+      'common.monthFeb'.tr(),
+      'common.monthMar'.tr(),
+      'common.monthApr'.tr(),
+      'common.monthMay'.tr(),
+      'common.monthJun'.tr(),
+      'common.monthJul'.tr(),
+      'common.monthAug'.tr(),
+      'common.monthSep'.tr(),
+      'common.monthOct'.tr(),
+      'common.monthNov'.tr(),
+      'common.monthDec'.tr(),
     ];
     return '${months[d.month - 1]} ${d.day}';
   }
 
+  // Whichever date is actually shown on a card: closeDate when the
+  // teacher set one, dueDate otherwise. Never both -- closeDate is the
+  // harder, more relevant cutoff (turn_in_widget.dart), so showing the
+  // due date alongside it would be redundant/confusing.
+  DateTime? _relevantDate(Map<String, dynamic> item) =>
+      (item['closeDate'] as DateTime?) ?? (item['dueDate'] as DateTime?);
+  String _dateLabel(Map<String, dynamic> item) => item['closeDate'] != null
+      ? 'parent.parent_child_activity_status_screen.closes'.tr()
+      : 'parent.parent_child_activity_status_screen.due'.tr();
+
   String _subtitleFor(Map<String, dynamic> item) {
     final status = item['status'] as String;
+    final due = item['dueDate'] as DateTime?;
+    final close = item['closeDate'] as DateTime?;
+    const ns = 'parent.parent_child_activity_status_screen';
+
     switch (status) {
       case 'completed':
         final stars = item['stars'] as int? ?? 0;
-        return stars > 0 ? 'Completed · $stars★' : 'Completed';
-      case 'past_due':
-        final due = item['dueDate'] as DateTime?;
-        final closeDate = item['closeDate'] as DateTime?;
-        if (closeDate != null && closeDate.isBefore(DateTime.now())) {
-          return 'Window closed — can no longer be submitted';
+        final done = stars > 0
+            ? '$ns.completedWithStars'.tr(namedArgs: {'stars': '$stars'})
+            : '$ns.pillCompleted'.tr();
+        // A Unit Quiz is "completed" as soon as the child finishes it;
+        // the teacher's report may come later, so say which it is.
+        if (item['type'] == 'unit_quiz') {
+          final report = item['reportSent'] == true
+              ? '$ns.reportSent'.tr()
+              : '$ns.reportPending'.tr();
+          return '$done · $report';
         }
-        return due == null ? 'Past due' : 'Was due ${_formatDate(due)} — overdue';
+        return done;
+      case 'past_due':
+        if (close != null && close.isBefore(DateTime.now())) {
+          return '$ns.windowClosed'.tr();
+        }
+        if (close != null) {
+          // Still overdue on its original due date, but a later close
+          // date means there's still a grace window to submit in.
+          return '$ns.overdueCloses'.tr(namedArgs: {'date': _formatDate(close)});
+        }
+        return due == null
+            ? '$ns.pastDue'.tr()
+            : '$ns.wasDueOverdue'.tr(namedArgs: {'date': _formatDate(due)});
       case 'not_open_yet':
         if (item['notOpenReason'] == 'scheduled') {
           final scheduled = item['scheduledDate'] as DateTime?;
-          return scheduled == null ? 'Not open yet' : 'Opens ${_formatDate(scheduled)}';
+          return scheduled == null
+              ? '$ns.notOpenYet'.tr()
+              : '$ns.opens'.tr(namedArgs: {'date': _formatDate(scheduled)});
         }
-        return 'Locked — complete earlier activities first';
+        return '$ns.lockedCompleteEarlier'.tr();
       case 'due_today':
-        return 'Due today';
       case 'due_tomorrow':
-        return 'Due tomorrow';
+        final relevant = _relevantDate(item);
+        if (relevant == null) {
+          return status == 'due_today'
+              ? '$ns.dueTodayLower'.tr()
+              : '$ns.dueTomorrowLower'.tr();
+        }
+        return '${_dateLabel(item)} ${_formatDate(relevant)}';
       case 'later':
-        final due = item['dueDate'] as DateTime?;
-        return due == null ? 'No due date' : 'Due ${_formatDate(due)}';
+        // Quizzes have no dates — "later" just means it's open now.
+        if (item['type'] == 'lesson_quiz' || item['type'] == 'unit_quiz') {
+          return '$ns.quizAvailableNow'.tr();
+        }
+        final relevant = _relevantDate(item);
+        return relevant == null
+            ? '$ns.noDueDate'.tr()
+            : '${_dateLabel(item)} ${_formatDate(relevant)}';
       default:
         return '';
     }
@@ -139,46 +256,50 @@ class _ParentChildActivityStatusScreenState
   }
 
   String _pillLabel(String status) {
+    const ns = 'parent.parent_child_activity_status_screen';
     switch (status) {
       case 'completed':
-        return 'Completed';
+        return '$ns.pillCompleted'.tr();
       case 'past_due':
-        return 'Past Due';
+        return '$ns.filterPastDue'.tr();
       case 'not_open_yet':
-        return 'Not Open Yet';
+        return '$ns.pillNotOpenYet'.tr();
       case 'due_today':
-        return 'Due Today';
+        return '$ns.pillDueToday'.tr();
       case 'due_tomorrow':
-        return 'Due Tomorrow';
+        return '$ns.pillDueTomorrow'.tr();
       default:
-        return 'Upcoming';
+        return '$ns.filterUpcoming'.tr();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    const ns = 'parent.parent_child_activity_status_screen';
     return Scaffold(
       backgroundColor: AppColors.scaffoldBackground,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.onPrimary),
-        title: Text(
-          "$_childName's Activities",
-          style: const TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
-        ),
-      ),
       body: Column(
         children: [
+          ParentScreenHeader(
+              title: '$ns.titleActivities'.tr(namedArgs: {'name': _childName})),
           Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.md,
+              AppSpacing.md,
+              0,
+            ),
             child: Row(
               children: [
-                Expanded(child: _filterChip('upcoming', 'Upcoming')),
+                Expanded(child: _filterChip(
+                    'upcoming', '$ns.filterUpcoming'.tr())),
                 const SizedBox(width: AppSpacing.sm),
-                Expanded(child: _filterChip('past_due', 'Past Due')),
+                Expanded(child: _filterChip(
+                    'past_due', '$ns.filterPastDue'.tr())),
                 const SizedBox(width: AppSpacing.sm),
-                Expanded(child: _filterChip('completed', 'Completed')),
+                Expanded(child: _filterChip(
+                    'completed', '$ns.filterCompleted'.tr())),
               ],
             ),
           ),
@@ -187,60 +308,59 @@ class _ParentChildActivityStatusScreenState
               future: _future,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+                  return const AppLoadingIndicator();
                 }
                 if (snapshot.hasError) {
                   return Center(
-                    child: Text('Error: ${snapshot.error}', style: const TextStyle(color: AppColors.danger)),
+                    child: Text(
+                      'common.errorWithMessage'
+                          .tr(namedArgs: {'error': '${snapshot.error}'}),
+                      style: const TextStyle(color: AppColors.danger),
+                    ),
                   );
                 }
 
                 final all = snapshot.data ?? [];
-                final filtered = all.where((item) => _matchesFilter(item['status'] as String)).toList();
+                // Flat list, one card per activity — no unit/lesson
+                // grouping. Preserves the source list's traversal
+                // (pedagogical) order by default; the Upcoming tab
+                // additionally sorts by due-status rank (due today above
+                // due tomorrow above later above not-yet-open) so the
+                // most time-sensitive activity surfaces first regardless
+                // of which unit/lesson it belongs to.
+                final filtered = all
+                    .where(_matchesFilter)
+                    .toList();
+                if (_filter == 'upcoming') {
+                  filtered.sort(
+                    (a, b) => _statusRank(
+                      a['status'] as String,
+                    ).compareTo(_statusRank(b['status'] as String)),
+                  );
+                }
 
                 if (filtered.isEmpty) {
                   return _emptyState();
                 }
 
-                // Group by unit, preserving traversal (pedagogical) order
-                // from the source list — not re-sorted by due date at the
-                // unit/lesson level, only within a lesson's own rows.
-                final unitOrder = <String>[];
-                final unitTitles = <String, String>{};
-                final byUnit = <String, List<Map<String, dynamic>>>{};
-                for (final item in all) {
-                  final unitId = item['unitId'] as String;
-                  if (!byUnit.containsKey(unitId)) {
-                    unitOrder.add(unitId);
-                    unitTitles[unitId] = item['unitTitle'] as String;
-                    byUnit[unitId] = [];
-                  }
-                }
-                for (final item in filtered) {
-                  byUnit[item['unitId'] as String]!.add(item);
-                }
-
-                final visibleUnitIds =
-                    unitOrder.where((id) => byUnit[id]!.isNotEmpty).toList();
-
                 return ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.lg),
-                  itemCount: visibleUnitIds.length,
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.lg,
+                  ),
+                  itemCount: filtered.length,
                   itemBuilder: (context, i) {
-                    final unitId = visibleUnitIds[i];
-                    final unitItems = byUnit[unitId]!;
-                    if (_filter == 'upcoming') {
-                      unitItems.sort((a, b) =>
-                          _statusRank(a['status'] as String).compareTo(_statusRank(b['status'] as String)));
-                    }
-                    return _UnitSection(
-                      title: unitTitles[unitId]!,
-                      totalInUnit: all.where((it) => it['unitId'] == unitId).length,
-                      shownCount: unitItems.length,
-                      items: unitItems,
-                      subtitleFor: _subtitleFor,
+                    final item = filtered[i];
+                    return _ActivityCard(
+                      item: item,
+                      subtitle: _subtitleFor(item),
                       iconFor: _iconFor,
                       pillLabel: _pillLabel,
+                      onView: item['status'] == 'completed'
+                          ? () => _openResult(item)
+                          : null,
                     );
                   },
                 );
@@ -264,16 +384,19 @@ class _ParentChildActivityStatusScreenState
         color: selected ? AppColors.onPrimary : AppColors.textPrimary,
         fontWeight: FontWeight.w600,
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.md),
+      ),
       side: BorderSide(color: selected ? AppColors.primary : AppColors.divider),
     );
   }
 
   Widget _emptyState() {
+    const ns = 'parent.parent_child_activity_status_screen';
     final message = switch (_filter) {
-      'past_due' => 'Nothing past due — all caught up!',
-      'completed' => 'No completed activities yet.',
-      _ => 'Nothing upcoming right now.',
+      'past_due' => '$ns.emptyPastDue'.tr(),
+      'completed' => '$ns.emptyCompleted'.tr(),
+      _ => '$ns.emptyUpcoming'.tr(),
     };
     return Center(
       child: Padding(
@@ -283,7 +406,11 @@ class _ParentChildActivityStatusScreenState
           children: [
             Icon(Icons.checklist_rounded, size: 64, color: Colors.grey[300]),
             const SizedBox(height: AppSpacing.md),
-            Text(message, style: TextStyle(fontSize: 15, color: Colors.grey[500]), textAlign: TextAlign.center),
+            Text(
+              message,
+              style: TextStyle(fontSize: 15, color: Colors.grey[500]),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),
@@ -291,122 +418,141 @@ class _ParentChildActivityStatusScreenState
   }
 }
 
-class _UnitSection extends StatelessWidget {
-  final String title;
-  final int totalInUnit;
-  final int shownCount;
-  final List<Map<String, dynamic>> items;
-  final String Function(Map<String, dynamic>) subtitleFor;
+// One activity, one card — no unit/lesson grouping. The unit name is
+// still shown (per request), just as a small label on the card itself
+// instead of as a collapsible group header.
+class _ActivityCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final String subtitle;
   final ({IconData icon, Color color}) Function(String status) iconFor;
   final String Function(String status) pillLabel;
+  // Non-null only for completed rows: shows the eye button that opens the
+  // read-only review (results + teacher feedback).
+  final VoidCallback? onView;
 
-  const _UnitSection({
-    required this.title,
-    required this.totalInUnit,
-    required this.shownCount,
-    required this.items,
-    required this.subtitleFor,
+  const _ActivityCard({
+    required this.item,
+    required this.subtitle,
     required this.iconFor,
     required this.pillLabel,
+    this.onView,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Group this unit's (already-filtered) items by lesson, preserving
-    // first-seen order — lessons render as non-collapsible sub-headers
-    // rather than a nested ExpansionTile, since a two-level collapse has
-    // no precedent elsewhere in this app and adds interaction cost for
-    // little benefit at this depth.
-    final lessonOrder = <String>[];
-    final lessonTitles = <String, String>{};
-    final byLesson = <String, List<Map<String, dynamic>>>{};
-    for (final item in items) {
-      final lessonId = item['lessonId'] as String;
-      if (!byLesson.containsKey(lessonId)) {
-        lessonOrder.add(lessonId);
-        lessonTitles[lessonId] = item['lessonTitle'] as String;
-        byLesson[lessonId] = [];
-      }
-      byLesson[lessonId]!.add(item);
-    }
+    context.watch<LocaleProvider>();
+    final status = item['status'] as String;
+    final visuals = iconFor(status);
+    final unitTitle = item['unitTitle'] as String? ?? '';
+    final type = item['type'] as String? ?? 'activity';
+    const ns = 'parent.parent_child_activity_status_screen';
+    // Every row gets a type tag so activities, Lesson Quizzes and Unit
+    // Tests are told apart at a glance.
+    final String typeLabel = switch (type) {
+      'lesson_quiz' => '$ns.lessonQuizBadge'.tr(),
+      'unit_quiz' => '$ns.unitQuizBadge'.tr(),
+      _ => '$ns.activityBadge'.tr(),
+    };
+    final Color typeColor = switch (type) {
+      'lesson_quiz' => AppColors.primaryLight,
+      'unit_quiz' => AppColors.primaryDark,
+      _ => const Color(0xFF00897B), // teal — distinct from both quiz tags
+    };
 
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppRadii.md),
         border: Border.all(color: AppColors.divider),
       ),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          subtitle: Text('$shownCount / $totalInUnit activities',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-          childrenPadding: const EdgeInsets.only(bottom: AppSpacing.sm),
-          children: [
-            for (final lessonId in lessonOrder) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 4),
-                child: Text(
-                  lessonTitles[lessonId]!.toUpperCase(),
-                  style: AppText.fieldLabel.copyWith(color: AppColors.textSecondary),
-                ),
-              ),
-              for (final item in byLesson[lessonId]!) _ActivityRow(
-                    item: item,
-                    subtitle: subtitleFor(item),
-                    iconFor: iconFor,
-                    pillLabel: pillLabel,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(visuals.icon, color: visuals.color, size: 22),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (unitTitle.isNotEmpty)
+                  Text(
+                    unitTitle.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.fieldLabel.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ActivityRow extends StatelessWidget {
-  final Map<String, dynamic> item;
-  final String subtitle;
-  final ({IconData icon, Color color}) Function(String status) iconFor;
-  final String Function(String status) pillLabel;
-
-  const _ActivityRow({
-    required this.item,
-    required this.subtitle,
-    required this.iconFor,
-    required this.pillLabel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final status = item['status'] as String;
-    final visuals = iconFor(status);
-
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 0),
-      leading: Icon(visuals.icon, color: visuals.color, size: 22),
-      title: Text(
-        item['title'] as String,
-        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-      trailing: Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 2),
-        decoration: BoxDecoration(
-          color: visuals.color.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(AppRadii.sm),
-        ),
-        child: Text(
-          pillLabel(status),
-          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: visuals.color),
-        ),
+                const SizedBox(height: 2),
+                Text(
+                  item['title'] as String,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: typeColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadii.sm),
+                  ),
+                  child: Text(
+                    typeLabel,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: typeColor,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.sm,
+              vertical: 2,
+            ),
+            decoration: BoxDecoration(
+              color: visuals.color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+            ),
+            child: Text(
+              pillLabel(status),
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: visuals.color,
+              ),
+            ),
+          ),
+          if (onView != null)
+            IconButton(
+              tooltip: '$ns.viewResult'.tr(),
+              icon: const Icon(Icons.visibility_rounded),
+              color: AppColors.primary,
+              visualDensity: VisualDensity.compact,
+              onPressed: onView,
+            ),
+        ],
       ),
     );
   }

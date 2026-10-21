@@ -1,11 +1,20 @@
 // parent_children_screen.dart
-// import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/screens/parent/widgets/parent_screen_header.dart';
 import 'package:loringo_app/screens/parent/parent_child_activity_status_screen.dart';
+import 'package:loringo_app/screens/parent/parent_child_progress_path_screen.dart';
 import 'package:loringo_app/screens/parent/parent_join_group_screen.dart';
 import 'package:loringo_app/screens/parent/parent_register_child_screen.dart';
+import 'package:loringo_app/components/avatar_image.dart';
+import 'package:loringo_app/services/auth/identity_confirmation.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
 import 'package:loringo_app/theme/app_theme.dart';
+import 'package:loringo_app/utils/access_code_hasher.dart';
 
 class ParentChildrenScreen extends StatelessWidget {
   final List<Map<String, dynamic>> myChildren;
@@ -19,16 +28,44 @@ class ParentChildrenScreen extends StatelessWidget {
     required this.onRefresh,
   });
 
-  void _showAccessCodeDialog(
-      BuildContext context, Map<String, dynamic> child) {
-    final accessCode = child['accessCode'] as String?;
-    if (accessCode == null || accessCode.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Access code not available'),
-        backgroundColor: Colors.red,
-      ));
+  /// The access code is static (set once at registration, never rotated)
+  /// and is never stored as recoverable plaintext (see database.dart's
+  /// STUDENTS section) — only encrypted. This decrypts it back for
+  /// display, gated behind identity confirmation (biometric, with password
+  /// fallback — see identity_confirmation.dart) since it hands back the
+  /// real code in the clear.
+  Future<void> _revealAccessCodeFlow(
+      BuildContext context, Map<String, dynamic> child) async {
+    final confirmed = await confirmIdentity(
+      context,
+      reason: 'common.confirmIdentityBody'.tr(),
+    );
+    if (!confirmed || !context.mounted) return;
+
+    String accessCode;
+    try {
+      accessCode = await Database(firestore: firestoreInstance)
+          .revealAccessCode(child['id'] as String);
+      // ignore: avoid_print
+      print('[REVEAL CODE] student=${child['id']} code=$accessCode '
+          'hash=${AccessCodeHasher.hash(accessCode)}');
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${'common.error'.tr()}: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
       return;
     }
+
+    if (context.mounted) {
+      _showAccessCodeDialog(context, child, accessCode);
+    }
+  }
+
+  void _showAccessCodeDialog(
+      BuildContext context, Map<String, dynamic> child, String accessCode) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -47,7 +84,9 @@ class ParentChildrenScreen extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text("${child['names']}'s Code",
+              child: Text(
+                  'parent.parent_children_screen.childsCode'
+                      .tr(namedArgs: {'name': '${child['names']}'}),
                   style: const TextStyle(fontSize: 18)),
             ),
           ],
@@ -55,63 +94,126 @@ class ParentChildrenScreen extends StatelessWidget {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Share this code with your child to log in:',
+            Text(
+              'common.shareCodeToChild'.tr(),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14),
+              style: const TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  vertical: 16, horizontal: 24),
-              decoration: BoxDecoration(
-                color: AppColors.primarySoft(0.08),
+            Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                border:
-                    Border.all(color: AppColors.primary, width: 2),
-              ),
-              child: Text(
-                accessCode,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 6,
-                  color: AppColors.primary,
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: accessCode));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                    content: Text('common.codeCopied'.tr()),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(seconds: 2),
+                  ));
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 16, horizontal: 24),
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySoft(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border:
+                        Border.all(color: AppColors.primary, width: 2),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            accessCode,
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 6,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Icon(Icons.copy_rounded,
+                              color: AppColors.primary, size: 20),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'common.tapToCopy'.tr(),
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: accessCode));
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                  content: Text('Code copied'),
-                  backgroundColor: Colors.green,
-                  duration: Duration(seconds: 2),
-                ));
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-              ),
-              icon: const Icon(Icons.copy_rounded),
-              label: const Text('Copy Code'),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text('common.close'.tr()),
           ),
         ],
       ),
     );
+  }
+
+  /// Permanently removes a single child — deletes their profile and every
+  /// group's progress/reports for them (see
+  /// Database.deleteStudentCascade), but leaves groups/teachers
+  /// untouched. Distinct from deleting the whole parent account
+  /// (parent_navigation_screen.dart), which loops this same cascade over
+  /// every child.
+  Future<void> _removeChildFlow(
+      BuildContext context, Map<String, dynamic> child) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('parent.parent_children_screen.removeChildTitle'.tr()),
+        content: Text('parent.parent_children_screen.removeChildMsg'
+            .tr(namedArgs: {'name': '${child['names']}'})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('common.cancel'.tr()),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('common.delete'.tr(),
+                style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await Database(firestore: firestoreInstance)
+          .deleteStudentCascade(child['id'] as String);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('parent.parent_children_screen.childRemoved'
+              .tr(namedArgs: {'name': '${child['names']}'})),
+          backgroundColor: Colors.green,
+        ));
+      }
+      onRefresh();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${'common.error'.tr()}: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
   void _navigateToJoinGroup(
@@ -121,6 +223,15 @@ class ParentChildrenScreen extends StatelessWidget {
       MaterialPageRoute(
           builder: (context) =>
               ParentJoinGroupScreen(child: child)),
+    );
+    if (result == true) onRefresh();
+  }
+
+  Future<void> _openRegisterChild(BuildContext context) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (context) => const ParentRegisterChildScreen()),
     );
     if (result == true) onRefresh();
   }
@@ -135,62 +246,54 @@ class ParentChildrenScreen extends StatelessWidget {
     );
   }
 
+  void _navigateToProgressPath(
+      BuildContext context, Map<String, dynamic> child) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (context) =>
+              ParentChildProgressPathScreen(child: child)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Inline header ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-            child: const Text(
-              'My Children',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // ── Add child button ──
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const ParentRegisterChildScreen()),
-                  );
-                  if (result == true) onRefresh();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
+          // ── Header: shared ParentScreenHeader (no back — this is a root
+          // tab) with the "add child" action as a compact icon button in
+          // the same soft-tint style as the header's back button.
+          ParentScreenHeader(
+            title: 'common.myChildren'.tr(),
+            showBack: false,
+            trailing: Tooltip(
+              message: 'common.addChild'.tr(),
+              child: Material(
+                color: AppColors.primarySoft(0.1),
+                borderRadius: AppRadii.mdAll,
+                child: InkWell(
+                  borderRadius: AppRadii.mdAll,
+                  onTap: () => _openRegisterChild(context),
+                  child: const Padding(
+                    padding: EdgeInsets.all(AppSpacing.sm),
+                    child: Icon(
+                      Icons.person_add_alt_1_rounded,
+                      color: AppColors.primary,
+                      size: 22,
+                    ),
+                  ),
                 ),
-                icon: const Icon(Icons.add),
-                label: const Text('Add Child',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           if (myChildren.isEmpty)
-            _emptyPlaceholder()
+            _emptyPlaceholder(context)
           else
             ...myChildren.map(
               (child) => Padding(
@@ -236,7 +339,7 @@ class ParentChildrenScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        child['names'] ?? 'No name',
+                        child['names'] ?? 'common.noName'.tr(),
                         style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold),
@@ -258,8 +361,9 @@ class ParentChildrenScreen extends StatelessWidget {
                           Text(
                             hasGroup
                                 ? groupNames[child['id']] ??
-                                    'Loading...'
-                                : 'No group assigned',
+                                    'parent.parent_children_screen.loadingGroup'
+                                        .tr()
+                                : 'common.noGroupAssigned'.tr(),
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
@@ -272,6 +376,11 @@ class ParentChildrenScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                ),
+                IconButton(
+                  onPressed: () => _removeChildFlow(context, child),
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'parent.parent_children_screen.removeChildTitle'.tr(),
                 ),
               ],
             ),
@@ -286,7 +395,7 @@ class ParentChildrenScreen extends StatelessWidget {
                   Expanded(
                     child: _actionButton(
                       icon: Icons.add_circle_outline,
-                      label: 'Join Group',
+                      label: 'common.joinGroup'.tr(),
                       isPrimary: true,
                       onPressed: () =>
                           _navigateToJoinGroup(context, child),
@@ -298,7 +407,7 @@ class ParentChildrenScreen extends StatelessWidget {
                   Expanded(
                     child: _actionButton(
                       icon: Icons.checklist_rounded,
-                      label: 'Activities',
+                      label: 'parent.parent_children_screen.activities'.tr(),
                       isPrimary: true,
                       onPressed: () =>
                           _navigateToActivityStatus(context, child),
@@ -309,14 +418,23 @@ class ParentChildrenScreen extends StatelessWidget {
                 Expanded(
                   child: _actionButton(
                     icon: Icons.key_rounded,
-                    label: 'Access Code',
+                    label: 'common.accessCode'.tr(),
                     isPrimary: false,
                     onPressed: () =>
-                        _showAccessCodeDialog(context, child),
+                        _revealAccessCodeFlow(context, child),
                   ),
                 ),
               ],
             ),
+            if (hasGroup) ...[
+              const SizedBox(height: 10),
+              _actionButton(
+                icon: Icons.route_rounded,
+                label: 'parent.parent_children_screen.viewLearningPath'.tr(),
+                isPrimary: false,
+                onPressed: () => _navigateToProgressPath(context, child),
+              ),
+            ],
           ],
         ),
       ),
@@ -369,7 +487,8 @@ class ParentChildrenScreen extends StatelessWidget {
     if (avatar != null && avatar.isNotEmpty) {
       return CircleAvatar(
         radius: radius,
-        backgroundImage: AssetImage(avatar),
+        backgroundImage: avatarImageProvider(avatar),
+        onBackgroundImageError: (_, __) {},
         backgroundColor: AppColors.primarySoft(0.15),
       );
     }
@@ -386,7 +505,9 @@ class ParentChildrenScreen extends StatelessWidget {
     );
   }
 
-  Widget _emptyPlaceholder() {
+  // With no children yet, the header's small icon button is easy to miss,
+  // so the empty state carries its own add action too.
+  Widget _emptyPlaceholder(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 48),
@@ -395,9 +516,21 @@ class ParentChildrenScreen extends StatelessWidget {
             Icon(Icons.child_care_rounded,
                 size: 72, color: Colors.grey[300]),
             const SizedBox(height: 12),
-            Text('No children registered yet',
+            Text('common.noChildRegistered'.tr(),
                 style: TextStyle(
                     fontSize: 15, color: Colors.grey[500])),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => _openRegisterChild(context),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+              label: Text('common.addChild'.tr()),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
           ],
         ),
       ),

@@ -1,6 +1,9 @@
 // screen_ten.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_tts/flutter_tts.dart';
 // import 'package:just_audio/just_audio.dart';
@@ -163,6 +166,10 @@ class _ScreenTenState extends State<ScreenTen>
         isCorrect: result.isCorrect,
         captureError: false,
         spokenText: result.recognizedText,
+        missedWords: result.isImperfect ? result.missedWords : const [],
+        approximateWords:
+            result.isImperfect ? result.approximateWords : const [],
+        lowConfidence: result.isLowConfidence,
       );
     };
 
@@ -179,8 +186,8 @@ class _ScreenTenState extends State<ScreenTen>
         isCorrect: false,
         captureError: isNoSpeech,
         errorMessage: isNoSpeech
-            ? "Couldn't capture your voice.\nPlease try again."
-            : "Microphone error.\nPlease try again.",
+            ? 'initials.screen_nine.couldntCaptureVoice'.tr()
+            : 'initials.screen_nine.microphoneError'.tr(),
         spokenText: '',
       );
     };
@@ -252,7 +259,7 @@ class _ScreenTenState extends State<ScreenTen>
       if (!granted) return;
     }
 
-    await _speechService.startListening(targetPhrase: _phrase);
+    await _speechService.startListening(targetPhrase: _phrase, patient: true);
   }
 
   void _stopRecording() => _speechService.stopListening();
@@ -262,6 +269,9 @@ class _ScreenTenState extends State<ScreenTen>
     required bool captureError,
     String? errorMessage,
     String spokenText = '',
+    List<String> missedWords = const [],
+    List<String> approximateWords = const [],
+    bool lowConfidence = false,
   }) {
     if (_isResultSheetOpen) return;
 
@@ -285,14 +295,32 @@ class _ScreenTenState extends State<ScreenTen>
 
     TaskFeedback.fire(isCorrect);
 
+    // Passed, but with a word missing or only approximately said: still
+    // correct, but not "perfect".
+    final practiceWords = [...missedWords, ...approximateWords];
+    final isPartial = isCorrect && practiceWords.isNotEmpty;
+    // Exact text, but the recognizer wasn't confident (it may have
+    // corrected a mispronounced word): not "perfect" either, though there
+    // is no specific word to point at.
+    final isUnclear = isCorrect && !isPartial && lowConfidence;
+
     final message = captureError
-        ? (errorMessage ?? "Couldn't capture your voice.\nPlease try again.")
+        ? (errorMessage ?? 'initials.screen_nine.couldntCaptureVoice'.tr())
         : isCorrect
-            ? 'Perfect! You repeated it correctly!'
-            : 'Almost there! Listen again and try.';
+            ? (isPartial
+                ? (missedWords.isNotEmpty
+                    ? 'initials.task_result_sheet.almostPerfectMissedWord'.tr()
+                    : 'initials.task_result_sheet.almostPerfectPronunciation'
+                        .tr())
+                : isUnclear
+                    ? 'initials.task_result_sheet.almostPerfectClarity'.tr()
+                    : 'initials.screen_ten.perfectRepeated'.tr())
+            : 'initials.screen_ten.almostThereListenAgain'.tr();
 
     final messageColor = isCorrect
-        ? const Color(0xFF2E7D32)
+        ? ((isPartial || isUnclear)
+            ? const Color(0xFFE65100)
+            : const Color(0xFF2E7D32))
         : captureError
             ? Colors.grey.shade700
             : const Color(0xFFE65100);
@@ -303,8 +331,13 @@ class _ScreenTenState extends State<ScreenTen>
       isPracticeRound: widget.isPracticeRound,
       message: message,
       messageColor: messageColor,
-      extraContent: spokenText.isNotEmpty
-          ? TaskResultSpokenTextBox(spokenText: spokenText, showLabel: true)
+      // The phrase with each word marked — never the raw microphone text,
+      // which may contain words the student didn't say.
+      extraContent: (isPartial || (!isCorrect && spokenText.isNotEmpty))
+          ? TaskResultPhraseCheck(
+              targetPhrase: _phrase,
+              spokenText: spokenText,
+            )
           : null,
       onContinue: () {
         _isResultSheetOpen = false;
@@ -325,6 +358,10 @@ class _ScreenTenState extends State<ScreenTen>
             'type': 'listen_and_speak',
             'targetPhrase': _phrase,
             'recognizedText': spokenText,
+            if (missedWords.isNotEmpty) 'missedWords': missedWords,
+            if (approximateWords.isNotEmpty)
+              'approximateWords': approximateWords,
+            if (isUnclear) 'lowConfidence': true,
           });
         }
       },
@@ -346,6 +383,7 @@ class _ScreenTenState extends State<ScreenTen>
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     final progressValue = (widget.currentTaskNumber + 1) / widget.totalTasks;
 
     return TaskExitGuard(
@@ -411,9 +449,9 @@ class _ScreenTenState extends State<ScreenTen>
                 
                       const SizedBox(height: 8),
                 
-                      const Text(
-                        'Listen & Speak',
-                        style: TextStyle(
+                      Text(
+                        'initials.screen_ten.listenAndSpeak'.tr(),
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Colors.black45,
                           fontWeight: FontWeight.w500,
@@ -488,7 +526,9 @@ class _ScreenTenState extends State<ScreenTen>
                                     ),
                                     const SizedBox(width: 8),
                                     Text(
-                                      _isSpeaking ? 'Playing…' : 'Tap to listen',
+                                      _isSpeaking
+                                          ? 'initials.screen_nine.playing'.tr()
+                                          : 'initials.screen_ten.tapToListen'.tr(),
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -526,7 +566,7 @@ class _ScreenTenState extends State<ScreenTen>
                                   size: 16, color: Colors.orange.shade700),
                               const SizedBox(width: 8),
                               Text(
-                                'Speak louder — we can barely hear you',
+                                'initials.screen_nine.speakLouder'.tr(),
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
@@ -608,7 +648,9 @@ class _ScreenTenState extends State<ScreenTen>
                       const SizedBox(height: 8),
                 
                       Text(
-                        _isListening ? 'Listening… speak now' : 'Tap to speak',
+                        _isListening
+                            ? 'initials.screen_nine.listeningSpeakNow'.tr()
+                            : 'initials.screen_nine.tapToSpeak'.tr(),
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey.shade600,

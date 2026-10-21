@@ -1,13 +1,22 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:loringo_app/components/auth_layout.dart';
 import 'package:loringo_app/components/my_loading.dart';
+import 'package:loringo_app/components/policy_consent_checkbox.dart';
 import 'package:loringo_app/components/my_textfield.dart';
 import 'package:loringo_app/components/recaptcha/recaptcha_widget.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
+import 'package:loringo_app/services/auth/auth_gate.dart';
+import 'package:loringo_app/services/auth/otp_service.dart';
+import 'package:loringo_app/services/database/database.dart';
+import 'package:loringo_app/services/firebase_refs.dart';
+import 'package:loringo_app/screens/initials/otp_screen.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 import 'package:loringo_app/utils/password_utils.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class RegisterScreen extends StatefulWidget {
   final void Function()? onTap;
@@ -25,11 +34,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _isLoading = false;
   String _errorMsg = '';
-  bool _isAdminName = false;
   String? _selectedRole;
   String _passStrength = '';
   bool _showPassStrength = false;
   bool _captchaVerified = false;
+  bool _consentGiven = false;
 
   @override
   void dispose() {
@@ -40,95 +49,103 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  void _checkAdminName() {
-    final l = _nameCtrl.text.trim().toLowerCase();
-    final isAdmin = l == 'admin' || l == 'administrador';
-    if (isAdmin != _isAdminName) {
-      setState(() {
-        _isAdminName = isAdmin;
-        if (isAdmin) _selectedRole = null;
-      });
-    }
-  }
-
   Future<void> _signUp() async {
     setState(() => _errorMsg = '');
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      setState(() => _errorMsg = 'Name is required');
+      setState(() => _errorMsg = 'common.nameValidation'.tr());
       return;
     }
     if (_emailCtrl.text.trim().isEmpty) {
-      setState(() => _errorMsg = 'Email is required');
+      setState(() => _errorMsg = 'common.emailValidation1'.tr());
       return;
     }
     if (!_emailCtrl.text.contains('@')) {
-      setState(() => _errorMsg = 'Enter a valid email');
+      setState(() => _errorMsg = 'common.emailValidation2'.tr());
       return;
     }
     if (_passCtrl.text.isEmpty) {
-      setState(() => _errorMsg = 'Password is required');
+      setState(() => _errorMsg = 'common.passwordValidation1'.tr());
       return;
     }
     if (!PasswordUtils.isPasswordValid(_passCtrl.text)) {
       setState(() => _errorMsg =
-          'Password must contain: ${PasswordUtils.getPasswordRequirements(_passCtrl.text).join(', ')}');
+          '${'common.passwordSecurityValidation'.tr()}: ${PasswordUtils.getPasswordRequirements(_passCtrl.text).join(', ')}');
       return;
     }
     if (_confirmCtrl.text.isEmpty) {
-      setState(() => _errorMsg = 'Please confirm your password');
+      setState(() => _errorMsg = 'common.confirmPasswordErr'.tr());
       return;
     }
     if (_confirmCtrl.text != _passCtrl.text) {
-      setState(() => _errorMsg = 'Passwords do not match');
+      setState(() => _errorMsg = 'common.passwordMatch'.tr());
       return;
     }
-    final isAdmin =
-        name.toLowerCase() == 'admin' || name.toLowerCase() == 'administrador';
-    if (!isAdmin && _selectedRole == null) {
-      setState(() => _errorMsg = 'Please select your role: Teacher or Parent');
+    if (_selectedRole == null) {
+      setState(() => _errorMsg = 'common.selectRoleValidation'.tr());
       return;
     }
     if (kIsWeb && !_captchaVerified) {
-      setState(() => _errorMsg = 'Please complete the captcha');
+      setState(() => _errorMsg = 'common.captcha'.tr());
+      return;
+    }
+    if (!_consentGiven) {
+      setState(() => _errorMsg = 'initials.register_screen.consentRequired'.tr());
       return;
     }
 
     setState(() => _isLoading = true);
+
     try {
-      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      final cred = await authInstance.createUserWithEmailAndPassword(
           email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
       final uid = cred.user?.uid ?? (throw Exception('No UID'));
-      final role = isAdmin ? 'admin' : _selectedRole!;
+      final role = _selectedRole!;
 
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'name': name,
-        'email': _emailCtrl.text.trim(),
-        'role': role,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // Explicitly passes firestoreInstance so this stays swappable in
+      // tests, the same as every other Firebase call on this screen.
+      await Database(firestore: firestoreInstance).createUser(
+        uid: uid,
+        name: name,
+        email: _emailCtrl.text.trim(),
+        role: role,
+        privacyPolicyAccepted: _consentGiven,
+      );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Account created as $role'),
-          backgroundColor: AppColors.primary,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadii.md)),
-        ));
-        Navigator.pop(context);
-      }
+      if (!mounted) return;
+
+      final email = _emailCtrl.text.trim();
+      await OTPService().sendOTPToEmail(email);
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OTPScreen(
+            email: email,
+            onVerified: (ctx, otp) async {
+              await FirebaseFunctions.instance
+                  .httpsCallable('confirmEmailVerified')
+                  .call();
+              if (!ctx.mounted) return;
+              Navigator.of(ctx).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const AuthGate()),
+                (r) => false,
+              );
+            },
+          ),
+        ),
+      );
     } on FirebaseAuthException catch (e) {
       resetRecaptcha();
       setState(() {
         _captchaVerified = false;
         _errorMsg = e.code == 'email-already-in-use'
-            ? 'This email is already registered.'
+            ? 'initials.register_screen.emailAlreadyRegistered'.tr()
             : e.code == 'weak-password'
-                ? 'Password is too weak.'
+                ? 'initials.register_screen.weakPassword'.tr()
                 : e.code == 'invalid-email'
-                    ? 'Invalid email format.'
-                    : (e.message ?? 'Registration failed');
+                    ? 'initials.register_screen.invalidEmailFormat'.tr()
+                    : (e.message ?? 'initials.register_screen.registrationFailed'.tr());
       });
     } catch (e) {
       resetRecaptcha();
@@ -156,6 +173,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     if (_isLoading) {
       return const Scaffold(
         body: ColoredBox(
@@ -173,29 +191,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
         height: 135,
         fit: BoxFit.contain,
       ),
-      title: 'Create your account',
-      subtitle: 'Sign up to Loringo',
+      title: 'common.createAccountMsg'.tr(),
+      subtitle: 'initials.register_screen.signUpSubtitle'.tr(),
       form: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           MyTextField(
             controller: _nameCtrl,
-            hintText: 'Full Name',
+            hintText: 'common.fullname'.tr(),
             obscureText: false,
             isEnabled: true,
-            onChanged: (_) => _checkAdminName(),
           ),
           const SizedBox(height: AppSpacing.md),
           MyTextField(
             controller: _emailCtrl,
-            hintText: 'Email',
+            hintText: 'common.email'.tr(),
             obscureText: false,
             isEnabled: true,
           ),
           const SizedBox(height: AppSpacing.md),
           MyTextField(
             controller: _passCtrl,
-            hintText: 'Password',
+            hintText: 'common.password'.tr(),
             obscureText: true,
             isEnabled: true,
             onChanged: (v) => setState(() {
@@ -219,133 +236,109 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(width: AppSpacing.md),
-              Text(_passStrength,
+              Text(passwordStrengthLabel(_passStrength),
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: PasswordUtils.getPasswordStrengthColor(_passCtrl.text))),
             ]),
             const SizedBox(height: AppSpacing.xs),
-            Text('8+ chars, uppercase, lowercase, number & special character',
+            Text('common.passwordCases'.tr(),
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
           ],
           const SizedBox(height: AppSpacing.md),
           MyTextField(
             controller: _confirmCtrl,
-            hintText: 'Confirm Password',
+            hintText: 'common.confirmPassword'.tr(),
             obscureText: true,
             isEnabled: true,
           ),
           const SizedBox(height: AppSpacing.lg),
-          if (_isAdminName)
-            Container(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF8E1),
-                borderRadius: BorderRadius.circular(AppRadii.md),
-                border: Border.all(color: const Color(0xFFFFCA28), width: 1.5),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.admin_panel_settings_rounded,
-                      color: Color(0xFFD97706), size: 24),
-                  SizedBox(width: AppSpacing.sm),
-                  Text('Registering as Administrator',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFD97706))),
-                ],
-              ),
-            )
-          else ...[
-            Text('I am a…',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700)),
-            const SizedBox(height: AppSpacing.sm),
-            Row(children: [
-              Expanded(
-                  child: GestureDetector(
-                onTap: () => setState(() => _selectedRole = 'teacher'),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(
-                      vertical: AppSpacing.md, horizontal: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: _selectedRole == 'teacher'
-                        ? AppColors.primary.withOpacity(0.1)
-                        : Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(AppRadii.md),
-                    border: Border.all(
+          Text('initials.register_screen.iAmA'.tr(),
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700)),
+          const SizedBox(height: AppSpacing.sm),
+          Row(children: [
+            Expanded(
+                child: GestureDetector(
+              onTap: () => setState(() => _selectedRole = 'teacher'),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(
+                    vertical: AppSpacing.md, horizontal: AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: _selectedRole == 'teacher'
+                      ? AppColors.primary.withOpacity(0.1)
+                      : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(AppRadii.md),
+                  border: Border.all(
+                      color: _selectedRole == 'teacher'
+                          ? AppColors.primary
+                          : Colors.grey.shade300,
+                      width: _selectedRole == 'teacher' ? 2 : 1),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.school_rounded,
                         color: _selectedRole == 'teacher'
                             ? AppColors.primary
-                            : Colors.grey.shade300,
-                        width: _selectedRole == 'teacher' ? 2 : 1),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.school_rounded,
-                          color: _selectedRole == 'teacher'
-                              ? AppColors.primary
-                              : Colors.grey.shade500,
-                          size: 26),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text('Teacher',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: _selectedRole == 'teacher'
-                                  ? AppColors.primary
-                                  : Colors.grey.shade600)),
-                    ],
-                  ),
+                            : Colors.grey.shade500,
+                        size: 26),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text('common.teacher'.tr(),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _selectedRole == 'teacher'
+                                ? AppColors.primary
+                                : Colors.grey.shade600)),
+                  ],
                 ),
-              )),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                  child: GestureDetector(
-                onTap: () => setState(() => _selectedRole = 'parent'),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(
-                      vertical: AppSpacing.md, horizontal: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: _selectedRole == 'parent'
-                        ? const Color(0xFFFF9800).withOpacity(0.1)
-                        : Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(AppRadii.md),
-                    border: Border.all(
+              ),
+            )),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+                child: GestureDetector(
+              onTap: () => setState(() => _selectedRole = 'parent'),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(
+                    vertical: AppSpacing.md, horizontal: AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: _selectedRole == 'parent'
+                      ? const Color(0xFFFF9800).withOpacity(0.1)
+                      : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(AppRadii.md),
+                  border: Border.all(
+                      color: _selectedRole == 'parent'
+                          ? const Color(0xFFFF9800)
+                          : Colors.grey.shade300,
+                      width: _selectedRole == 'parent' ? 2 : 1),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.family_restroom_rounded,
                         color: _selectedRole == 'parent'
                             ? const Color(0xFFFF9800)
-                            : Colors.grey.shade300,
-                        width: _selectedRole == 'parent' ? 2 : 1),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.family_restroom_rounded,
-                          color: _selectedRole == 'parent'
-                              ? const Color(0xFFFF9800)
-                              : Colors.grey.shade500,
-                          size: 26),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text('Parent',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: _selectedRole == 'parent'
-                                  ? const Color(0xFFFF9800)
-                                  : Colors.grey.shade600)),
-                    ],
-                  ),
+                            : Colors.grey.shade500,
+                        size: 26),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text('common.parent'.tr(),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _selectedRole == 'parent'
+                                ? const Color(0xFFFF9800)
+                                : Colors.grey.shade600)),
+                  ],
                 ),
-              )),
-            ]),
-          ],
+              ),
+            )),
+          ]),
           if (_errorMsg.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.md),
             Container(
@@ -369,6 +362,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
             RecaptchaWidget(
                 onVerified: (t) => setState(() => _captchaVerified = t.isNotEmpty)),
           ],
+          const SizedBox(height: AppSpacing.sm),
+          PolicyConsentCheckbox(
+            value: _consentGiven,
+            onChanged: (v) => setState(() => _consentGiven = v),
+            label: 'initials.register_screen.consentLabel'.tr(),
+          ),
           const SizedBox(height: AppSpacing.lg),
           ElevatedButton(
             onPressed: _signUp,
@@ -380,24 +379,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
               elevation: 0,
             ),
-            child: const Text('Create Account',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            child: Text('initials.register_screen.createAccountButton'.tr(),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
-      footer: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      footer: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          const Text('Already have an account? ',
-              style: TextStyle(
+          Text('initials.register_screen.alreadyHaveAccount'.tr(),
+              style: const TextStyle(
                   color: Color(0xFF3D7A3F),
                   fontSize: 14,
                   fontWeight: FontWeight.w500)),
           GestureDetector(
             onTap: widget.onTap,
-            child: const Text(
-              'Sign In',
-              style: TextStyle(
+            child: Text(
+              'common.signIn'.tr(),
+              style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF2E6B30),
                 fontSize: 14,

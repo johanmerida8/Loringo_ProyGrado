@@ -1,4 +1,7 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/theme/app_theme.dart';
 
 // ── Empty state (no categories) ─────────────────────────────────────────────
@@ -8,7 +11,9 @@ class TeacherEmptyState extends StatelessWidget {
   const TeacherEmptyState({super.key, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    return Center(
         child: Padding(
           padding: const EdgeInsets.all(40),
           child: Column(
@@ -30,14 +35,14 @@ class TeacherEmptyState extends StatelessWidget {
                       size: 52, color: AppColors.onPrimary),
                 ),
                 const SizedBox(height: 28),
-                const Text('No Image Categories Yet',
-                    style: TextStyle(
+                Text('teacher.teacher_empty_state.noCategoriesTitle'.tr(),
+                    style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: Colors.black87)),
                 const SizedBox(height: AppSpacing.sm + 2),
                 Text(
-                    'Create categories to organize\nyour educational image library',
+                    'teacher.teacher_empty_state.noCategoriesSubtitle'.tr(),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: 13,
@@ -56,13 +61,14 @@ class TeacherEmptyState extends StatelessWidget {
                               BorderRadius.circular(AppRadii.md)),
                       elevation: 3),
                   icon: const Icon(Icons.create_new_folder_rounded),
-                  label: const Text('Create First Category',
-                      style: TextStyle(
+                  label: Text('teacher.teacher_empty_state.createFirstCategory'.tr(),
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
               ]),
         ),
       );
+  }
 }
 
 // ── Empty gallery state (no images in category) ─────────────────────────────
@@ -72,7 +78,9 @@ class TeacherEmptyGalleryState extends StatelessWidget {
   const TeacherEmptyGalleryState({super.key, required this.onAdd});
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
+    return Center(
         child: Padding(
           padding: const EdgeInsets.all(40),
           child: Column(
@@ -96,13 +104,13 @@ class TeacherEmptyGalleryState extends StatelessWidget {
                       color: AppColors.onPrimary),
                 ),
                 const SizedBox(height: 28),
-                const Text('No Images Yet',
-                    style: TextStyle(
+                Text('teacher.teacher_empty_state.noImagesTitle'.tr(),
+                    style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: Colors.black87)),
                 const SizedBox(height: AppSpacing.sm + 2),
-                Text('Upload images to this category to get started',
+                Text('teacher.teacher_empty_state.noImagesSubtitle'.tr(),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: 13,
@@ -123,12 +131,13 @@ class TeacherEmptyGalleryState extends StatelessWidget {
                       elevation: 3),
                   icon: const Icon(
                       Icons.add_photo_alternate_rounded),
-                  label: const Text('Upload Images',
-                      style: TextStyle(
+                  label: Text('teacher.teacher_empty_state.uploadImages'.tr(),
+                      style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 15)),
                 ),
               ]),
         ),
       );
+  }
 }

@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:loringo_app/services/auth/biometric_service.dart';
 import 'package:loringo_app/theme/app_theme.dart';
@@ -5,7 +6,7 @@ import 'package:loringo_app/theme/app_theme.dart';
 class BiometricProvider extends ChangeNotifier {
   bool _isEnabled = false;
   bool _isSupported = false;
-  String _biometricTypeName = 'Biometrics';
+  String _biometricTypeName = 'common.biometricGeneric'.tr();
   bool _isLoading = true;
 
   bool get isEnabled => _isEnabled;
@@ -36,24 +37,26 @@ class BiometricProvider extends ChangeNotifier {
       await BiometricService.setBiometricEnabled(userId: userId, enabled: false);
       _isEnabled = false;
       notifyListeners();
-      _showSnackBar(context, '$_biometricTypeName login disabled');
+      _showSnackBar(context,
+          '$_biometricTypeName ${'providers.biometric_provider.loginDisabledSuffix'.tr()}');
     } else {
       // Enable - Show styled dialog
       final shouldEnable = await _showEnableBiometricDialog(context);
-      
+
       if (shouldEnable != true) return;
-      
+
       final ok = await BiometricService.authenticate(
-        reason: 'Verify your identity to enable biometric login',
+        reason: 'providers.biometric_provider.verifyToEnable'.tr(),
       );
-      
+
       if (ok) {
         await BiometricService.setBiometricEnabled(userId: userId, enabled: true);
         _isEnabled = true;
         notifyListeners();
-        _showSnackBar(context, '$_biometricTypeName login enabled');
+        _showSnackBar(context,
+            '$_biometricTypeName ${'common.biometricSuccess'.tr()}');
       } else {
-        _showSnackBar(context, 'Authentication failed', isError: true);
+        _showSnackBar(context, 'common.biometricFail'.tr(), isError: true);
       }
     }
   }
@@ -81,10 +84,10 @@ class BiometricProvider extends ChangeNotifier {
               ),
             ),
             const SizedBox(width: AppSpacing.md),
-            const Expanded(
+            Expanded(
               child: Text(
-                'Enable Biometric Login',
-                style: TextStyle(
+                'providers.biometric_provider.enableDialogTitle'.tr(),
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary,
@@ -98,7 +101,8 @@ class BiometricProvider extends ChangeNotifier {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Would you like to enable $_biometricTypeName login for faster access to your account?',
+              'providers.biometric_provider.enableDialogBody'
+                  .tr(namedArgs: {'type': _biometricTypeName}),
               style: AppText.body.copyWith(
                 fontSize: 14,
                 color: AppColors.textSecondary,
@@ -126,7 +130,7 @@ class BiometricProvider extends ChangeNotifier {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
-                      'You will be prompted to verify your identity each time you open the app.',
+                      'providers.biometric_provider.verifyEachTime'.tr(),
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.textSecondary,
@@ -144,7 +148,7 @@ class BiometricProvider extends ChangeNotifier {
             style: TextButton.styleFrom(
               foregroundColor: AppColors.textSecondary,
             ),
-            child: const Text('Cancel'),
+            child: Text('common.cancel'.tr()),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -156,7 +160,7 @@ class BiometricProvider extends ChangeNotifier {
               ),
               elevation: 0,
             ),
-            child: const Text('Continue'),
+            child: Text('common.continue'.tr()),
           ),
         ],
       ),

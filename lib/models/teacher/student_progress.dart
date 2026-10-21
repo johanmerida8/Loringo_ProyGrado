@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // ============================================================================
@@ -53,42 +51,48 @@ class UnitRawData {
   int completedActivities = 0;
   int totalActivities = 0;
   int activityScoreSum = 0;
-  
+
   int completedLessonQuizzes = 0;
   int totalLessonQuizzes = 0;
   int lessonQuizScoreSum = 0;
-  
+
   int? unitQuizScore;
   int? unitQuizTotal;
 
   UnitRawData();
 
   // Calculated properties
-  int get avgActivityScore => completedActivities == 0 ? 0 : (activityScoreSum / completedActivities).round();
-  
-  int get avgLessonQuizScore => completedLessonQuizzes == 0 ? 0 : (lessonQuizScoreSum / completedLessonQuizzes).round();
-  
+  int get avgActivityScore => completedActivities == 0
+      ? 0
+      : (activityScoreSum / completedActivities).round();
+
+  int get avgLessonQuizScore => completedLessonQuizzes == 0
+      ? 0
+      : (lessonQuizScoreSum / completedLessonQuizzes).round();
+
   int get unitQuizPercent {
-    if (unitQuizTotal == null || unitQuizTotal == 0 || unitQuizScore == null) return 0;
+    if (unitQuizTotal == null || unitQuizTotal == 0 || unitQuizScore == null)
+      return 0;
     return (unitQuizScore! / unitQuizTotal! * 100).round();
   }
-  
+
   int get overallScore {
-    return (
-      (avgActivityScore * 0.4) +
-      (avgLessonQuizScore * 0.3) +
-      (unitQuizPercent * 0.3)
-    ).round();
+    return ((avgActivityScore * 0.4) +
+            (avgLessonQuizScore * 0.3) +
+            (unitQuizPercent * 0.3))
+        .round();
   }
-  
+
   int get overallStars {
     if (overallScore >= 90) return 3;
     if (overallScore >= 70) return 2;
     return 1;
   }
-  
-  double get activityProgress => totalActivities == 0 ? 0 : completedActivities / totalActivities;
-  double get lessonQuizProgress => totalLessonQuizzes == 0 ? 0 : completedLessonQuizzes / totalLessonQuizzes;
+
+  double get activityProgress =>
+      totalActivities == 0 ? 0 : completedActivities / totalActivities;
+  double get lessonQuizProgress =>
+      totalLessonQuizzes == 0 ? 0 : completedLessonQuizzes / totalLessonQuizzes;
 }
 
 // ============================================================================
@@ -98,10 +102,7 @@ class RawProgress {
   final int xp;
   final Map<String, UnitRawData> byUnit;
 
-  const RawProgress({
-    required this.xp,
-    required this.byUnit,
-  });
+  const RawProgress({required this.xp, required this.byUnit});
 
   factory RawProgress.empty() {
     return const RawProgress(xp: 0, byUnit: {});
@@ -116,12 +117,12 @@ class StudentStats {
   final String name;
   final String avatar;
   final int xp;
-  
+
   // Activity stats
   final int completedActivities;
   final int totalActivities;
   final int avgActivityScore;
-  
+
   // Quiz stats
   final int completedLessonQuizzes;
   final int totalLessonQuizzes;
@@ -129,10 +130,18 @@ class StudentStats {
   final int? unitQuizScore;
   final int? unitQuizTotal;
   final int unitQuizPercent;
-  
+
   // Overall
   final int overallScore;
   final int overallStars;
+
+  // True when the student has started this unit's work (so a student who
+  // simply hasn't reached it yet isn't lumped in) AND either (a) hasn't
+  // finished everything assigned yet, or (b) is scoring low on what they
+  // HAVE completed. Computed in student_progress_dashboard.dart's
+  // _buildStats() -- see that method for the exact incomplete/low-score
+  // conditions.
+  final bool needsAttention;
 
   const StudentStats({
     required this.studentId,
@@ -150,22 +159,20 @@ class StudentStats {
     required this.unitQuizPercent,
     required this.overallScore,
     required this.overallStars,
+    required this.needsAttention,
   });
 
-  double get activityPercent => totalActivities == 0 ? 0 : completedActivities / totalActivities;
-  double get lessonQuizPercent => totalLessonQuizzes == 0 ? 0 : completedLessonQuizzes / totalLessonQuizzes;
-  
+  double get activityPercent =>
+      totalActivities == 0 ? 0 : completedActivities / totalActivities;
+  double get lessonQuizPercent =>
+      totalLessonQuizzes == 0 ? 0 : completedLessonQuizzes / totalLessonQuizzes;
+
   String get activityProgressText => '$completedActivities/$totalActivities';
-  String get lessonQuizProgressText => '$completedLessonQuizzes/$totalLessonQuizzes';
+  String get lessonQuizProgressText =>
+      '$completedLessonQuizzes/$totalLessonQuizzes';
   String get avgActivityScoreText => '$avgActivityScore%';
   String get avgLessonQuizScoreText => '$avgLessonQuizScore%';
   String get overallScoreText => '$overallScore%';
-  
-  Color get overallScoreColor {
-    if (overallScore >= 80) return const Color(0xFF4CAF50);
-    if (overallScore >= 60) return const Color(0xFFFFC107);
-    return const Color(0xFFFF7043);
-  }
 }
 
 // ============================================================================
@@ -188,11 +195,14 @@ class SummaryStats {
     required this.completedQuizzes,
   });
 
-  double get avgActivityProgress => totalActivities == 0 ? 0 : completedActivities / totalActivities;
-  double get avgQuizProgress => totalQuizzes == 0 ? 0 : completedQuizzes / totalQuizzes;
-  
+  double get avgActivityProgress =>
+      totalActivities == 0 ? 0 : completedActivities / totalActivities;
+  double get avgQuizProgress =>
+      totalQuizzes == 0 ? 0 : completedQuizzes / totalQuizzes;
+
   String get avgOverallScoreText => '$avgOverallScore%';
-  String get avgActivityProgressText => '${(avgActivityProgress * 100).round()}%';
+  String get avgActivityProgressText =>
+      '${(avgActivityProgress * 100).round()}%';
   String get avgQuizProgressText => '${(avgQuizProgress * 100).round()}%';
 }
 
@@ -208,9 +218,13 @@ extension TimestampExtension on Timestamp {
 // ============================================================================
 String getStarDisplay(int stars) {
   switch (stars) {
-    case 3: return '⭐⭐⭐';
-    case 2: return '⭐⭐';
-    case 1: return '⭐';
-    default: return '☆';
+    case 3:
+      return '⭐⭐⭐';
+    case 2:
+      return '⭐⭐';
+    case 1:
+      return '⭐';
+    default:
+      return '☆';
   }
 }

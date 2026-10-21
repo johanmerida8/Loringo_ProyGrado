@@ -1,11 +1,13 @@
 // screen_three.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 // import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:google_ml_kit/google_ml_kit.dart';
 // import 'package:just_audio/just_audio.dart';
+import 'package:provider/provider.dart';
+import 'package:loringo_app/providers/locale_provider.dart';
 import 'package:loringo_app/screens/initials/widget/responsive_activity_shell.dart';
 import 'package:loringo_app/screens/initials/widget/retryable_task.dart';
 import 'package:loringo_app/screens/initials/widget/task_exit_guard.dart';
@@ -57,14 +59,15 @@ class ScreenThree extends StatefulWidget {
 class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
   // final AudioPlayer player = AudioPlayer();
   final FlutterTts flutterTts = FlutterTts();
-  OnDeviceTranslator? translator; // ✅ Make it nullable
 
   static const Color greenPrimary = Color(0xFF4CAF50);
 
-  String _userLang = 'English';
   String subtitle = '';
   String questionEn = '';
-  String taskTitle = 'Arrange the words to form a sentence'; // Default title
+  // .tr() doesn't need BuildContext (easy_localization reads a global
+  // singleton set once in main.dart), so this is safe to call directly
+  // in a field initializer, unlike context.locale.
+  String taskTitle = 'initials.screen_three.defaultTaskTitle'.tr(); // Default title
   List<String> answerEn = [];
   List<Map<String, String>> shuffledWords = [];
   List<Map<String, String>> selectedWords = [];
@@ -115,7 +118,8 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
         // Fetch all task data
         subtitle = taskData['subtitle'] ?? '';
         questionEn = taskData['question'] ?? '';
-        taskTitle = taskData['taskTitle'] ?? 'Arrange the words to form a sentence';
+        taskTitle = taskData['taskTitle'] ??
+            'initials.screen_three.defaultTaskTitle'.tr();
         answerEn = List<String>.from(taskData['answer'] ?? []);
 
         // Build shuffled word pool
@@ -123,9 +127,6 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
             .map((word) => {'en': word})
             .toList();
         shuffledWords.shuffle();
-
-        if (translator != null && _userLang != 'English') {
-        }
 
         setState(() {});
       }
@@ -255,7 +256,7 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 child: Text(
-                                  'Tap words below to build the sentence',
+                                  'initials.screen_three.tapWordsHint'.tr(),
                                   style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
                                 ),
                               ),
@@ -315,6 +316,7 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
   // ── build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    context.watch<LocaleProvider>();
     const backgroundGradient = LinearGradient(
       colors: [Color(0xFFE8F5E9), Colors.white],
       begin: Alignment.topCenter,
@@ -479,9 +481,9 @@ class _ScreenThreeState extends State<ScreenThree> with RetryableTask {
                                 ),
                                 elevation: 5,
                               ),
-                              child: const Text(
-                                'Check',
-                                style: TextStyle(
+                              child: Text(
+                                'common.check'.tr(),
+                                style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                   letterSpacing: 1.2,

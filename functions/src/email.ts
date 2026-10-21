@@ -112,3 +112,50 @@ export const verifyOtp = onCall(async (request) => {
   logger.info(`OTP verified for: ${normalizedEmail}`);
   return { success: true };
 });
+
+// ─── Confirm Email Verified ─────────────────────────────────────────────
+// Turns a completed verifyOtp into a durable users/{uid}.emailVerified
+// flag. Requires an authenticated caller (available right after
+// registration, since the Firebase Auth account already exists at that
+// point) and reads the email off the verified auth token rather than
+// request.data, so a client can't claim someone else's email. The trust
+// boundary stays server-side: this only succeeds if the most recent `otps`
+// doc for that email was actually marked used by verifyOtp above -- a
+// client can't just call this directly to flip its own flag.
+export const confirmEmailVerified = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Must be signed in");
+  }
+  const uid = request.auth.uid;
+  const email = (request.auth.token.email as string | undefined)
+    ?.toLowerCase()
+    .trim();
+
+  if (!email) {
+    throw new HttpsError("failed-precondition", "No email on this account");
+  }
+
+  const db = getFirestore();
+
+  // Equality-only filters (no orderBy) so this doesn't need its own
+  // composite index -- verifyOtp already only ever sets used:true after
+  // checking expiresAt > now at verification time, so the mere existence
+  // of ANY used:true doc for this email is already proof a real
+  // verification happened; no need to also fetch the newest one.
+  const snapshot = await db
+    .collection("otps")
+    .where("email", "==", email)
+    .where("used", "==", true)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) {
+    logger.info(`confirmEmailVerified: no verified OTP for ${email}`);
+    throw new HttpsError("failed-precondition", "Email not verified");
+  }
+
+  await db.collection("users").doc(uid).update({ emailVerified: true });
+
+  logger.info(`Email verified for uid ${uid} (${email})`);
+  return { success: true };
+});

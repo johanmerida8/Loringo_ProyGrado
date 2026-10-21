@@ -52,6 +52,9 @@ lib/firebase_options.dart
 CLAUDE.md
 firestore.rules
 
+# MARKDOWN DOCS (not shown/tracked)
+*.md
+
 # Ignore all tests
 /test/*.dart
 !/test/widget_test.dart

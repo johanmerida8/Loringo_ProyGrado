@@ -16,8 +16,10 @@
 // everything from the role field".
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:loringo_app/components/avatar_image.dart';
 import 'package:loringo_app/screens/admin/admin_profile_screen.dart';
 import 'package:loringo_app/screens/parent/parent_profile_screen.dart';
 import 'package:loringo_app/screens/student/student_settings_screen.dart';
@@ -107,9 +109,10 @@ class AppDrawer extends StatelessWidget {
         Navigator.push(context,
             MaterialPageRoute(builder: (_) => const TeacherProfileScreen()));
         break;
-      case 'admin':
+      case 'image_manager':
         Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const AdminProfileScreen()));
+            MaterialPageRoute(
+                builder: (_) => const AdminProfileScreen(showBackButton: true)));
         break;
       case 'parent':
         Navigator.push(
@@ -157,13 +160,10 @@ class AppDrawer extends StatelessWidget {
                   backgroundColor: Colors.white,
                   child: hasStudentAvatar
                       ? ClipOval(
-                          child: Image.asset(
-                            studentAvatar!,
-                            width: 70,
-                            height: 70,
+                          child: AvatarImage(
+                            avatar: studentAvatar,
+                            size: 70,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Icon(
-                                headerIcon, size: 40, color: AppColors.primary),
                           ),
                         )
                       : Icon(headerIcon, size: 40, color: AppColors.primary),
@@ -195,7 +195,9 @@ class AppDrawer extends StatelessWidget {
             ],
             const SizedBox(height: 6),
             Text(
-                isStudent ? 'Tap to view settings' : 'Tap to view profile',
+                isStudent
+                    ? 'common.tapToViewSettings'.tr()
+                    : 'common.tapToViewProfile'.tr(),
                 style: TextStyle(
                     color: Colors.white.withOpacity(0.65), fontSize: 11)),
           ],

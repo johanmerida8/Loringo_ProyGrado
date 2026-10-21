@@ -1,29 +1,13 @@
 // ignore_for_file: equal_elements_in_set
 
 import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:http/http.dart' as http;
 import 'package:loringo_app/utils/moderation_terms.dart';
 import 'package:permission_handler/permission_handler.dart';
-
-// ── Upload folder resolver ────────────────────────────────────────────────────
-Future<String> getUploadFolder() async {
-  final user = FirebaseAuth.instance.currentUser;
-  if (user == null) throw Exception('User is not authenticated');
-  final doc = await FirebaseFirestore.instance
-      .collection('users').doc(user.uid).get();
-  final role = doc.data()?['role'] ?? 'user';
-  return role == 'admin' ? 'imagesPredefined' : 'teacherUploads/${user.uid}';
-}
 
 // ── ImageService ──────────────────────────────────────────────────────────────
 //
@@ -31,57 +15,101 @@ Future<String> getUploadFolder() async {
 // both roles automatically — do not duplicate this logic in admin screens.
 
 class ImageService {
-  final String cloudName   = 'dmflzlyzk';
-  final String uploadPreset = 'multimedia';
+  // ── Avatar options (Cloudinary "avatars" folder) ──────────────────────
+  //
+  // Cached for the process lifetime — the folder's contents change rarely
+  // (an admin/dev adding avatars), so every AvatarSelector open in a
+  // session after the first is instant instead of re-hitting the network.
+  static List<Map<String, String>>? _cachedAvatars;
+
+  Future<List<Map<String, String>>> fetchAvatarOptions({bool forceRefresh = false}) async {
+    if (!forceRefresh && _cachedAvatars != null) return _cachedAvatars!;
+
+    final callable = FirebaseFunctions.instance.httpsCallable('listCloudinaryAvatars');
+    final result = await callable.call();
+    final data = result.data as Map;
+    final list = (data['avatars'] as List).cast<Map>();
+    final avatars = list
+        .map((e) => {'publicId': e['publicId'] as String, 'url': e['url'] as String})
+        .toList();
+
+    _cachedAvatars = avatars;
+    return avatars;
+  }
 
   // ── Permission helper ──────────────────────────────────────────────────
   // Solicita permiso de fotos según plataforma; true = listo para picker
+  //
+  // Android 13+ (API 33+): Permission.photos → READ_MEDIA_IMAGES.
+  // Android 12 o menor (API ≤ 32): ese permiso no existe, el equivalente es
+  // Permission.storage → READ_EXTERNAL_STORAGE. Sin este respaldo el permiso
+  // nunca se concedía en Android 11/12 y el selector no se abría.
 
   Future<bool> _requestStoragePermission() async {
     if (kIsWeb) return true;
 
-    final Permission permission;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      permission = Permission.photos;
-    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-      permission = Permission.photos;
-    } else {
-      return true;
-    }
+      if (await Permission.photos.isGranted ||
+          await Permission.photos.isLimited ||
+          await Permission.storage.isGranted) {
+        return true;
+      }
 
-    final status = await permission.status;
+      final photos = await Permission.photos.request();
+      if (photos.isGranted || photos.isLimited) return true;
 
-    if (status.isGranted) return true;
+      // API ≤ 32: photos no aplica, se pide el permiso de almacenamiento.
+      final storage = await Permission.storage.request();
+      if (storage.isGranted) return true;
 
-    if (status.isPermanentlyDenied) {
-      await openAppSettings();
+      if (photos.isPermanentlyDenied || storage.isPermanentlyDenied) {
+        await openAppSettings();
+      }
       return false;
     }
 
-    final result = await permission.request();
-    return result.isGranted;
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      final status = await Permission.photos.status;
+      if (status.isGranted || status.isLimited) return true;
+
+      if (status.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+
+      final result = await Permission.photos.request();
+      return result.isGranted || result.isLimited;
+    }
+
+    return true;
   }
 
   // ── File pickers ──────────────────────────────────────────────────────
   // Retornan null si el permiso fue denegado
 
-  Future<PlatformFile?> pickImage() async {
+  // SVG can't be analyzed by Google Vision, so the server only accepts it
+  // from the admin image manager (see uploadModeratedImage.ts). Teacher
+  // screens pass allowSvg: false so SVG isn't even offered to them.
+  List<String> _allowedExtensions({required bool allowSvg}) =>
+      allowSvg ? ['png', 'svg', 'webp'] : ['png', 'webp'];
+
+  Future<PlatformFile?> pickImage({bool allowSvg = true}) async {
     if (!await _requestStoragePermission()) return null;
 
     final res = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['png', 'svg', 'webp'],
+      allowedExtensions: _allowedExtensions(allowSvg: allowSvg),
       withData: true,
     );
     return res?.files.first;
   }
 
-  Future<List<PlatformFile>?> pickMultipleImages() async {
+  Future<List<PlatformFile>?> pickMultipleImages({bool allowSvg = true}) async {
     if (!await _requestStoragePermission()) return null;
 
     final res = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['png', 'svg', 'webp'],
+      allowedExtensions: _allowedExtensions(allowSvg: allowSvg),
       withData: true,
       allowMultiple: true,
     );
@@ -93,11 +121,15 @@ class ImageService {
 
   bool checkImageNameForBlockedTerms(String fileName) {
     final lowerName = fileName.toLowerCase();
-    final nameWithoutExt = lowerName.replaceAll(RegExp(r'\.[^.]*$'), '');
-    final words = nameWithoutExt.split(RegExp(r'[_\s\-\.]+'));
+    // "drug deal" / "drug-deal" / "drug.deal" all become "drug_deal".
+    final nameWithoutExt = lowerName
+        .replaceAll(RegExp(r'\.[^.]*$'), '')
+        .replaceAll(RegExp(r'[\s\-\.]+'), '_');
+    final words = nameWithoutExt.split('_');
 
     for (final word in words) {
-      if (kidsafeModerationBlockedTerms.contains(word)) {
+      if (kidsafeModerationBlockedWords.contains(word) ||
+          kidsafeModerationBlockedTerms.contains(word)) {
         // ignore: avoid_print
         print('[MODERATION] "$fileName" REJECTED at Capa 1 (filename) — matched word "$word"');
         return true;
@@ -113,66 +145,29 @@ class ImageService {
     return false;
   }
 
-  // ── Capa 2: Google Cloud Vision SafeSearch, vía Cloud Function propia ────
-  //
-  // La API key de Vision NUNCA vive en el cliente — la llamada real ocurre
-  // server-side en la función `moderateImage` (Firebase Functions), que
-  // guarda la key como secret de Secret Manager. El cliente solo manda la
-  // imagen en base64 y recibe {safe: true/false}.
-  //
-  // Solo VERY_LIKELY bloquea la subida del lado del servidor — LIKELY es
-  // demasiado agresivo para contenido animado/ilustrado (partes del cuerpo,
-  // frutas, personajes de caricatura), que es el dominio real de las
-  // imágenes de Loringo.
-
-  Future<bool> checkImageWithGoogleVision(Uint8List imageBytes) async {
-    try {
-      // ignore: avoid_print
-      print('[MODERATION] Calling moderateImage — ${imageBytes.length} bytes');
-
-      final callable = FirebaseFunctions.instance.httpsCallable('moderateImage');
-      final result = await callable.call({
-        'imageBase64': base64Encode(imageBytes),
-      });
-
-      final data = result.data as Map;
-      // ignore: avoid_print
-      print('[MODERATION] moderateImage raw response: $data');
-
-      final isSafe = data['safe'] == true;
-      // ignore: avoid_print
-      print('[MODERATION] Capa 2 (Vision) decision: ${isSafe ? "SAFE ✅" : "REJECTED ❌ (reason: ${data['reason']})"}');
-
-      return isSafe;
-    } catch (e) {
-      // ignore: avoid_print
-      print('[MODERATION] moderateImage call FAILED (fail-closed → rejecting): $e');
-      // Fail closed: cualquier error (red, función no desplegada, etc.)
-      // rechaza la imagen en vez de dejarla pasar.
-      return false;
-    }
-  }
-
-  // ── Signature generation ──────────────────────────────────────────────────
-
-  String _generateSignature(String timestamp, String folder) {
-    final apiSecret = dotenv.env['CLOUDINARY_API_SECRET'];
-    if (apiSecret == null) throw Exception('Missing CLOUDINARY_API_SECRET');
-    final toSign =
-        'folder=$folder&timestamp=$timestamp&upload_preset=$uploadPreset$apiSecret';
-    return sha1.convert(utf8.encode(toSign)).toString();
-  }
-
-  // ── Cloudinary upload ─────────────────────────────────────────────────────
+  // ── Cloudinary upload (vía Cloud Function) ────────────────────────────────
   //
   // Moderación en dos capas antes de subir a Cloudinary:
-  //   1. Nombre de archivo (barato, atrapa lo obvio)
-  //   2. Google Vision SafeSearch server-side (real, analiza el contenido)
-  // SVG se salta la capa 2 porque es vectorial, no analizable por Vision.
+  //   1. Nombre de archivo (aquí, barato, atrapa lo obvio)
+  //   2. Google Vision SafeSearch + subida — ambas server-side en la función
+  //      `uploadModeratedImage` (functions/src/uploadModeratedImage.ts).
+  //
+  // El cliente ya NO firma ni sube a Cloudinary: la API key/secret viven solo
+  // como secrets de Cloud Functions, y la función solo sube si Vision aprueba
+  // la imagen, así que la moderación no se puede saltar. La carpeta destino
+  // (imagesPredefined vs teacherUploads/{uid}) también la decide el servidor
+  // según el rol del usuario autenticado.
+  // SVG es vectorial y Vision no lo analiza: solo lo acepta el servidor del
+// gestor de imágenes (admin) y tras una revisión estructural (sin scripts).
 
   Future<Map<String, dynamic>> uploadToCloudinary(
     PlatformFile file, {
     String? categoryName,
+    bool allowSvg = true,
+    // false = ask the server to skip the Google Vision analysis (the
+    // "Moderación automática" switch). The result's moderationApplied says
+    // whether Vision actually analyzed the image.
+    bool moderationEnabled = true,
   }) async {
     if (file.bytes == null) {
       return {'success': false, 'error': 'File bytes are empty'};
@@ -183,10 +178,12 @@ class ImageService {
     final isPng  = fileName.endsWith('.png');
     final isWebp = fileName.endsWith('.webp');
 
-    if (!isSvg && !isPng && !isWebp) {
+    if ((isSvg && !allowSvg) || (!isSvg && !isPng && !isWebp)) {
       return {
         'success': false,
-        'error': 'Only PNG, SVG, and WebP formats are allowed',
+        'error': allowSvg
+            ? 'Only PNG, SVG, and WebP formats are allowed'
+            : 'Only PNG and WebP formats are allowed',
         'reason': 'UNSUPPORTED_FILE_FORMAT',
       };
     }
@@ -211,77 +208,70 @@ class ImageService {
     }
     // WebP no se comprime (igual que el original, solo comprimía PNG)
 
-    // Capa 2: Google Vision SafeSearch server-side
-    if (!isSvg) {
-      if (!await checkImageWithGoogleVision(fileBytes)) {
+    // Capa 2 + subida: server-side
+    try {
+      final callable =
+          FirebaseFunctions.instance.httpsCallable('uploadModeratedImage');
+      final result = await callable.call({
+        'imageBase64': base64Encode(fileBytes),
+        'fileName': file.name,
+        if (categoryName != null) 'categoryName': categoryName,
+        if (!moderationEnabled) 'skipModeration': true,
+      });
+      final data = Map<String, dynamic>.from(result.data as Map);
+
+      if (data['success'] != true) {
         // ignore: avoid_print
-        print('[MODERATION] "${file.name}" → FINAL: REJECTED (Capa 2 / Vision)');
+        print('[MODERATION] "${file.name}" → FINAL: NOT UPLOADED (reason: ${data['reason']})');
         return {
           'success': false,
-          'error': 'Image rejected by content moderation',
-          'reason': 'REJECT_INAPPROPRIATE_IMAGE',
+          'error': 'Image was not uploaded',
+          'reason': data['reason'],
         };
       }
+
+      // ignore: avoid_print
+      print('[MODERATION] "${file.name}" → FINAL: PASSED and uploaded');
+      return {
+        'success':    true,
+        'secure_url': data['secure_url'] as String,
+        'public_id':  data['public_id']  as String,
+        'format':     data['format']     as String,
+        'moderationApplied': data['moderationApplied'] == true,
+      };
+    } catch (e) {
+      // ignore: avoid_print
+      print('[MODERATION] uploadModeratedImage call FAILED: $e');
+      return {'success': false, 'error': 'Upload failed', 'details': '$e'};
     }
-
-    // ignore: avoid_print
-    print('[MODERATION] "${file.name}" → FINAL: PASSED, uploading to Cloudinary...');
-
-    final baseFolder  = await getUploadFolder();
-    final finalFolder = categoryName != null ? '$baseFolder/$categoryName' : baseFolder;
-
-    final apiKey = dotenv.env['CLOUDINARY_API_KEY'];
-    if (apiKey == null) throw Exception('Missing CLOUDINARY_API_KEY');
-
-    final timestamp = (DateTime.now().millisecondsSinceEpoch ~/ 1000).toString();
-    final signature = _generateSignature(timestamp, finalFolder);
-
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload'),
-    )
-      ..fields['upload_preset'] = uploadPreset
-      ..fields['folder']        = finalFolder
-      ..fields['timestamp']     = timestamp
-      ..fields['signature']     = signature
-      ..fields['api_key']       = apiKey
-      ..files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: file.name));
-
-    final response = await request.send();
-    final body     = await http.Response.fromStream(response);
-
-    if (response.statusCode != 200) {
-      return {'success': false, 'error': 'Cloudinary upload failed', 'details': body.body};
-    }
-
-    final json = jsonDecode(body.body);
-    return {
-      'success':    true,
-      'secure_url': json['secure_url'] as String,
-      'public_id':  json['public_id']  as String,
-      'format':     json['format']     as String,
-    };
   }
 
   // ── Cloudinary delete ─────────────────────────────────────────────────────
+  //
+  // Routed through the `deleteCloudinaryImage` Cloud Function instead of
+  // calling Cloudinary's destroy endpoint directly from the client (uploads
+  // go server-side too now, via uploadModeratedImage). The admin "destroy"
+  // endpoint is not CORS-enabled — a direct call from Flutter Web fails with a generic
+  // "ClientException: Failed to fetch" (the browser blocking the
+  // cross-origin request, not Cloudinary rejecting it). Going server-side
+  // sidesteps CORS entirely and stops shipping CLOUDINARY_API_SECRET in the
+  // compiled client bundle. See functions/src/deleteCloudinaryImage.ts.
 
   Future<bool> deleteImage(String publicId) async {
+    if (publicId.isEmpty) {
+      debugPrint('ImageService.deleteImage: empty publicId, nothing to delete');
+      return false;
+    }
     try {
-      final apiKey    = dotenv.env['CLOUDINARY_API_KEY'];
-      final apiSecret = dotenv.env['CLOUDINARY_API_SECRET'];
-      if (apiKey == null || apiSecret == null) return false;
-
-      final response = await http.delete(
-        Uri.https('api.cloudinary.com', '/v1_1/$cloudName/image/destroy'),
-        headers: {
-          'Authorization': 'Basic ${base64Encode(utf8.encode('$apiKey:$apiSecret'))}',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'public_id=$publicId',
-      );
-
-      return response.statusCode == 200;
-    } catch (_) {
+      final callable = FirebaseFunctions.instance.httpsCallable('deleteCloudinaryImage');
+      final result = await callable.call({'publicId': publicId});
+      final deleted = (result.data as Map)['deleted'] == true;
+      if (!deleted) {
+        debugPrint('ImageService.deleteImage: Cloud Function reported not-deleted for $publicId');
+      }
+      return deleted;
+    } catch (e) {
+      debugPrint('ImageService.deleteImage: error for $publicId: $e');
       return false;
     }
   }
